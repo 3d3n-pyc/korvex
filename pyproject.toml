@@ -1,0 +1,11 @@
+[project]
+name = "korvex"
+version = "0.0.1"
+description = "Coming soon - a high-performance Rust-powered routing layer for Python"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
