@@ -1,0 +1,131 @@
+# Builds and publishes wheels on every `v*` tag push (or manually via
+# workflow_dispatch, which builds but skips publishing — useful to check
+# the matrix still builds without cutting a release).
+#
+# Versioning: Cargo.toml is the single source of truth (pyproject.toml
+# declares `dynamic = ["version"]`, so maturin reads it from there). The
+# checked-in Cargo.toml version is just a dev placeholder — this workflow
+# overwrites it to match the pushed tag (`.github/scripts/set_version_from_tag.py`)
+# before building, so a release's version always comes from the tag, never
+# from a manually-edited file that could drift out of sync.
+#
+# Platforms: manylinux x86_64/aarch64, macOS x86_64/aarch64 (Intel and
+# Apple Silicon), Windows x64, plus an sdist. Trimmed from what `maturin
+# generate-ci github` produces by default (which also covers musllinux,
+# 32-bit/s390x/ppc64le Linux, WASM, Android, and free-threaded builds) —
+# add a platform back here if you actually need it.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python3 .github/scripts/set_version_from_tag.py
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          manylinux: auto
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-${{ matrix.target }}
+          path: dist
+
+  macos:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: macos-13
+            target: x86_64
+          - runner: macos-14
+            target: aarch64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python3 .github/scripts/set_version_from_tag.py
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-${{ matrix.target }}
+          path: dist
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python3 .github/scripts/set_version_from_tag.py
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x64
+          args: --release --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows
+          path: dist
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python3 .github/scripts/set_version_from_tag.py
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-sdist
+          path: dist
+
+  publish:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [linux, macos, windows, sdist]
+    environment: pypi
+    permissions:
+      id-token: write # PyPI Trusted Publishing (OIDC) - no stored token needed
+      contents: write # attach wheels to the GitHub Release
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: wheels-*
+          merge-multiple: true
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+      - name: Attach wheels to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          prerelease: ${{ contains(github.ref_name, 'a') || contains(github.ref_name, 'b') || contains(github.ref_name, 'rc') }}

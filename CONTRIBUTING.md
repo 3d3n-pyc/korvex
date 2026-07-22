@@ -39,4 +39,35 @@ All four must pass — CI enforces the same checks.
 
 ## Commit messages
 
-Use plain, descriptive messages. No specific convention enforced yet.
+[Conventional Commits](https://www.conventionalcommits.org/): `feat:`,
+`fix:`, `test:`, `docs:`, `chore:`, `ci:`, etc.
+
+## Releasing
+
+Versioning is tag-driven — `Cargo.toml`'s checked-in version is just a
+dev placeholder; `pyproject.toml` declares `dynamic = ["version"]`, so
+maturin reads the real version from `Cargo.toml`, which the release
+workflow overwrites to match the tag before building. Nothing in the
+repo is manually bumped.
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+pushing a `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml):
+builds wheels for Linux/macOS/Windows plus an sdist, publishes to PyPI,
+and attaches the wheels to a GitHub Release. Two one-time manual steps
+this needs, neither doable from CI itself:
+
+1. A GitHub *environment* named `pypi` on this repo (Settings →
+   Environments), optionally with required reviewers for extra safety
+   before a publish runs.
+2. A [Trusted Publisher](https://docs.pypi.org/trusted-publishers/) on
+   the `korvex` PyPI project pointing at this repo, workflow file
+   (`release.yml`), and environment (`pypi`) — no stored API token
+   needed.
+
+`workflow_dispatch` (the "Run workflow" button in the Actions tab) builds
+the full matrix without publishing — useful to check it still builds
+before cutting a real release.
