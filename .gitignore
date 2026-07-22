@@ -41,12 +41,15 @@ nosetests.xml
 coverage.xml
 *.cover
 
-# --- Rust / Cargo (pour la partie PyO3 à venir) ---
+# --- Rust / Cargo ---
 /target/
 
 # --- Maturin (build PyO3) ---
 *.pyd
 *.dll
+
+# --- pytest-benchmark ---
+.benchmarks/
 
 # --- Éditeurs / IDE ---
 .vscode/
