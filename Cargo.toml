@@ -1,0 +1,22 @@
+[package]
+name = "korvex"
+version = "0.0.1"
+edition = "2024"
+description = "High-performance Rust-powered router for Python"
+license = "MIT"
+repository = "https://github.com/3d3n-pyc/korvex"
+
+[lib]
+name = "korvex"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustc-hash = "2.1"
+
+[dependencies.pyo3]
+version = "0.29.0"
+features = ["extension-module", "abi3-py39"]
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
