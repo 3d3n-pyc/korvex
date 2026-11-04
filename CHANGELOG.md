@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 - Breaking: path parameters are converted by their constraint. `{id:int}`
   gives an `int` and `{id:uuid}` a `uuid.UUID`, in `Router.match()` and as

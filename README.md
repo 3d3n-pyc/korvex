@@ -6,9 +6,8 @@
 A fast router for Python, written in Rust, with an optional ASGI app on top.
 
 Korvex is young (alpha). Its routing is fast (see [Performance](#performance)),
-but it lacks much of what full frameworks offer: WebSockets, streaming,
-startup hooks, validation, OpenAPI. The [roadmap](ROADMAP.md) lists what's
-coming.
+but it lacks some of what full frameworks offer: WebSockets, validation,
+OpenAPI. The [roadmap](ROADMAP.md) lists what's coming.
 
 ```sh
 pip install korvex
