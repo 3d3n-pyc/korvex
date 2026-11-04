@@ -11,7 +11,6 @@ import asyncio
 import json
 import logging
 import os
-import signal
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from email.message import Message
 from http import HTTPStatus
@@ -20,7 +19,6 @@ from pathlib import Path
 from typing import Any, Optional, Union, overload
 from urllib.parse import parse_qs, unquote
 
-from korvex import _core
 from korvex._core import MethodNotAllowed
 from korvex.response import Headers, JSONValue, Response, StreamingResponse
 from korvex.router import RouteGroup, Router
@@ -395,41 +393,17 @@ class App(_RouteDecorators):
                 await _run_hooks(reversed(self._on_shutdown), "shutdown", send)
                 return
 
-    def run(self, host: str = "127.0.0.1", port: int = 8000) -> None:
+    def run(
+        self, host: str = "127.0.0.1", port: int = 8000, *, workers: int = 1, graceful_timeout: float = 30.0
+    ) -> None:
         """Serves the app with Korvex's built-in server until Ctrl+C or
-        SIGTERM: startup hooks first, shutdown hooks at the end. Linux and
-        macOS only; on Windows, use an ASGI server such as uvicorn."""
-        if not hasattr(_core, "Server"):
-            raise NotImplementedError("the built-in server needs Linux or macOS; use uvicorn on Windows")
-        asyncio.run(self._serve(host, port))
+        SIGTERM. `workers` processes share the port, each running the
+        startup and shutdown hooks. On stop, requests in progress get up to
+        `graceful_timeout` seconds to finish. Linux and macOS only; on
+        Windows, use an ASGI server such as uvicorn."""
+        from korvex import serve
 
-    async def _serve(self, host: str, port: int) -> None:
-        for hook in self._on_startup:  # if one raises, the server doesn't start
-            await _call(hook)
-        loop = asyncio.get_running_loop()
-        server = _core.Server(host, port)
-        stopping = asyncio.Event()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, stopping.set)
-        tasks: set[asyncio.Task] = set()
-
-        def take_requests() -> None:
-            for request in server.take():
-                task = _start_task(loop, self._serve_one(*request))
-                if not task.done():  # the loop only keeps weak references to tasks
-                    tasks.add(task)
-                    task.add_done_callback(tasks.discard)
-
-        loop.add_reader(server.fileno(), take_requests)
-        try:
-            await stopping.wait()
-        finally:
-            loop.remove_reader(server.fileno())
-            server.close()
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                loop.remove_signal_handler(sig)
-            for hook in reversed(self._on_shutdown):
-                await _call(hook)
+        serve.run(self, host, port, workers, graceful_timeout)
 
     async def _serve_one(
         self, method: str, path: str, query_string: bytes, headers: list, body: bytes, responder: Any

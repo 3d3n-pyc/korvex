@@ -14,14 +14,15 @@
 use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener as StdTcpListener};
-use std::os::fd::AsRawFd;
+use std::net::TcpListener as StdTcpListener;
+use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::task::{Context, Poll};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Either, Full};
@@ -30,7 +31,8 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use pyo3::exceptions::{PyOSError, PyRuntimeError, PyValueError};
+use hyper_util::server::graceful::GracefulShutdown;
+use pyo3::exceptions::{PyOSError, PyRuntimeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
 use tokio::net::TcpListener;
@@ -63,6 +65,10 @@ struct Shared {
     /// queue yet, so a burst of requests sends a single byte.
     woken: AtomicBool,
     wake_writer: UnixStream,
+    /// How long `stop()` lets open connections finish, in milliseconds.
+    grace_ms: AtomicU64,
+    /// Set once the server has stopped and every connection is closed.
+    finished: AtomicBool,
 }
 
 impl Shared {
@@ -78,9 +84,10 @@ impl Shared {
     }
 }
 
-/// The server, as Python sees it: `Server(host, port)` starts accepting
-/// connections in a Rust thread; the asyncio loop watches `fileno()` and
-/// calls `take()` when it becomes readable.
+/// The server, as Python sees it: `Server(fd)` starts accepting
+/// connections on an already listening socket, in a Rust thread; the
+/// asyncio loop watches `fileno()` and calls `take()` when it becomes
+/// readable.
 #[pyclass(module = "korvex._core")]
 pub struct Server {
     shared: Arc<Shared>,
@@ -91,14 +98,14 @@ pub struct Server {
 
 #[pymethods]
 impl Server {
+    /// `fd` is a listening TCP socket, opened by Python; the server takes
+    /// ownership of it. Opening it in Python lets several worker processes
+    /// share one socket.
     #[new]
-    fn new(host: &str, port: u16) -> PyResult<Self> {
-        let addr: SocketAddr = format!("{host}:{port}")
-            .parse()
-            .map_err(|e| PyValueError::new_err(format!("invalid address {host}:{port}: {e}")))?;
-        // Bind here, so a port already in use fails right away in Python.
-        let listener = StdTcpListener::bind(addr)
-            .map_err(|e| PyOSError::new_err(format!("can't listen on {addr}: {e}")))?;
+    fn new(fd: RawFd) -> PyResult<Self> {
+        // SAFETY: Python hands over a listening socket it no longer uses
+        // (`socket.detach()`), so this listener is its only owner.
+        let listener = unsafe { StdTcpListener::from_raw_fd(fd) };
         listener.set_nonblocking(true)?;
         let (wake_reader, wake_writer) = UnixStream::pair()?;
         wake_reader.set_nonblocking(true)?;
@@ -108,6 +115,8 @@ impl Server {
             queue: Mutex::new(VecDeque::new()),
             woken: AtomicBool::new(false),
             wake_writer,
+            grace_ms: AtomicU64::new(0),
+            finished: AtomicBool::new(false),
         });
         let stop = Arc::new(Notify::new());
         let thread = {
@@ -171,7 +180,23 @@ impl Server {
         Ok(requests)
     }
 
-    /// Stops accepting connections and waits for the Rust thread to end.
+    /// Stops accepting connections; open ones finish their current request,
+    /// for up to `grace` seconds, then close. Returns right away: Python
+    /// keeps answering requests until `finished()` is true.
+    fn stop(&self, grace: f64) {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        // a delay in ms fits easily
+        let grace_ms = (grace.max(0.0) * 1000.0) as u64;
+        self.shared.grace_ms.store(grace_ms, Ordering::Release);
+        self.stop.notify_one();
+    }
+
+    /// Whether the server has stopped and closed every connection.
+    fn finished(&self) -> bool {
+        self.shared.finished.load(Ordering::Acquire)
+    }
+
+    /// Stops the server if it's still running and waits for its thread.
     fn close(&mut self, py: Python<'_>) -> PyResult<()> {
         self.stop.notify_one();
         if let Some(thread) = self.thread.take() {
@@ -272,8 +297,9 @@ fn accept_loop(
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(async {
+    let result = runtime.block_on(async {
         let listener = TcpListener::from_std(listener)?;
+        let graceful = GracefulShutdown::new();
         loop {
             tokio::select! {
                 accepted = listener.accept() => {
@@ -281,16 +307,29 @@ fn accept_loop(
                     let Ok((stream, _)) = accepted else { continue };
                     let _ = stream.set_nodelay(true);
                     let shared = Arc::clone(shared);
+                    let watcher = graceful.watcher();
                     tokio::spawn(async move {
                         let service = service_fn(move |request| handle(request, Arc::clone(&shared)));
+                        let connection = http1::Builder::new().serve_connection(TokioIo::new(stream), service);
                         // A client closing its connection early isn't an error worth reporting.
-                        let _ = http1::Builder::new().serve_connection(TokioIo::new(stream), service).await;
+                        let _ = watcher.watch(connection).await;
                     });
                 }
-                () = stop.notified() => return Ok(()),
+                () = stop.notified() => break,
             }
         }
-    })
+        // Stop accepting, let open connections finish their current request
+        // (keep-alive ends after it), and give up on them after the grace delay.
+        drop(listener);
+        let grace = Duration::from_millis(shared.grace_ms.load(Ordering::Acquire));
+        tokio::select! {
+            () = graceful.shutdown() => {}
+            () = tokio::time::sleep(grace) => {}
+        }
+        Ok(())
+    });
+    shared.finished.store(true, Ordering::Release);
+    result
 }
 
 async fn handle(

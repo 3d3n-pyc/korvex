@@ -159,3 +159,76 @@ def test_failing_startup_hook_prevents_serving():
     assert "database unreachable" in output
     with pytest.raises(OSError):
         socket.create_connection(("127.0.0.1", port), timeout=0.5)
+
+
+def stop_and_collect(process):
+    process.send_signal(signal.SIGTERM)
+    output, _ = process.communicate(timeout=10)
+    return process.returncode, output
+
+
+def test_workers_each_start_and_serve():
+    port = free_port()
+    process = start(port, WORKERS="3")
+    base = f"http://127.0.0.1:{port}"
+    pids = {fetch(f"{base}/pid")[2] for _ in range(60)}
+    code, output = stop_and_collect(process)
+    assert code == 0
+    assert output.count("STARTED") == 3 and output.count("STOPPED") == 3
+    assert len(pids) >= 2, "requests should be spread over the workers"
+
+
+def test_crashed_worker_is_replaced():
+    port = free_port()
+    process = start(port, WORKERS="2", STARTUP_WINDOW="0.3")
+    base = f"http://127.0.0.1:{port}"
+    time.sleep(0.5)  # past the startup window: this crash isn't a startup failure
+    with pytest.raises(OSError):
+        urllib.request.urlopen(f"{base}/crash", timeout=5)
+    time.sleep(0.5)
+    assert all(fetch(f"{base}/users/1")[0] == 200 for _ in range(20))
+    code, output = stop_and_collect(process)
+    assert code == 0
+    assert "starting a new one" in output
+    assert output.count("STARTED") == 3  # 2 workers, then 1 replacement
+
+
+def test_worker_failing_to_start_stops_everything():
+    port = free_port()
+    process = start(port, WORKERS="2", FAIL_STARTUP="1")
+    output, _ = process.communicate(timeout=10)
+    assert process.returncode == 1
+    assert "failed to start" in output
+
+
+@pytest.mark.parametrize("workers", ["1", "2"])
+def test_sigterm_lets_requests_in_progress_finish(workers):
+    port = free_port()
+    process = start(port, WORKERS=workers)
+    base = f"http://127.0.0.1:{port}"
+    with ThreadPoolExecutor(1) as pool:
+        slow = pool.submit(fetch, f"{base}/slow")
+        time.sleep(0.3)  # the request is now being handled
+        process.send_signal(signal.SIGTERM)
+        time.sleep(0.2)
+        with pytest.raises(OSError):  # no new connections once stopping
+            socket.create_connection(("127.0.0.1", port), timeout=0.5)
+        assert slow.result(timeout=5) == (200, slow.result()[1], b"slow done")
+    output, _ = process.communicate(timeout=10)
+    assert process.returncode == 0 and "STOPPED" in output
+
+
+def test_graceful_timeout_gives_up_on_slow_requests():
+    port = free_port()
+    process = start(port, GRACE="0.2")
+    base = f"http://127.0.0.1:{port}"
+    with ThreadPoolExecutor(1) as pool:
+        slow = pool.submit(fetch, f"{base}/slow")
+        time.sleep(0.2)
+        stopped_at = time.perf_counter()
+        process.send_signal(signal.SIGTERM)
+        process.communicate(timeout=10)
+        assert time.perf_counter() - stopped_at < 0.8  # didn't wait for the 1 s request
+        with pytest.raises(Exception):
+            slow.result(timeout=5)
+    assert process.returncode == 0

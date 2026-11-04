@@ -54,6 +54,22 @@ async def echo(request):
     return Response.json({"body": body, "query": request.query_params, "cookies": request.cookies})
 
 
+@app.get("/slow")
+async def slow(request):
+    await asyncio.sleep(1)
+    return Response.text("slow done")
+
+
+@app.get("/pid")
+def pid(request):
+    return Response.text(str(os.getpid()))
+
+
+@app.get("/crash")
+def crash(request):
+    os._exit(1)  # a worker dying abruptly, as if it segfaulted
+
+
 @app.get("/fail")
 def fail(request):
     raise RuntimeError("boom")
@@ -65,4 +81,12 @@ def teapot(request):
 
 
 if __name__ == "__main__":
-    app.run(port=int(sys.argv[1]))
+    import korvex.serve
+
+    if os.environ.get("STARTUP_WINDOW"):  # lets tests wait less than 5 s
+        korvex.serve.STARTUP_WINDOW = float(os.environ["STARTUP_WINDOW"])
+    app.run(
+        port=int(sys.argv[1]),
+        workers=int(os.environ.get("WORKERS", "1")),
+        graceful_timeout=float(os.environ.get("GRACE", "30")),
+    )
