@@ -151,7 +151,8 @@ def draw(timings, machine, theme):
 
 
 LOAD_CLIENTS_INDEX = 3  # 200 clients, see CONCURRENCY in load_test.py
-LOAD_NAMES = {"fastapi": "FastAPI"}
+LOAD_NAMES = {"fastapi": "FastAPI", "blacksheep": "BlackSheep"}
+WORST_CASE_ONLY = {"blacksheep"}  # sorts routes itself: the tested one always comes last
 LOAD_MAX = 40_000
 
 
@@ -177,7 +178,7 @@ def draw_load(results, machine, theme):
 
     top = 112
     axis_y = top + ROW_HEIGHT * len(frameworks)
-    height = axis_y + 82
+    height = axis_y + 100
     out = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{height}" '
         f'viewBox="0 0 {WIDTH} {height}" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img">',
@@ -213,6 +214,7 @@ def draw_load(results, machine, theme):
         name = LOAD_NAMES.get(framework, framework.capitalize())
         out.append(f'<text x="20" y="{y + 4}" font-size="13"{weight} fill="{ink}">{name}</text>')
         value_label = thousands(best[framework])
+        best_color = light if framework in WORST_CASE_ONLY else dark
         if f"{framework}, route first" in results:
             worst = rps(framework)
             out.append(
@@ -221,15 +223,19 @@ def draw_load(results, machine, theme):
             )
             out.append(f'<circle cx="{x_of_rps(worst):.1f}" cy="{y}" r="5" fill="{light}" stroke="{t["surface"]}" stroke-width="2"/>')
             value_label = f"{thousands(worst)} to {value_label}"
-        out.append(f'<circle cx="{x_of_rps(best[framework]):.1f}" cy="{y}" r="5" fill="{dark}" stroke="{t["surface"]}" stroke-width="2"/>')
+        out.append(f'<circle cx="{x_of_rps(best[framework]):.1f}" cy="{y}" r="5" fill="{best_color}" stroke="{t["surface"]}" stroke-width="2"/>')
         out.append(f'<text x="{PLOT_RIGHT + 16}" y="{y + 4}" font-size="12"{weight} fill="{ink}">{value_label}</text>')
 
     out.append(
         f'<text x="20" y="{axis_y + 46}" font-size="12" fill="{t["secondary"]}">'
         "Starlette, FastAPI and Django try routes one by one, so the route&#8217;s position matters.</text>"
     )
+    out.append(
+        f'<text x="20" y="{axis_y + 64}" font-size="12" fill="{t["secondary"]}">'
+        "BlackSheep does too, but sorts routes itself: here the tested route always comes last.</text>"
+    )
     cpu = machine.get("cpu", {}).get("brand_raw", "")
-    out.append(f'<text x="20" y="{axis_y + 66}" font-size="11" fill="{t["muted"]}">Python {machine.get("python_version", "")}, {cpu}</text>')
+    out.append(f'<text x="20" y="{axis_y + 84}" font-size="11" fill="{t["muted"]}">Python {machine.get("python_version", "")}, {cpu}</text>')
     out.append("</svg>")
     return "\n".join(out)
 

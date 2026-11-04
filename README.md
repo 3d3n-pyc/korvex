@@ -5,6 +5,11 @@
 
 A fast router for Python, written in Rust, with an optional ASGI app on top.
 
+Korvex is young (alpha). Its routing is fast (see [Performance](#performance)),
+but it lacks much of what full frameworks offer: WebSockets, streaming,
+startup hooks, validation, OpenAPI. The [roadmap](ROADMAP.md) lists what's
+coming.
+
 ```sh
 pip install korvex
 ```
@@ -62,10 +67,10 @@ are immutable: `params` is a read-only mapping and `middleware` a tuple.
 
 ```python
 api = router.group("/api", middleware=["auth"])
-api.get("/users", "list_users")             # GET /api/users, middleware ["auth"]
+api.get("/users", "list_users")             # GET /api/users, middleware ("auth",)
 
 admin = api.group("/admin", middleware=["admin"])
-admin.get("/stats", "stats")                # GET /api/admin/stats, middleware ["auth", "admin"]
+admin.get("/stats", "stats")                # GET /api/admin/stats, middleware ("auth", "admin")
 ```
 
 ## The ASGI app
@@ -118,29 +123,37 @@ requests to random URLs by [oha](https://github.com/hatoo/oha):
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/load-dark.svg">
-  <img alt="Requests per second on one CPU core with 200 clients: Korvex 33.9k, Starlette 3.0k to 30.6k, Litestar 18.2k, Sanic 15.8k, FastAPI 1.6k to 12.4k, Django 1.1k to 2.2k." src="docs/load-light.svg">
+  <img alt="Requests per second on one CPU core with 200 clients: Korvex 33.7k, Starlette 3.0k to 30.6k, Falcon 30.5k, Litestar 18.2k, Sanic 15.8k, FastAPI 1.6k to 12.4k, BlackSheep 6.7k, Django 1.1k to 2.2k." src="docs/load-light.svg">
 </picture>
 
 | Framework | Requests/s, 200 clients | p99 latency, 1,000 clients | RAM at rest, peak |
 |---|---|---|---|
-| **Korvex** | **33.9k** | **26 ms** | **35 MB, 46 MB** |
+| **Korvex** | **33.7k** | **26 ms** | **35 MB, 46 MB** |
 | Starlette | 3.0k to 30.6k | 35 to 189 ms | 39 MB, 49 MB |
+| Falcon | 30.5k | 31 ms | 60 MB, 63 MB |
 | Litestar | 18.2k | 79 ms | 78 MB, 89 MB |
 | Sanic | 15.8k | 94 ms | 60 MB, 105 MB |
 | FastAPI | 1.6k to 12.4k | 57 to 351 ms | 66 MB, 77 MB |
+| BlackSheep | 6.7k | 70 ms | 51 MB, 59 MB |
 | Django | 1.1k to 2.2k | 1.3 to 1.9 s | 48 MB, 145 MB |
 
 - Every framework uses a full CPU core under load, so requests per second
   is also how much work each one gets out of that core.
+- Falcon, and Starlette in its best case, come within about 10% of Korvex.
 - Starlette, FastAPI and Django try routes one by one: the ranges go from
   the tested route declared after the 1,000 others to declared first.
-  Starlette's best case comes close to Korvex.
+  BlackSheep tries them one by one too, but sorts them itself, deepest
+  first, so here the tested route always comes last.
 - No request failed. Throughput holds steady as clients are added; latency
   grows because requests queue, not because each one gets slower. After
   the flood, memory stays flat and speed is back to normal.
 
+Robyn isn't included: it runs its own server, so it wouldn't be the same
+comparison. Korvex plans its own built-in server (see the
+[roadmap](ROADMAP.md)), and the two will be compared then.
+
 Reproduce with `uv run python benches/load_test.py` (needs
-`cargo install oha`, takes about 9 minutes).
+`cargo install oha`, takes about 11 minutes).
 
 ### Router alone
 
@@ -185,7 +198,8 @@ uv run pytest                      # Python tests
 cargo test                         # Rust tests
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md), and [ROADMAP.md](ROADMAP.md) for
+what's planned.
 
 ## License
 

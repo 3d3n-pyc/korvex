@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Load test: Falcon and BlackSheep added. Falcon comes within about 10% of
+  Korvex; BlackSheep tries routes one by one, which costs it a lot with
+  1,000 routes.
+- New [ROADMAP.md](ROADMAP.md).
+
 ## 0.3.0
 
 - `Router.match` caches the last 1,024 distinct lookups: 67 ns instead of

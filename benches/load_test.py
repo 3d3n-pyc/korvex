@@ -12,10 +12,12 @@ For each framework:
 
 Starlette, FastAPI and Django try routes one by one, and the tested route
 is declared after the 1,000 others: their worst case. They are run a
-second time with it declared first, their best case.
+second time with it declared first, their best case. BlackSheep also tries
+routes one by one, but sorts them itself (deepest first), so the tested
+route always comes last.
 
 Needs oha: `cargo install oha`.
-Run everything (about 9 minutes): uv run python benches/load_test.py
+Run everything (about 11 minutes): uv run python benches/load_test.py
 Run some only:                     uv run python benches/load_test.py korvex "django, route first"
 Results are merged into benches/load_results.json.
 """
@@ -32,7 +34,7 @@ from pathlib import Path
 
 import psutil
 
-FRAMEWORKS = ["korvex", "litestar", "starlette", "sanic", "fastapi", "django"]
+FRAMEWORKS = ["korvex", "litestar", "starlette", "sanic", "fastapi", "django", "blacksheep", "falcon"]
 LINEAR = ["starlette", "fastapi", "django"]
 RUNS = FRAMEWORKS + [f"{name}, route first" for name in LINEAR]
 RESULTS = Path("benches/load_results.json")
