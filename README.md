@@ -114,8 +114,11 @@ uvicorn mymodule:app
   `@app.exception_handler(ValueError)` (an exception class) customizes the
   response. Any other exception gives a 500 and is logged to the `korvex`
   logger.
-- Routes registered on `app.router` directly (for example through a
-  group) are linked to a function with `@app.handler("name")`.
+- `app.group(prefix, middleware=[...])` works like `router.group()`, with
+  decorators: `api = app.group("/api")`, then `@api.get("/users")`.
+  Groups nest.
+- Routes registered on `app.router` directly are linked to a function
+  with `@app.handler("name")`.
 - `@app.on_startup` and `@app.on_shutdown` run a function (sync or async)
   when the server starts and stops, for example to open and close a
   database pool. Shutdown hooks run in reverse order. If a startup hook

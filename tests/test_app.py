@@ -441,3 +441,30 @@ def test_app_composes_with_route_groups():
 
     assert status == 200
     assert body == b"users"
+
+
+def test_app_group_registers_handlers_under_a_prefix_and_middleware():
+    app = App()
+    calls = []
+    api = app.group("/api", middleware=["auth"])
+    admin = api.group("/admin", middleware=["admin"])
+
+    @api.get("/users/{id:int}")
+    def get_user(request, id):
+        return Response.json({"id": id})
+
+    @admin.post("/stats", middleware=["audit"])
+    def stats(request):
+        return Response.text("stats")
+
+    for name in ["auth", "admin", "audit"]:
+        app.middleware(name)(lambda request, name=name: calls.append(name))
+
+    status, _, body = response_from(run_app(app, make_scope("GET", "/api/users/7")))
+    assert (status, json.loads(body), calls) == (200, {"id": 7}, ["auth"])
+
+    calls.clear()
+    status, _, body = response_from(run_app(app, make_scope("POST", "/api/admin/stats")))
+    assert (status, body, calls) == (200, b"stats", ["auth", "admin", "audit"])
+
+    assert repr(admin) == "AppGroup(prefix='/api/admin', middleware=['auth', 'admin'])"

@@ -14,6 +14,8 @@
   405 included) or exception class. Unhandled exceptions, including a
   missing handler or middleware, now give a 500 logged to the `korvex`
   logger instead of propagating to the server.
+- `app.group(prefix, middleware=...)` returns an `AppGroup`: decorators
+  (`@api.get(...)`) under a shared prefix and middleware, nestable.
 - Load test: Falcon and BlackSheep added. Falcon comes within about 10% of
   Korvex; BlackSheep tries routes one by one, which costs it a lot with
   1,000 routes.

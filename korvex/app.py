@@ -17,7 +17,7 @@ from urllib.parse import parse_qs
 
 from korvex._core import MethodNotAllowed
 from korvex.response import Headers, JSONValue, Response
-from korvex.router import Router
+from korvex.router import RouteGroup, Router
 
 # `Union`/`Optional` rather than `|`: these lines run at import time, and
 # `|` between types needs Python 3.10+.
@@ -81,38 +81,15 @@ class Request:
         return f"Request({self.method} {self.path!r})"
 
 
-class App:
-    """An ASGI application.
+class _RouteDecorators:
+    """`@get(path)` and friends, for any class with a `route()` decorator."""
 
-        app = App()
-
-        @app.get("/users/{id:int}")
-        def get_user(request, id):
-            return Response.json({"id": id})
-
-        # uvicorn mymodule:app
-    """
-
-    def __init__(self, router: Router | None = None) -> None:
-        self.router = router if router is not None else Router()
-        self._handlers: dict[str, Handler] = {}
-        self._middleware: dict[str, Middleware] = {}
-        self._on_startup: list[Hook] = []
-        self._on_shutdown: list[Hook] = []
-        self._exception_handlers: dict[int | type[Exception], ExceptionHandler] = {}
+    __slots__ = ()
 
     def route(
         self, path: str, *, method: str = "GET", middleware: Sequence[str] | None = None
     ) -> Callable[[Handler], Handler]:
-        """Decorator: registers the function as the handler for `path`."""
-
-        def register(func: Handler) -> Handler:
-            name = f"{func.__module__}.{func.__qualname__}"
-            self.router.route(path, name, method=method, middleware=middleware)
-            self._handlers[name] = func
-            return func
-
-        return register
+        raise NotImplementedError
 
     def get(self, path: str, *, middleware: Sequence[str] | None = None) -> Callable[[Handler], Handler]:
         return self.route(path, method="GET", middleware=middleware)
@@ -134,6 +111,75 @@ class App:
 
     def options(self, path: str, *, middleware: Sequence[str] | None = None) -> Callable[[Handler], Handler]:
         return self.route(path, method="OPTIONS", middleware=middleware)
+
+
+class AppGroup(_RouteDecorators):
+    """Registers handlers under a shared prefix and middleware.
+
+        api = app.group("/api", middleware=["auth"])
+
+        @api.get("/users")           # GET /api/users, middleware ("auth",)
+        def list_users(request): ...
+    """
+
+    __slots__ = ("_app", "_routes")
+
+    def __init__(self, app: App, routes: RouteGroup) -> None:
+        self._app = app
+        self._routes = routes
+
+    def route(
+        self, path: str, *, method: str = "GET", middleware: Sequence[str] | None = None
+    ) -> Callable[[Handler], Handler]:
+        """Decorator: registers the function as the handler for `path`, under
+        this group's prefix. Its own `middleware` runs after the group's."""
+
+        def register(func: Handler) -> Handler:
+            name = f"{func.__module__}.{func.__qualname__}"
+            self._routes.route(path, name, method=method, middleware=middleware)
+            self._app._handlers[name] = func
+            return func
+
+        return register
+
+    def group(self, prefix: str = "", *, middleware: Sequence[str] | None = None) -> AppGroup:
+        """Returns a nested group. Its `middleware` runs after this group's."""
+        return AppGroup(self._app, self._routes.group(prefix, middleware=middleware))
+
+    def __repr__(self) -> str:
+        return f"AppGroup(prefix={self._routes.prefix!r}, middleware={self._routes.middleware!r})"
+
+
+class App(_RouteDecorators):
+    """An ASGI application.
+
+        app = App()
+
+        @app.get("/users/{id:int}")
+        def get_user(request, id):
+            return Response.json({"id": id})
+
+        # uvicorn mymodule:app
+    """
+
+    def __init__(self, router: Router | None = None) -> None:
+        self.router = router if router is not None else Router()
+        self._root = AppGroup(self, self.router.group())
+        self._handlers: dict[str, Handler] = {}
+        self._middleware: dict[str, Middleware] = {}
+        self._on_startup: list[Hook] = []
+        self._on_shutdown: list[Hook] = []
+        self._exception_handlers: dict[int | type[Exception], ExceptionHandler] = {}
+
+    def route(
+        self, path: str, *, method: str = "GET", middleware: Sequence[str] | None = None
+    ) -> Callable[[Handler], Handler]:
+        """Decorator: registers the function as the handler for `path`."""
+        return self._root.route(path, method=method, middleware=middleware)
+
+    def group(self, prefix: str = "", *, middleware: Sequence[str] | None = None) -> AppGroup:
+        """Returns an `AppGroup` that registers handlers under `prefix`."""
+        return self._root.group(prefix, middleware=middleware)
 
     def handler(self, name: str) -> Callable[[Handler], Handler]:
         """Decorator: attaches a function to a handler name already
