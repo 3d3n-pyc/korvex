@@ -129,3 +129,15 @@ def test_response_equality_compares_status_headers_and_body():
     assert a == b
     assert a != c
     assert a != "not a Response instance"
+
+
+def test_download_names_keep_the_header_well_formed(tmp_path):
+    path = tmp_path / "report.txt"
+    path.write_text("x")
+
+    def disposition(filename):
+        return Response.file(path, filename=filename).headers["Content-Disposition"]
+
+    assert disposition("report.txt") == 'attachment; filename="report.txt"'
+    assert disposition('a"b\\c\r\nX-Evil: 1\t.txt') == 'attachment; filename="abcX-Evil: 1.txt"'
+    assert disposition("été\r\n.txt") == "attachment; filename*=UTF-8''%C3%A9t%C3%A9%0D%0A.txt"

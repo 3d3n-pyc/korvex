@@ -217,7 +217,10 @@ async def _read_file(path: str | os.PathLike[str]) -> AsyncIterator[bytes]:
 
 
 def _attachment(filename: str) -> str:
-    """A `Content-Disposition` for a download, non-ASCII names included."""
+    """A `Content-Disposition` for a download, non-ASCII names included.
+    Quotes, backslashes and control characters are dropped from ASCII
+    names; non-ASCII names are percent-encoded, which covers them."""
     if filename.isascii():
-        return 'attachment; filename="{}"'.format(filename.replace('"', ""))
+        safe = "".join(c for c in filename if c.isprintable() and c not in '"\\')
+        return f'attachment; filename="{safe}"'
     return f"attachment; filename*=UTF-8''{quote(filename)}"
