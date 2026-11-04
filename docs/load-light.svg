@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="374" viewBox="0 0 760 374" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img">
+<title>Requests per second per framework on one CPU core, higher is better</title>
+<desc>Best case, 200 clients: Korvex: 33,874; Starlette: 30,624; Litestar: 18,245; Sanic: 15,751; FastAPI: 12,387; Django: 2,222.</desc>
+<rect width="760" height="374" rx="8" fill="#fcfcfb"/>
+<text x="20" y="32" font-size="16" font-weight="600" fill="#0b0b0b">Requests per second on one CPU core (higher is better)</text>
+<text x="20" y="54" font-size="12" fill="#52514e">Same app and server for all (uvicorn, 1 worker, 1,000 routes), 200 clients, random URLs. No request failed.</text>
+<circle cx="25" cy="78" r="5" fill="#104281"/>
+<text x="35" y="82" font-size="12" fill="#52514e">Best case</text>
+<circle cx="114.4" cy="78" r="5" fill="#86b6ef"/>
+<text x="124.4" y="82" font-size="12" fill="#52514e">Worst case: route declared after the 1,000 others</text>
+<line x1="190.0" y1="96" x2="190.0" y2="292" stroke="#e1e0d9" stroke-width="1"/>
+<text x="190.0" y="310" font-size="11" text-anchor="middle" fill="#898781">0</text>
+<line x1="305.0" y1="96" x2="305.0" y2="292" stroke="#e1e0d9" stroke-width="1"/>
+<text x="305.0" y="310" font-size="11" text-anchor="middle" fill="#898781">10k</text>
+<line x1="420.0" y1="96" x2="420.0" y2="292" stroke="#e1e0d9" stroke-width="1"/>
+<text x="420.0" y="310" font-size="11" text-anchor="middle" fill="#898781">20k</text>
+<line x1="535.0" y1="96" x2="535.0" y2="292" stroke="#e1e0d9" stroke-width="1"/>
+<text x="535.0" y="310" font-size="11" text-anchor="middle" fill="#898781">30k</text>
+<line x1="650.0" y1="96" x2="650.0" y2="292" stroke="#e1e0d9" stroke-width="1"/>
+<text x="650.0" y="310" font-size="11" text-anchor="middle" fill="#898781">40k</text>
+<line x1="190" y1="292" x2="650" y2="292" stroke="#c3c2b7" stroke-width="1"/>
+<text x="20" y="116" font-size="13" font-weight="600" fill="#0b0b0b">Korvex</text>
+<circle cx="579.5" cy="112" r="5" fill="#104281" stroke="#fcfcfb" stroke-width="2"/>
+<text x="666" y="116" font-size="12" font-weight="600" fill="#0b0b0b">33.9k</text>
+<text x="20" y="146" font-size="13" fill="#52514e">Starlette</text>
+<line x1="224.1" y1="142" x2="542.2" y2="142" stroke="#c3c2b7" stroke-width="2" stroke-linecap="round"/>
+<circle cx="224.1" cy="142" r="5" fill="#86b6ef" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="542.2" cy="142" r="5" fill="#104281" stroke="#fcfcfb" stroke-width="2"/>
+<text x="666" y="146" font-size="12" fill="#52514e">3.0k to 30.6k</text>
+<text x="20" y="176" font-size="13" fill="#52514e">Litestar</text>
+<circle cx="399.8" cy="172" r="5" fill="#104281" stroke="#fcfcfb" stroke-width="2"/>
+<text x="666" y="176" font-size="12" fill="#52514e">18.2k</text>
+<text x="20" y="206" font-size="13" fill="#52514e">Sanic</text>
+<circle cx="371.1" cy="202" r="5" fill="#104281" stroke="#fcfcfb" stroke-width="2"/>
+<text x="666" y="206" font-size="12" fill="#52514e">15.8k</text>
+<text x="20" y="236" font-size="13" fill="#52514e">FastAPI</text>
+<line x1="208.7" y1="232" x2="332.4" y2="232" stroke="#c3c2b7" stroke-width="2" stroke-linecap="round"/>
+<circle cx="208.7" cy="232" r="5" fill="#86b6ef" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="332.4" cy="232" r="5" fill="#104281" stroke="#fcfcfb" stroke-width="2"/>
+<text x="666" y="236" font-size="12" fill="#52514e">1.6k to 12.4k</text>
+<text x="20" y="266" font-size="13" fill="#52514e">Django</text>
+<line x1="202.4" y1="262" x2="215.6" y2="262" stroke="#c3c2b7" stroke-width="2" stroke-linecap="round"/>
+<circle cx="202.4" cy="262" r="5" fill="#86b6ef" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="215.6" cy="262" r="5" fill="#104281" stroke="#fcfcfb" stroke-width="2"/>
+<text x="666" y="266" font-size="12" fill="#52514e">1.1k to 2.2k</text>
+<text x="20" y="338" font-size="12" fill="#52514e">Starlette, FastAPI and Django try routes one by one, so the route&#8217;s position matters.</text>
+<text x="20" y="358" font-size="11" fill="#898781">Python 3.14.7, 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz</text>
+</svg>

@@ -34,11 +34,17 @@ module-name = "korvex._core"
 [dependency-groups]
 dev = [
     "django>=4.2.30",
+    "fastapi>=0.128.8",
     "flask>=3.1.3",
     "litestar>=2.25.0",
     "maturin>=1.14,<2.0",
+    "psutil>=7.2.2",
     "pytest>=8.4.2",
     "pytest-benchmark>=5.2.3",
     "sanic>=25.3.0",
     "starlette>=0.49.3",
+    "uvicorn>=0.39.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

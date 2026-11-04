@@ -1,12 +1,13 @@
 """`Router` and `RouteGroup`: registering routes.
 
-Matching happens in Rust (`korvex._core.Router`). This module only adds
-the `get`/`post`/... shortcuts and route groups on top.
+Matching happens in Rust (`korvex._core.Router`). This module adds a
+lookup cache, the `get`/`post`/... shortcuts and route groups on top.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from functools import lru_cache
 
 from korvex._core import Router as _CoreRouter
 
@@ -41,17 +42,34 @@ class _Shortcuts:
         self.route(path, handler, method="OPTIONS", middleware=middleware)
 
 
+CACHE_SIZE = 1024
+
+
 class Router(_CoreRouter, _Shortcuts):
     """Maps a path and method to a handler name.
 
-    `route`, `match`, `remove` and `routes` come from the Rust base class
-    (it is listed first, so its `route` wins over the placeholder in
-    `_Shortcuts`).
-
         router = Router()
         router.get("/users/{id:int}", "get_user")
-        router.match("/users/42")  # ("get_user", {"id": "42"}, [])
+        router.match("/users/42")  # ("get_user", {"id": "42"}, ())
+
+    The matching itself is done by the Rust base class. `match` results
+    are cached: the last `CACHE_SIZE` distinct lookups are answered without
+    matching again. Results are immutable (`params` is a read-only
+    mapping, `middleware` a tuple), so sharing them is safe. Adding or
+    removing a route clears the cache.
     """
+
+    def __init__(self) -> None:
+        self.match = lru_cache(maxsize=CACHE_SIZE)(super().match)
+
+    def route(self, path: str, handler: str, *, method: str = "GET", middleware: Sequence[str] | None = None) -> None:
+        super().route(path, handler, method=method, middleware=middleware)
+        self.match.cache_clear()
+
+    def remove(self, path: str, method: str = "GET") -> bool:
+        removed = super().remove(path, method)
+        self.match.cache_clear()
+        return removed
 
     def group(self, prefix: str = "", *, middleware: Sequence[str] | None = None) -> RouteGroup:
         """Returns a `RouteGroup` that registers routes under `prefix`."""

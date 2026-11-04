@@ -23,7 +23,10 @@ korvex/
   app.py      App and Request (ASGI)
   response.py Response and Headers
 tests/        Python tests (Rust tests live next to the code)
-benches/      comparisons with other routers
+benches/      comparisons with other frameworks:
+  bench_router.py  route matching alone
+  load_test.py     a real server under load (apps in benches/load/)
+  plot.py          draws the charts in docs/
 ```
 
 Only `lib.rs` uses PyO3; keep the rest plain Rust.

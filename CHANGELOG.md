@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0
+
+- `Router.match` caches the last 1,024 distinct lookups: 67 ns instead of
+  347 ns for a repeated URL in the benchmark, ahead of Litestar (92 ns)
+  and Sanic (211 ns) with their own caches. Adding or removing a route
+  clears the cache.
+- Breaking: since results are now shared, they are immutable. `params` is
+  a read-only mapping (it still compares equal to a dict and works with
+  `**params`) and `middleware` is a tuple, in `match()` and `routes()`.
+  `Request.path_params` is read-only too.
+- New load test (`benches/load_test.py`): the same app in Korvex,
+  Litestar, Starlette, Sanic, FastAPI and Django, flooded on one CPU core.
+  Korvex serves the most requests per second with the least memory; see
+  the README.
+
 ## 0.2.0
 
 Breaking: the API was simplified and made consistent.

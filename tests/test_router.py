@@ -20,7 +20,42 @@ def test_match_returns_handler_params_and_middleware():
     router = Router()
     router.route("/users/{id}", "get_user", middleware=["auth"])
 
-    assert router.match("/users/42") == ("get_user", {"id": "42"}, ["auth"])
+    assert router.match("/users/42") == ("get_user", {"id": "42"}, ("auth",))
+
+
+def test_match_results_are_immutable():
+    router = Router()
+    router.route("/users/{id}", "get_user", middleware=["auth"])
+    _, params, middleware = router.match("/users/42")
+
+    with pytest.raises(TypeError):
+        params["id"] = "666"
+    assert isinstance(middleware, tuple)
+    assert router.match("/users/42")[1] == {"id": "42"}
+
+
+def test_match_is_cached():
+    router = Router()
+    router.route("/users/{id}", "get_user")
+
+    first = router.match("/users/42")
+    assert router.match("/users/42") is first
+    assert router.match.cache_info().hits == 1
+
+
+def test_adding_or_removing_a_route_clears_the_cache():
+    router = Router()
+    router.route("/users/{id}", "get_user")
+    assert router.match("/users/me")[0] == "get_user"
+
+    router.get("/users/me", "get_me")  # through a shortcut
+    assert router.match("/users/me")[0] == "get_me"
+
+    router.group("/users").get("/me", "get_me_v2")  # through a group
+    assert router.match("/users/me")[0] == "get_me_v2"
+
+    router.remove("/users/me")
+    assert router.match("/users/me")[0] == "get_user"
 
 
 def test_match_returns_none_when_nothing_matches():
@@ -81,7 +116,7 @@ def test_method_shortcuts(shortcut):
     router = Router()
     getattr(router, shortcut)("/thing", "handler", middleware=["m"])
 
-    assert router.routes() == [("/thing", shortcut.upper(), "handler", ["m"])]
+    assert router.routes() == [("/thing", shortcut.upper(), "handler", ("m",))]
 
 
 @pytest.mark.parametrize(
@@ -118,9 +153,9 @@ def test_routes_lists_patterns_sorted():
     )
 
     assert router.routes() == [
-        ("/users", "GET", "list_users", []),
-        ("/users", "POST", "create_user", []),
-        ("/users/{id:int}", "GET", "get_user", []),
+        ("/users", "GET", "list_users", ()),
+        ("/users", "POST", "create_user", ()),
+        ("/users/{id:int}", "GET", "get_user", ()),
     ]
     assert repr(router) == "Router(routes=3)"
 
@@ -131,7 +166,7 @@ def test_remove():
     assert router.remove("/users/{id}") is False  # a different pattern
     assert router.remove("/users/{id:int}") is True
     assert router.remove("/users/{id:int}") is False
-    assert router.routes() == [("/users/{id:int}", "DELETE", "delete_user", [])]
+    assert router.routes() == [("/users/{id:int}", "DELETE", "delete_user", ())]
 
 
 def test_group_prefixes_paths_and_prepends_middleware():
@@ -141,8 +176,8 @@ def test_group_prefixes_paths_and_prepends_middleware():
     api.post("users", "create_user", middleware=["rate_limit"])
 
     assert router.routes() == [
-        ("/api/users", "GET", "list_users", ["auth"]),
-        ("/api/users", "POST", "create_user", ["auth", "rate_limit"]),
+        ("/api/users", "GET", "list_users", ("auth",)),
+        ("/api/users", "POST", "create_user", ("auth", "rate_limit")),
     ]
 
 
@@ -151,7 +186,7 @@ def test_nested_groups_combine_prefix_and_middleware():
     admin = router.group("/api", middleware=["auth"]).group("/admin", middleware=["admin"])
     admin.route("/stats", "stats", method="DELETE")
 
-    assert router.routes() == [("/api/admin/stats", "DELETE", "stats", ["auth", "admin"])]
+    assert router.routes() == [("/api/admin/stats", "DELETE", "stats", ("auth", "admin"))]
 
 
 def test_group_without_prefix_only_adds_middleware():
@@ -159,5 +194,5 @@ def test_group_without_prefix_only_adds_middleware():
     group = RouteGroup(router, middleware=["auth"])
     group.get("/", "home")
 
-    assert router.match("/") == ("home", {}, ["auth"])
+    assert router.match("/") == ("home", {}, ("auth",))
     assert repr(group) == "RouteGroup(prefix='', middleware=['auth'])"

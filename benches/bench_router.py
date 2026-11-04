@@ -4,10 +4,10 @@ Every router gets the same routes and the same lookups. Before timing,
 each lookup is checked to find the right handler, so no router is timed
 on a failure path.
 
-Sanic and Litestar keep an LRU cache of past lookups. The benchmark
-replays the same 200 paths, so with the cache they would only be timed
-on cache hits. Their plain names below bypass the cache to time the
-actual matching; the `(cached)` variants keep it.
+Korvex, Sanic and Litestar keep an LRU cache of past lookups. The
+benchmark replays the same 200 paths, so with the cache they would only
+be timed on cache hits. Their plain names below bypass the cache to time
+the actual matching; the `(cached)` variants keep it.
 
 Run:
     uv run pytest benches/bench_router.py --benchmark-only
@@ -40,6 +40,7 @@ from starlette.routing import Match  # noqa: E402
 from starlette.routing import Route as StarletteRoute  # noqa: E402
 
 from korvex import Router  # noqa: E402
+from korvex._core import Router as UncachedRouter  # noqa: E402
 
 ROUTE_COUNTS = [100, 1_000, 10_000]
 LOOKUPS = 200
@@ -72,6 +73,10 @@ def build_korvex(routes):
 
 
 def lookup_korvex(router, path):
+    return UncachedRouter.match(router, path)[0]
+
+
+def lookup_korvex_cached(router, path):
     return router.match(path)[0]
 
 
@@ -172,6 +177,7 @@ ROUTERS = {
     "flask": (build_flask, lookup_flask),
     "django": (build_django, lookup_django),
     "starlette": (build_starlette, lookup_starlette),
+    "korvex (cached)": (build_korvex, lookup_korvex_cached),
     "sanic (cached)": (build_sanic, lookup_sanic_cached),
     "litestar (cached)": (build_litestar, lookup_litestar_cached),
 }

@@ -69,3 +69,4 @@ Thumbs.db
 
 # --- Benchmark output (machine-specific) ---
 benches/results.json
+benches/load_results.json

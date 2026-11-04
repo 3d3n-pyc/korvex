@@ -4,11 +4,10 @@
 //! `tree`, `path` and `method` is plain Rust; only this file knows about
 //! Python.
 
-use std::collections::HashMap;
-
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyMappingProxy, PyTuple};
 
 mod method;
 mod path;
@@ -25,8 +24,13 @@ create_exception!(
      `allowed` lists the methods that are registered for it."
 );
 
-/// `(handler, params, middleware)`, e.g. `("get_user", {"id": "42"}, ["auth"])`.
-type Match = (String, HashMap<String, String>, Vec<String>);
+/// `(handler, params, middleware)`, e.g. `("get_user", {"id": "42"}, ("auth",))`.
+/// Fully immutable (params is a read-only mapping), so `korvex.Router` can
+/// cache and share it between calls.
+type Match<'py> = (String, Bound<'py, PyMappingProxy>, Bound<'py, PyTuple>);
+
+/// `(path, method, handler, middleware)`, as listed by `routes()`.
+type RouteInfo<'py> = (String, &'static str, String, Bound<'py, PyTuple>);
 
 /// The compiled router. `korvex.Router` subclasses it to add the
 /// `get`/`post`/... shortcuts and `group()`.
@@ -67,18 +71,18 @@ impl Router {
     /// matches `path`. Raises `MethodNotAllowed` if `path` matches but
     /// not for `method`.
     #[pyo3(name = "match", signature = (path, method = "GET"))]
-    fn find(&self, py: Python<'_>, path: &str, method: &str) -> PyResult<Option<Match>> {
+    fn find<'py>(&self, py: Python<'py>, path: &str, method: &str) -> PyResult<Option<Match<'py>>> {
         let mut params = Vec::new();
         match self.root.find(path, parse_method(method)?, &mut params) {
             Outcome::Matched(route) => {
-                let params = params
-                    .into_iter()
-                    .map(|(name, value)| (name.to_string(), value.to_string()))
-                    .collect();
+                let dict = PyDict::new(py);
+                for (name, value) in params {
+                    dict.set_item(name, value)?;
+                }
                 Ok(Some((
                     route.handler.clone(),
-                    params,
-                    route.middleware.clone(),
+                    PyMappingProxy::new(py, dict.as_mapping()),
+                    PyTuple::new(py, &route.middleware)?,
                 )))
             }
             Outcome::NotFound => Ok(None),
@@ -103,12 +107,15 @@ impl Router {
 
     /// Every route as `(path, method, handler, middleware)`, sorted by path
     /// then method.
-    fn routes(&self) -> Vec<(String, &'static str, String, Vec<String>)> {
+    fn routes<'py>(&self, py: Python<'py>) -> PyResult<Vec<RouteInfo<'py>>> {
         let mut routes = self.root.routes();
         routes.sort_by(|a, b| (&a.0, a.1).cmp(&(&b.0, b.1)));
         routes
             .into_iter()
-            .map(|(path, method, route)| (path, method.as_str(), route.handler, route.middleware))
+            .map(|(path, method, route)| {
+                let middleware = PyTuple::new(py, route.middleware)?;
+                Ok((path, method.as_str(), route.handler, middleware))
+            })
             .collect()
     }
 

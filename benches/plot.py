@@ -1,11 +1,13 @@
-"""Draws docs/benchmark-{light,dark}.svg from a bench_router.py JSON report.
+"""Draws the charts in docs/ from the benchmark results:
 
-Run: uv run python benches/plot.py benches/results.json
+- benchmark-{light,dark}.svg from benches/results.json (bench_router.py)
+- load-{light,dark}.svg from benches/load_results.json (load_test.py)
+
+Run: uv run python benches/plot.py
 """
 
 import json
 import math
-import sys
 from pathlib import Path
 
 ROUTE_COUNTS = [100, 1_000, 10_000]
@@ -124,7 +126,7 @@ def draw(timings, machine, theme):
             out.append(f'<text x="20" y="{row_y + 4}" font-size="12" font-weight="600" fill="{t["secondary"]}">{value}</text>')
             continue
         router = value
-        is_korvex = router == "korvex"
+        is_korvex = router.startswith("korvex")
         weight = ' font-weight="600"' if is_korvex else ""
         ink = t["primary"] if is_korvex else t["secondary"]
         out.append(f'<text x="32" y="{row_y + 4}" font-size="13"{weight} fill="{ink}">{label(router)}</text>')
@@ -148,14 +150,104 @@ def draw(timings, machine, theme):
     return "\n".join(out)
 
 
+LOAD_CLIENTS_INDEX = 3  # 200 clients, see CONCURRENCY in load_test.py
+LOAD_NAMES = {"fastapi": "FastAPI"}
+LOAD_MAX = 40_000
+
+
+def thousands(value):
+    return f"{value / 1000:.1f}k"
+
+
+def draw_load(results, machine, theme):
+    """Requests per second per framework: one dot for routers where route
+    order doesn't matter, a worst-to-best range for those where it does."""
+    t = THEMES[theme]
+    light, dark = t["dots"][0], t["dots"][2]
+
+    def rps(run):
+        return results[run]["ramp"][LOAD_CLIENTS_INDEX]["requests_per_second"]
+
+    frameworks = [run for run in results if "," not in run]
+    best = {f: rps(f"{f}, route first") if f"{f}, route first" in results else rps(f) for f in frameworks}
+    frameworks.sort(key=lambda f: -best[f])
+
+    def x_of_rps(value):
+        return PLOT_LEFT + value / LOAD_MAX * (PLOT_RIGHT - PLOT_LEFT)
+
+    top = 112
+    axis_y = top + ROW_HEIGHT * len(frameworks)
+    height = axis_y + 82
+    out = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{height}" '
+        f'viewBox="0 0 {WIDTH} {height}" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img">',
+        "<title>Requests per second per framework on one CPU core, higher is better</title>",
+        "<desc>Best case, 200 clients: "
+        + "; ".join(f"{LOAD_NAMES.get(f, f.capitalize())}: {best[f]:,.0f}" for f in frameworks)
+        + ".</desc>",
+        f'<rect width="{WIDTH}" height="{height}" rx="8" fill="{t["surface"]}"/>',
+        f'<text x="20" y="32" font-size="16" font-weight="600" fill="{t["primary"]}">'
+        "Requests per second on one CPU core (higher is better)</text>",
+        f'<text x="20" y="54" font-size="12" fill="{t["secondary"]}">'
+        "Same app and server for all (uvicorn, 1 worker, 1,000 routes), 200 clients, random URLs. No request failed.</text>",
+    ]
+    legend = [(dark, "Best case"), (light, "Worst case: route declared after the 1,000 others")]
+    legend_x = 20
+    for color, text in legend:
+        out.append(f'<circle cx="{legend_x + 5}" cy="78" r="5" fill="{color}"/>')
+        out.append(f'<text x="{legend_x + 15}" y="82" font-size="12" fill="{t["secondary"]}">{text}</text>')
+        legend_x += 30 + 6.6 * len(text)
+
+    for value in range(0, LOAD_MAX + 1, 10_000):
+        x = x_of_rps(value)
+        out.append(f'<line x1="{x:.1f}" y1="{top - 16}" x2="{x:.1f}" y2="{axis_y}" stroke="{t["grid"]}" stroke-width="1"/>')
+        tick = "0" if value == 0 else f"{value // 1000}k"
+        out.append(f'<text x="{x:.1f}" y="{axis_y + 18}" font-size="11" text-anchor="middle" fill="{t["muted"]}">{tick}</text>')
+    out.append(f'<line x1="{PLOT_LEFT}" y1="{axis_y}" x2="{PLOT_RIGHT}" y2="{axis_y}" stroke="{t["axis"]}" stroke-width="1"/>')
+
+    for i, framework in enumerate(frameworks):
+        y = top + i * ROW_HEIGHT
+        is_korvex = framework == "korvex"
+        weight = ' font-weight="600"' if is_korvex else ""
+        ink = t["primary"] if is_korvex else t["secondary"]
+        name = LOAD_NAMES.get(framework, framework.capitalize())
+        out.append(f'<text x="20" y="{y + 4}" font-size="13"{weight} fill="{ink}">{name}</text>')
+        value_label = thousands(best[framework])
+        if f"{framework}, route first" in results:
+            worst = rps(framework)
+            out.append(
+                f'<line x1="{x_of_rps(worst):.1f}" y1="{y}" x2="{x_of_rps(best[framework]):.1f}" y2="{y}" '
+                f'stroke="{t["axis"]}" stroke-width="2" stroke-linecap="round"/>'
+            )
+            out.append(f'<circle cx="{x_of_rps(worst):.1f}" cy="{y}" r="5" fill="{light}" stroke="{t["surface"]}" stroke-width="2"/>')
+            value_label = f"{thousands(worst)} to {value_label}"
+        out.append(f'<circle cx="{x_of_rps(best[framework]):.1f}" cy="{y}" r="5" fill="{dark}" stroke="{t["surface"]}" stroke-width="2"/>')
+        out.append(f'<text x="{PLOT_RIGHT + 16}" y="{y + 4}" font-size="12"{weight} fill="{ink}">{value_label}</text>')
+
+    out.append(
+        f'<text x="20" y="{axis_y + 46}" font-size="12" fill="{t["secondary"]}">'
+        "Starlette, FastAPI and Django try routes one by one, so the route&#8217;s position matters.</text>"
+    )
+    cpu = machine.get("cpu", {}).get("brand_raw", "")
+    out.append(f'<text x="20" y="{axis_y + 66}" font-size="11" fill="{t["muted"]}">Python {machine.get("python_version", "")}, {cpu}</text>')
+    out.append("</svg>")
+    return "\n".join(out)
+
+
 def main():
-    timings, machine = load(sys.argv[1] if len(sys.argv) > 1 else "benches/results.json")
     docs = Path("docs")
     docs.mkdir(exist_ok=True)
+    timings, machine = load("benches/results.json")
     for theme in THEMES:
         (docs / f"benchmark-{theme}.svg").write_text(draw(timings, machine, theme) + "\n")
     for router, by_count in sorted(timings.items(), key=lambda item: item[1][10_000]):
         print(f"{router:20}" + "".join(f"{duration(by_count[n]):>12}" for n in ROUTE_COUNTS))
+
+    load_results = Path("benches/load_results.json")
+    if load_results.exists():
+        results = json.loads(load_results.read_text())
+        for theme in THEMES:
+            (docs / f"load-{theme}.svg").write_text(draw_load(results, machine, theme) + "\n")
 
 
 if __name__ == "__main__":

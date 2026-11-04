@@ -8,7 +8,7 @@ handler and sends its `Response`.
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from inspect import isawaitable
 from typing import Any, Optional, Union
 from urllib.parse import parse_qs
@@ -33,7 +33,7 @@ class Request:
 
     __slots__ = ("method", "path", "headers", "query_params", "path_params", "_receive")
 
-    def __init__(self, scope: dict, receive: Callable[[], Awaitable[dict]], path_params: dict[str, str]) -> None:
+    def __init__(self, scope: dict, receive: Callable[[], Awaitable[dict]], path_params: Mapping[str, str]) -> None:
         self.method: str = scope["method"]
         self.path: str = scope["path"]
         self.headers = Headers((k.decode("latin-1"), v.decode("latin-1")) for k, v in scope["headers"])

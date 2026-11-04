@@ -1,0 +1,19 @@
+"""The load-test app, in Korvex. Every file in this folder is the same app:
+1,000 filler routes plus GET /users/{id:int} returning a small JSON."""
+
+from korvex import App, Response
+
+app = App()
+
+for i in range(1_000):
+    app.router.get(f"/r{i % 10}/{{id:int}}/detail_{i}", "filler")
+
+
+@app.handler("filler")
+async def filler(request, id):
+    return Response.text("filler")
+
+
+@app.get("/users/{id:int}")
+async def get_user(request, id):
+    return Response.json({"id": int(id), "name": f"user {id}"})

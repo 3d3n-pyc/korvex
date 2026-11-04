@@ -21,8 +21,8 @@ router = Router()
 router.get("/users/{id:int}", "get_user")
 router.post("/users", "create_user", middleware=["auth"])
 
-router.match("/users/42")         # ("get_user", {"id": "42"}, [])
-router.match("/users", "POST")    # ("create_user", {}, ["auth"])
+router.match("/users/42")         # ("get_user", {"id": "42"}, ())
+router.match("/users", "POST")    # ("create_user", {}, ("auth",))
 router.match("/nope")             # None
 router.match("/users", "DELETE")  # raises MethodNotAllowed, .allowed == ["POST"]
 ```
@@ -53,6 +53,10 @@ the most specific one wins: literal, then `{id:int}`/`{id:uuid}`, then
 | `group(prefix, *, middleware=None)`              | A `RouteGroup` (see below).                              |
 
 Invalid paths or methods raise `ValueError`.
+
+`match` keeps the last 1,024 distinct lookups in a cache, and adding or
+removing a route clears it. Its results are shared between calls, so they
+are immutable: `params` is a read-only mapping and `middleware` a tuple.
 
 ### Route groups
 
@@ -106,34 +110,71 @@ More in [`examples/`](examples/).
 
 ## Performance
 
+### Under load
+
+The same small app (1,000 routes, one JSON endpoint) in each framework,
+served the same way (uvicorn, one worker, one CPU core) and flooded with
+requests to random URLs by [oha](https://github.com/hatoo/oha):
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/load-dark.svg">
+  <img alt="Requests per second on one CPU core with 200 clients: Korvex 33.9k, Starlette 3.0k to 30.6k, Litestar 18.2k, Sanic 15.8k, FastAPI 1.6k to 12.4k, Django 1.1k to 2.2k." src="docs/load-light.svg">
+</picture>
+
+| Framework | Requests/s, 200 clients | p99 latency, 1,000 clients | RAM at rest, peak |
+|---|---|---|---|
+| **Korvex** | **33.9k** | **26 ms** | **35 MB, 46 MB** |
+| Starlette | 3.0k to 30.6k | 35 to 189 ms | 39 MB, 49 MB |
+| Litestar | 18.2k | 79 ms | 78 MB, 89 MB |
+| Sanic | 15.8k | 94 ms | 60 MB, 105 MB |
+| FastAPI | 1.6k to 12.4k | 57 to 351 ms | 66 MB, 77 MB |
+| Django | 1.1k to 2.2k | 1.3 to 1.9 s | 48 MB, 145 MB |
+
+- Every framework uses a full CPU core under load, so requests per second
+  is also how much work each one gets out of that core.
+- Starlette, FastAPI and Django try routes one by one: the ranges go from
+  the tested route declared after the 1,000 others to declared first.
+  Starlette's best case comes close to Korvex.
+- No request failed. Throughput holds steady as clients are added; latency
+  grows because requests queue, not because each one gets slower. After
+  the flood, memory stays flat and speed is back to normal.
+
+Reproduce with `uv run python benches/load_test.py` (needs
+`cargo install oha`, takes about 9 minutes).
+
+### Router alone
+
+Route matching only, without any server:
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/benchmark-dark.svg">
-  <img alt="Time per route lookup: Korvex 372 ns, Litestar 711 ns, Sanic 3.4 µs, Flask 3.5 µs, Django 1.3 ms, Starlette 1.4 ms at 10,000 routes. With their LRU cache and repeated URLs, Litestar takes 88 ns and Sanic 210 ns." src="docs/benchmark-light.svg">
+  <img alt="Time per route lookup at 10,000 routes. Without cache: Korvex 347 ns, Litestar 732 ns, Sanic 3.5 µs, Flask 3.5 µs, Django 1.3 ms, Starlette 1.5 ms. With each router's cache and repeated URLs: Korvex 67 ns, Litestar 92 ns, Sanic 211 ns." src="docs/benchmark-light.svg">
 </picture>
 
 Median time per lookup, 10,000 routes:
 
-| Router | Without cache | With the router's cache, same URLs repeated |
+| Router | First time a URL is seen | Same URL again (cached) |
 |---|---|---|
-| **Korvex** | **372 ns** | (no cache) |
-| Litestar | 711 ns | 88 ns |
-| Sanic | 3.4 µs | 210 ns |
-| Flask | 3.5 µs | |
-| Django | 1.3 ms | |
-| Starlette / FastAPI | 1.4 ms | |
+| **Korvex** | **347 ns** | **67 ns** |
+| Litestar | 732 ns | 92 ns |
+| Sanic | 3.5 µs | 211 ns |
+| Flask | 3.5 µs | (no cache) |
+| Django | 1.3 ms | (no cache) |
+| Starlette / FastAPI | 1.5 ms | (no cache) |
 
-- Korvex does the actual matching fastest, and its time stays flat as
-  routes are added. Django and Starlette try routes one by one, so they
-  slow down linearly.
-- Litestar and Sanic cache the last 1,024 lookups. When the same URLs come
-  back, that cache beats Korvex. It helps less with parameters
-  (`/users/1`, `/users/2`, ... are all different URLs).
-- This measures routing only. In a full app, the handler and the ASGI
-  server cost more than the router.
+- Korvex is the fastest in both cases, and its time stays flat as routes
+  are added. Django and Starlette try routes one by one, so they slow
+  down linearly.
+- Korvex, Litestar and Sanic cache the last 1,024 lookups. The cache helps
+  most with static URLs; URLs with parameters (`/users/1`, `/users/2`, ...)
+  are often different, so they hit it less.
+- With few routes, the server and the handler cost more than the router.
+  With many routes, a router that tries them one by one becomes the main
+  cost (see Under load).
 
 Reproduce with `uv run pytest benches/bench_router.py --benchmark-only
 --benchmark-json=benches/results.json`, then `uv run python benches/plot.py`
-to redraw the chart. Results depend on the machine: measure your own
+to redraw both charts. Results depend on the machine: measure your own
 workload before relying on any number.
 
 ## Development
