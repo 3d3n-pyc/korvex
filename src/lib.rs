@@ -12,6 +12,7 @@ use pyo3::types::{PyDict, PyMappingProxy, PyTuple, PyType};
 
 mod method;
 mod path;
+#[cfg(unix)] // the built-in server relies on Unix sockets; Windows uses an ASGI server
 mod server;
 mod tree;
 
@@ -157,7 +158,11 @@ fn parse_method(method: &str) -> PyResult<Method> {
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Router>()?;
-    m.add_function(wrap_pyfunction!(server::serve, m)?)?;
+    #[cfg(unix)]
+    {
+        m.add_class::<server::Server>()?;
+        m.add_class::<server::Responder>()?;
+    }
     m.add("MethodNotAllowed", m.py().get_type::<MethodNotAllowed>())?;
     Ok(())
 }

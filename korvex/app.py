@@ -7,9 +7,11 @@ handler and sends its `Response`.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import signal
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from email.message import Message
 from http import HTTPStatus
@@ -318,15 +320,7 @@ class App(_RouteDecorators):
 
         response = await self._respond(scope, receive)
         head = scope["method"] == "HEAD"
-        if head and not isinstance(response, StreamingResponse) and "Content-Length" not in response.headers:
-            response.headers.set("Content-Length", str(len(response.body)))
-        await send(
-            {
-                "type": "http.response.start",
-                "status": response.status,
-                "headers": [(n.encode("latin-1"), v.encode("latin-1")) for n, v in response.headers],
-            }
-        )
+        await send({"type": "http.response.start", "status": response.status, "headers": _raw_headers(response, head)})
         if head:  # same headers as GET, no body
             await send({"type": "http.response.body", "body": b""})
         elif isinstance(response, StreamingResponse):
@@ -402,32 +396,66 @@ class App(_RouteDecorators):
                 return
 
     def run(self, host: str = "127.0.0.1", port: int = 8000) -> None:
-        """Serves the app with Korvex's built-in server, until Ctrl+C.
-        Prototype: one process, no streaming, handlers that don't await."""
-        _core.serve(self._native, host, port)
+        """Serves the app with Korvex's built-in server until Ctrl+C or
+        SIGTERM: startup hooks first, shutdown hooks at the end. Linux and
+        macOS only; on Windows, use an ASGI server such as uvicorn."""
+        if not hasattr(_core, "Server"):
+            raise NotImplementedError("the built-in server needs Linux or macOS; use uvicorn on Windows")
+        asyncio.run(self._serve(host, port))
 
-    def _native(
-        self, method: str, path: str, query_string: bytes, headers: list[tuple[bytes, bytes]], body: bytes
-    ) -> tuple[int, list[tuple[bytes, bytes]], bytes]:
-        """Called by the built-in server for each request, with the request
-        already read in full. Runs the same dispatch as under ASGI, without
-        an event loop: a coroutine that never waits completes on its first step."""
+    async def _serve(self, host: str, port: int) -> None:
+        for hook in self._on_startup:  # if one raises, the server doesn't start
+            await _call(hook)
+        loop = asyncio.get_running_loop()
+        server = _core.Server(host, port)
+        stopping = asyncio.Event()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, stopping.set)
+        tasks: set[asyncio.Task] = set()
+
+        def take_requests() -> None:
+            for request in server.take():
+                task = _start_task(loop, self._serve_one(*request))
+                if not task.done():  # the loop only keeps weak references to tasks
+                    tasks.add(task)
+                    task.add_done_callback(tasks.discard)
+
+        loop.add_reader(server.fileno(), take_requests)
+        try:
+            await stopping.wait()
+        finally:
+            loop.remove_reader(server.fileno())
+            server.close()
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.remove_signal_handler(sig)
+            for hook in reversed(self._on_shutdown):
+                await _call(hook)
+
+    async def _serve_one(
+        self, method: str, path: str, query_string: bytes, headers: list, body: bytes, responder: Any
+    ) -> None:
+        """Runs one request taken from the built-in server, through the same
+        dispatch as under ASGI, and hands the response back to Rust."""
         scope = {"type": "http", "method": method, "path": unquote(path), "query_string": query_string, "headers": headers}
 
         async def receive() -> dict:
             return {"type": "http.request", "body": body, "more_body": False}
 
-        coroutine = self._respond(scope, receive)
-        try:
-            coroutine.send(None)
-        except StopIteration as done:
-            response: Response = done.value
+        response = await self._respond(scope, receive)
+        head = method == "HEAD"
+        raw_headers = _raw_headers(response, head)
+        if head:
+            responder.respond(response.status, raw_headers, b"")
+        elif isinstance(response, StreamingResponse):
+            responder.start_stream(response.status, raw_headers)
+            try:
+                async for chunk in response:
+                    if not responder.send_chunk(chunk):
+                        break  # the client is gone
+            finally:
+                responder.end_stream()
         else:
-            coroutine.close()
-            raise NotImplementedError("the prototype server can't run handlers that wait on I/O yet")
-        if isinstance(response, StreamingResponse):
-            raise NotImplementedError("the prototype server can't stream yet")
-        return response.status, [(n.encode("latin-1"), v.encode("latin-1")) for n, v in response.headers], response.body
+            responder.respond(response.status, raw_headers, response.body)
 
     def __repr__(self) -> str:
         return f"App(router={self.router!r})"
@@ -457,6 +485,25 @@ def _parse_multipart(body: bytes, boundary: str) -> FormData:
             value = UploadedFile(filename, headers.get_content_type(), data)
         form.setdefault(field, []).append(value)
     return form
+
+
+def _raw_headers(response: Response, head: bool) -> list[tuple[bytes, bytes]]:
+    """The response headers as bytes. A HEAD response keeps the Content-Length
+    its body would have had, since the body itself isn't sent."""
+    if head and not isinstance(response, StreamingResponse) and "Content-Length" not in response.headers:
+        response.headers.set("Content-Length", str(len(response.body)))
+    return [(name.encode("latin-1"), value.encode("latin-1")) for name, value in response.headers]
+
+
+# Python 3.12+: a request handler that doesn't wait completes right away,
+# without going through the loop's queue. Older versions schedule it.
+_eager_task_factory = getattr(asyncio, "eager_task_factory", None)
+
+
+def _start_task(loop: asyncio.AbstractEventLoop, coroutine: Any) -> asyncio.Task:
+    if _eager_task_factory is not None:
+        return _eager_task_factory(loop, coroutine)
+    return loop.create_task(coroutine)
 
 
 async def _call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
