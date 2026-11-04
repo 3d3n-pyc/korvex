@@ -9,6 +9,11 @@
 - `@app.on_startup` and `@app.on_shutdown` hooks, sync or async. Shutdown
   hooks run in reverse order; a failing startup hook stops the server from
   starting.
+- Error handling: `raise HTTPException(status, detail)` from a handler or
+  middleware, and `@app.exception_handler(...)` keyed by status (404 and
+  405 included) or exception class. Unhandled exceptions, including a
+  missing handler or middleware, now give a 500 logged to the `korvex`
+  logger instead of propagating to the server.
 - Load test: Falcon and BlackSheep added. Falcon comes within about 10% of
   Korvex; BlackSheep tries routes one by one, which costs it a lot with
   1,000 routes.

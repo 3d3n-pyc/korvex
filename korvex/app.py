@@ -8,7 +8,9 @@ handler and sends its `Response`.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from http import HTTPStatus
 from inspect import isawaitable
 from typing import Any, Optional, Union
 from urllib.parse import parse_qs
@@ -29,6 +31,23 @@ sends it right away; returning `None` moves on to the next step."""
 
 Hook = Callable[[], Union[None, Awaitable[None]]]
 """`() -> None`, sync or async, run when the server starts or stops."""
+
+ExceptionHandler = Callable[["Request", Exception], Union[Response, Awaitable[Response]]]
+"""`(request, exception) -> Response`, sync or async."""
+
+logger = logging.getLogger("korvex")
+
+
+class HTTPException(Exception):
+    """Raise it in a handler or middleware to answer with an HTTP error:
+    `raise HTTPException(404, "user not found")`. Without a `detail`, the
+    standard reason (`Not Found`) is used."""
+
+    def __init__(self, status: int, detail: str | None = None, *, headers: Iterable[tuple[str, str]] = ()) -> None:
+        self.status = status
+        self.detail = detail if detail is not None else HTTPStatus(status).phrase
+        self.headers = list(headers)
+        super().__init__(status, self.detail)
 
 
 class Request:
@@ -80,6 +99,7 @@ class App:
         self._middleware: dict[str, Middleware] = {}
         self._on_startup: list[Hook] = []
         self._on_shutdown: list[Hook] = []
+        self._exception_handlers: dict[int | type[Exception], ExceptionHandler] = {}
 
     def route(
         self, path: str, *, method: str = "GET", middleware: Sequence[str] | None = None
@@ -147,6 +167,17 @@ class App:
         self._on_shutdown.append(func)
         return func
 
+    def exception_handler(self, key: int | type[Exception]) -> Callable[[ExceptionHandler], ExceptionHandler]:
+        """Decorator: answers errors with the function's `Response`. `key` is
+        an HTTP status (`404`, also used for unknown paths) or an exception
+        class (`ValueError`, which also catches its subclasses)."""
+
+        def register(func: ExceptionHandler) -> ExceptionHandler:
+            self._exception_handlers[key] = func
+            return func
+
+        return register
+
     async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
         if scope["type"] == "lifespan":
             await self._lifespan(receive, send)
@@ -165,26 +196,55 @@ class App:
         await send({"type": "http.response.body", "body": response.body})
 
     async def _respond(self, scope: dict, receive: Callable) -> Response:
+        request = None
         try:
-            found = self.router.match(scope["path"], method=scope["method"])
-        except MethodNotAllowed as exc:
-            return Response.text("Method Not Allowed", status=405, headers=[("Allow", ", ".join(exc.allowed))])
-        if found is None:
-            return Response.text("Not Found", status=404)
+            try:
+                found = self.router.match(scope["path"], method=scope["method"])
+            except MethodNotAllowed as exc:
+                raise HTTPException(405, headers=[("Allow", ", ".join(exc.allowed))]) from None
+            if found is None:
+                raise HTTPException(404)
 
-        handler_name, path_params, middleware_names = found
-        request = Request(scope, receive, path_params)
+            handler_name, path_params, middleware_names = found
+            request = Request(scope, receive, path_params)
 
-        for name in middleware_names:
-            if name not in self._middleware:
-                raise LookupError(f"no middleware named {name!r}; register one with @app.middleware({name!r})")
-            early_response = await _call(self._middleware[name], request)
-            if early_response is not None:
-                return early_response
+            for name in middleware_names:
+                if name not in self._middleware:
+                    raise LookupError(f"no middleware named {name!r}; register one with @app.middleware({name!r})")
+                early_response = await _call(self._middleware[name], request)
+                if early_response is not None:
+                    return early_response
 
-        if handler_name not in self._handlers:
-            raise LookupError(f"no handler named {handler_name!r}; register one with @app.handler({handler_name!r})")
-        return await _call(self._handlers[handler_name], request, **path_params)
+            if handler_name not in self._handlers:
+                raise LookupError(f"no handler named {handler_name!r}; register one with @app.handler({handler_name!r})")
+            return await _call(self._handlers[handler_name], request, **path_params)
+        except Exception as exc:
+            # Unknown paths fail before the request is built: build it now.
+            return await self._handle_error(request or Request(scope, receive, {}), exc)
+
+    async def _handle_error(self, request: Request, exc: Exception) -> Response:
+        """Turns an exception into a response: the matching exception
+        handler's, the HTTPException's own, or a logged 500."""
+        handler = self._find_exception_handler(exc)
+        if handler is not None:
+            try:
+                return await _call(handler, request, exc)
+            except Exception:
+                logger.exception("exception handler failed for %s %s", request.method, request.path)
+                return Response.text("Internal Server Error", status=500)
+        if isinstance(exc, HTTPException):
+            return Response.text(exc.detail, status=exc.status, headers=exc.headers)
+        logger.exception("unhandled error in %s %s", request.method, request.path, exc_info=exc)
+        return Response.text("Internal Server Error", status=500)
+
+    def _find_exception_handler(self, exc: Exception) -> ExceptionHandler | None:
+        """By status for an HTTPException, then by class, closest first."""
+        if isinstance(exc, HTTPException) and exc.status in self._exception_handlers:
+            return self._exception_handlers[exc.status]
+        for cls in type(exc).__mro__:
+            if cls in self._exception_handlers:
+                return self._exception_handlers[cls]
+        return None
 
     async def _lifespan(self, receive: Callable, send: Callable) -> None:
         """Runs the hooks when the server sends its startup and shutdown events."""

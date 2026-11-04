@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from korvex import App, Response
+from korvex import App, HTTPException, Response
 
 
 def make_scope(method="GET", path="/", headers=None, query_string=b""):
@@ -124,12 +124,14 @@ def test_handler_decorator_attaches_to_an_existing_route_name():
     assert body == b"ok"
 
 
-def test_missing_handler_raises_lookup_error():
+def test_missing_handler_is_a_logged_500(caplog):
     app = App()
     app.router.route("/health", "health_check")
 
-    with pytest.raises(LookupError):
-        run_app(app, make_scope("GET", "/health"))
+    status, _, _ = response_from(run_app(app, make_scope("GET", "/health")))
+
+    assert status == 500
+    assert "no handler named 'health_check'" in caplog.text
 
 
 def test_middleware_short_circuits_before_the_handler_runs():
@@ -185,15 +187,117 @@ def test_async_middleware_is_supported():
     assert body == b"secret"
 
 
-def test_missing_middleware_raises_lookup_error():
+def test_missing_middleware_is_a_logged_500(caplog):
     app = App()
 
     @app.get("/secret", middleware=["auth"])
     def secret(request):
         return Response.text("secret")
 
-    with pytest.raises(LookupError):
-        run_app(app, make_scope("GET", "/secret"))
+    status, _, _ = response_from(run_app(app, make_scope("GET", "/secret")))
+
+    assert status == 500
+    assert "no middleware named 'auth'" in caplog.text
+
+
+def test_http_exception_becomes_its_response():
+    app = App()
+
+    @app.get("/users/{id:int}")
+    def get_user(request, id):
+        raise HTTPException(404, f"no user {id}", headers=[("X-Reason", "missing")])
+
+    status, headers, body = response_from(run_app(app, make_scope("GET", "/users/7")))
+
+    assert (status, body) == (404, b"no user 7")
+    assert ("X-Reason", "missing") in headers
+
+
+def test_http_exception_defaults_to_the_standard_reason():
+    assert HTTPException(403).detail == "Forbidden"
+
+
+def test_http_exception_works_in_middleware():
+    app = App()
+
+    @app.get("/secret", middleware=["auth"])
+    def secret(request):
+        return Response.text("secret")
+
+    @app.middleware("auth")
+    def auth(request):
+        raise HTTPException(401)
+
+    status, _, body = response_from(run_app(app, make_scope("GET", "/secret")))
+    assert (status, body) == (401, b"Unauthorized")
+
+
+def test_custom_404_and_405_handlers():
+    app = App()
+
+    @app.get("/users")
+    def users(request):
+        return Response.text("users")
+
+    @app.exception_handler(404)
+    def not_found(request, exc):
+        return Response.json({"error": f"nothing at {request.path}"}, status=404)
+
+    @app.exception_handler(405)
+    def not_allowed(request, exc):
+        return Response.json({"error": "wrong method"}, status=405, headers=exc.headers)
+
+    status, _, body = response_from(run_app(app, make_scope("GET", "/nope")))
+    assert (status, json.loads(body)) == (404, {"error": "nothing at /nope"})
+
+    status, headers, body = response_from(run_app(app, make_scope("DELETE", "/users")))
+    assert (status, json.loads(body)) == (405, {"error": "wrong method"})
+    assert ("Allow", "GET") in headers
+
+
+def test_exception_handler_by_class_catches_subclasses():
+    app = App()
+
+    class InvalidInput(ValueError):
+        pass
+
+    @app.get("/")
+    def home(request):
+        raise InvalidInput("bad")
+
+    @app.exception_handler(ValueError)
+    async def bad_value(request, exc):
+        return Response.text(f"invalid: {exc}", status=400)
+
+    status, _, body = response_from(run_app(app, make_scope("GET", "/")))
+    assert (status, body) == (400, b"invalid: bad")
+
+
+def test_unhandled_exception_is_a_logged_500(caplog):
+    app = App()
+
+    @app.get("/")
+    def home(request):
+        raise RuntimeError("boom")
+
+    status, _, body = response_from(run_app(app, make_scope("GET", "/")))
+
+    assert (status, body) == (500, b"Internal Server Error")
+    assert "unhandled error in GET /" in caplog.text
+    assert "RuntimeError: boom" in caplog.text
+
+
+def test_failing_exception_handler_is_a_logged_500(caplog):
+    app = App()
+
+    @app.exception_handler(404)
+    def broken(request, exc):
+        raise KeyError("oops")
+
+    status, _, _ = response_from(run_app(app, make_scope("GET", "/nope")))
+
+    assert status == 500
+    assert "exception handler failed" in caplog.text
 
 
 def test_request_headers_are_available_case_insensitively():
