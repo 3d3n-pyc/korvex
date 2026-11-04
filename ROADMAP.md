@@ -30,6 +30,13 @@ Two rules hold for everything below:
 - **Request:** cookies and form data.
 - **`app.group()`**, so groups and decorators work together without going
   through `app.router` and `@app.handler`.
+- **A deployment guide**, each case checked by a real deployment:
+  - behind nginx or Caddy, with uvicorn (the recommended setup today);
+  - in a Docker container (Fly.io, Railway, Cloud Run...);
+  - serverless: Vercel, and AWS Lambda through an adapter such as Mangum.
+    These run `App` through their own runtime, as plain ASGI, which is one
+    more reason it must stay ASGI. Startup and shutdown hooks have to work
+    there too.
 
 ## Behind a reverse proxy
 
