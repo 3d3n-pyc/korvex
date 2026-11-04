@@ -8,7 +8,7 @@ handler and sends its `Response`.
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from inspect import isawaitable
 from typing import Any, Optional, Union
 from urllib.parse import parse_qs
@@ -26,6 +26,9 @@ converted: `int` for `{id:int}`, `uuid.UUID` for `{id:uuid}`, else `str`."""
 Middleware = Callable[["Request"], Union[Optional[Response], Awaitable[Optional[Response]]]]
 """`(request) -> Response | None`, sync or async. Returning a `Response`
 sends it right away; returning `None` moves on to the next step."""
+
+Hook = Callable[[], Union[None, Awaitable[None]]]
+"""`() -> None`, sync or async, run when the server starts or stops."""
 
 
 class Request:
@@ -75,6 +78,8 @@ class App:
         self.router = router if router is not None else Router()
         self._handlers: dict[str, Handler] = {}
         self._middleware: dict[str, Middleware] = {}
+        self._on_startup: list[Hook] = []
+        self._on_shutdown: list[Hook] = []
 
     def route(
         self, path: str, *, method: str = "GET", middleware: Sequence[str] | None = None
@@ -129,9 +134,22 @@ class App:
 
         return register
 
+    def on_startup(self, func: Hook) -> Hook:
+        """Decorator: runs the function when the server starts, before the
+        first request (to open a database pool, for example). If it raises,
+        the server doesn't start."""
+        self._on_startup.append(func)
+        return func
+
+    def on_shutdown(self, func: Hook) -> Hook:
+        """Decorator: runs the function when the server stops. Shutdown
+        hooks run in reverse order, so what was opened first closes last."""
+        self._on_shutdown.append(func)
+        return func
+
     async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
         if scope["type"] == "lifespan":
-            await _acknowledge_lifespan(receive, send)
+            await self._lifespan(receive, send)
             return
         if scope["type"] != "http":
             raise NotImplementedError(f"unsupported ASGI scope type: {scope['type']!r}")
@@ -168,6 +186,17 @@ class App:
             raise LookupError(f"no handler named {handler_name!r}; register one with @app.handler({handler_name!r})")
         return await _call(self._handlers[handler_name], request, **path_params)
 
+    async def _lifespan(self, receive: Callable, send: Callable) -> None:
+        """Runs the hooks when the server sends its startup and shutdown events."""
+        while True:
+            message = await receive()
+            if message["type"] == "lifespan.startup":
+                if not await _run_hooks(self._on_startup, "startup", send):
+                    return
+            elif message["type"] == "lifespan.shutdown":
+                await _run_hooks(reversed(self._on_shutdown), "shutdown", send)
+                return
+
     def __repr__(self) -> str:
         return f"App(router={self.router!r})"
 
@@ -178,12 +207,14 @@ async def _call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     return await result if isawaitable(result) else result
 
 
-async def _acknowledge_lifespan(receive: Callable, send: Callable) -> None:
-    """Answers the server's startup/shutdown events (there are no hooks)."""
-    while True:
-        message = await receive()
-        if message["type"] == "lifespan.startup":
-            await send({"type": "lifespan.startup.complete"})
-        elif message["type"] == "lifespan.shutdown":
-            await send({"type": "lifespan.shutdown.complete"})
-            return
+async def _run_hooks(hooks: Iterable[Hook], event: str, send: Callable) -> bool:
+    """Runs `hooks` in order and tells the server whether `event` (startup
+    or shutdown) succeeded. Stops at the first hook that raises."""
+    try:
+        for hook in hooks:
+            await _call(hook)
+    except Exception as exc:
+        await send({"type": f"lifespan.{event}.failed", "message": f"{type(exc).__name__}: {exc}"})
+        return False
+    await send({"type": f"lifespan.{event}.complete"})
+    return True

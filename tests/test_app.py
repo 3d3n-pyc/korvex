@@ -245,7 +245,8 @@ def test_unsupported_scope_type_raises():
         run_app(app, {"type": "websocket"})
 
 
-def test_lifespan_startup_and_shutdown_are_acknowledged():
+def run_lifespan(app):
+    """Sends the startup then shutdown events, as a server would."""
     events = iter([{"type": "lifespan.startup"}, {"type": "lifespan.shutdown"}])
     sent = []
 
@@ -255,9 +256,68 @@ def test_lifespan_startup_and_shutdown_are_acknowledged():
     async def send(message):
         sent.append(message)
 
-    asyncio.run(App()({"type": "lifespan"}, receive, send))
+    asyncio.run(app({"type": "lifespan"}, receive, send))
+    return sent
 
-    assert sent == [{"type": "lifespan.startup.complete"}, {"type": "lifespan.shutdown.complete"}]
+
+def test_lifespan_startup_and_shutdown_are_acknowledged():
+    assert run_lifespan(App()) == [{"type": "lifespan.startup.complete"}, {"type": "lifespan.shutdown.complete"}]
+
+
+def test_startup_and_shutdown_hooks_run_in_order():
+    app = App()
+    calls = []
+
+    @app.on_startup
+    def open_db():
+        calls.append("open db")
+
+    @app.on_startup
+    async def open_cache():
+        calls.append("open cache")
+
+    @app.on_shutdown
+    async def close_db():
+        calls.append("close db")
+
+    @app.on_shutdown
+    def close_cache():
+        calls.append("close cache")
+
+    assert run_lifespan(app) == [{"type": "lifespan.startup.complete"}, {"type": "lifespan.shutdown.complete"}]
+    assert calls == ["open db", "open cache", "close cache", "close db"]
+
+
+def test_failing_startup_hook_stops_the_server_from_starting():
+    app = App()
+    calls = []
+
+    @app.on_startup
+    def broken():
+        raise ConnectionError("database unreachable")
+
+    @app.on_startup
+    def never_runs():
+        calls.append("second hook")
+
+    @app.on_shutdown
+    def not_after_a_failed_startup():
+        calls.append("shutdown")
+
+    assert run_lifespan(app) == [
+        {"type": "lifespan.startup.failed", "message": "ConnectionError: database unreachable"}
+    ]
+    assert calls == []
+
+
+def test_failing_shutdown_hook_is_reported():
+    app = App()
+
+    @app.on_shutdown
+    def broken():
+        raise RuntimeError("could not flush")
+
+    assert run_lifespan(app)[-1] == {"type": "lifespan.shutdown.failed", "message": "RuntimeError: could not flush"}
 
 
 def test_app_composes_with_route_groups():

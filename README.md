@@ -111,6 +111,10 @@ uvicorn mymodule:app
   with an `Allow` header.
 - Routes registered on `app.router` directly (for example through a
   group) are linked to a function with `@app.handler("name")`.
+- `@app.on_startup` and `@app.on_shutdown` run a function (sync or async)
+  when the server starts and stops, for example to open and close a
+  database pool. Shutdown hooks run in reverse order. If a startup hook
+  raises, the server doesn't start.
 
 More in [`examples/`](examples/).
 
