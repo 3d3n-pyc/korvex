@@ -17,13 +17,15 @@
 - `app.group(prefix, middleware=...)` returns an `AppGroup`: decorators
   (`@api.get(...)`) under a shared prefix and middleware, nestable.
 - `request.cookies`, `await request.form()` (urlencoded and multipart,
-  files as `UploadedFile`; other content types get a 415), and
+  files as `UploadedFile`; other content types get a 415, undecodable text
+  a 400), and
   `response.set_cookie()` / `response.delete_cookie()`. No new dependency.
 - `Response.stream(chunks)`, `Response.file(path, filename=None)` and
   `app.static(prefix, directory)`. Static paths that leave the directory
   (`..`, symlinks) get a 404.
 - `HEAD` requests are answered by the `GET` route without the body. They
   used to get a 405.
+- `await request.json()` answers invalid JSON with a 400 instead of a 500.
 - [Deployment guide](docs/deployment.md) with ready-to-copy files in
   `examples/deploy/`: uvicorn behind Caddy or nginx, Docker, AWS Lambda
   (Mangum) and Vercel, the last one checked on a real deployment.

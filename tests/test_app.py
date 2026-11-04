@@ -696,3 +696,28 @@ def test_hooks_work_with_and_without_parentheses():
     assert bare.__name__ == "bare" and called.__name__ == "called"  # decorators return the function
     run_lifespan(app)
     assert calls == ["startup bare", "startup called", "shutdown bare", "shutdown called"]
+
+
+def test_malformed_bodies_are_client_errors(caplog):
+    app = form_app()
+
+    @app.post("/json")
+    async def read_json(request):
+        return Response.json(await request.json())
+
+    def status_for(path, content_type, body):
+        scope = make_scope("POST", path, headers=[("Content-Type", content_type)])
+        return response_from(run_app(app, scope, body=body))[0]
+
+    bad_charset_part = (
+        b'--B\r\nContent-Disposition: form-data; name="f"\r\n'
+        b"Content-Type: text/plain; charset=not-a-charset\r\n\r\nx\r\n--B--\r\n"
+    )
+    bad_bytes_part = b'--B\r\nContent-Disposition: form-data; name="f"\r\n\r\n\xff\xfe\r\n--B--\r\n'
+
+    assert status_for("/json", "application/json", b"{not json") == 400
+    assert status_for("/json", "application/json", b"\xff\xfe\xfa") == 400
+    assert status_for("/form", "application/x-www-form-urlencoded", b"a=\xff") == 400
+    assert status_for("/form", "multipart/form-data; boundary=B", bad_charset_part) == 400
+    assert status_for("/form", "multipart/form-data; boundary=B", bad_bytes_part) == 400
+    assert "unhandled error" not in caplog.text  # client mistakes don't fill the logs

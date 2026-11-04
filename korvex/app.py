@@ -107,20 +107,28 @@ class Request:
         return b"".join(chunks)
 
     async def json(self) -> JSONValue:
-        """Reads the body and parses it as JSON."""
-        return json.loads(await self.body())
+        """Reads the body and parses it as JSON. A body that isn't valid
+        JSON is answered with a 400 error."""
+        try:
+            return json.loads(await self.body())
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise HTTPException(400, "invalid JSON body") from None
 
     async def form(self) -> FormData:
         """Reads the body as a form: each field name maps to its values, in
         order. Files from a `multipart/form-data` form are `UploadedFile`s.
-        Any other content type is answered with a 415 error."""
+        Any other content type is answered with a 415 error, and text that
+        can't be decoded with a 400."""
         content_type = Message()
         content_type["content-type"] = self.headers.get("content-type") or ""
         kind = content_type.get_content_type()
-        if kind == "application/x-www-form-urlencoded":
-            return parse_qs((await self.body()).decode(), keep_blank_values=True)  # type: ignore[return-value]
-        if kind == "multipart/form-data" and content_type.get_param("boundary"):
-            return _parse_multipart(await self.body(), str(content_type.get_param("boundary")))
+        try:
+            if kind == "application/x-www-form-urlencoded":
+                return parse_qs((await self.body()).decode(), keep_blank_values=True)  # type: ignore[return-value]
+            if kind == "multipart/form-data" and content_type.get_param("boundary"):
+                return _parse_multipart(await self.body(), str(content_type.get_param("boundary")))
+        except (UnicodeDecodeError, LookupError):  # bad bytes, or an unknown charset
+            raise HTTPException(400, "invalid form encoding") from None
         raise HTTPException(415, "expected a form (urlencoded or multipart)")
 
     def __repr__(self) -> str:

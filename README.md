@@ -106,7 +106,8 @@ uvicorn mymodule:app
   `path_params`, `cookies`, and `await request.body()`,
   `await request.json()`, `await request.form()`. A form maps each field
   to its values; files from a multipart form are `UploadedFile`s
-  (`filename`, `content_type`, `data`).
+  (`filename`, `content_type`, `data`). A body that can't be parsed is
+  answered with a 400.
 - `Response(body, status=, headers=)`, `Response.text(...)`,
   `Response.json(...)`, `Response.redirect(...)`, and
   `response.set_cookie(...)` / `response.delete_cookie(...)`.
