@@ -111,6 +111,11 @@ uvicorn mymodule:app
 - `Response(body, status=, headers=)`, `Response.text(...)`,
   `Response.json(...)`, `Response.redirect(...)`, and
   `response.set_cookie(...)` / `response.delete_cookie(...)`.
+- `Response.stream(chunks)` sends a body piece by piece, from a sync or
+  async generator. `Response.file(path, filename=None)` sends a file in
+  chunks (with `filename`, as a download). `app.static("/static",
+  "public")` serves a directory; paths that leave it get a 404.
+- `HEAD` requests are answered by the `GET` route, without the body.
 - Unknown paths get a 404; known paths with the wrong method get a 405
   with an `Allow` header.
 - `raise HTTPException(404, "user not found")` in a handler or middleware

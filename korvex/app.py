@@ -9,15 +9,17 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from email.message import Message
 from http import HTTPStatus
 from inspect import isawaitable
+from pathlib import Path
 from typing import Any, Optional, Union
 from urllib.parse import parse_qs, unquote
 
 from korvex._core import MethodNotAllowed
-from korvex.response import Headers, JSONValue, Response
+from korvex.response import Headers, JSONValue, Response, StreamingResponse
 from korvex.router import RouteGroup, Router
 
 # `Union`/`Optional` rather than `|`: these lines run at import time, and
@@ -244,6 +246,27 @@ class App(_RouteDecorators):
 
         return register
 
+    def static(self, prefix: str, directory: str | os.PathLike[str]) -> None:
+        """Serves the files in `directory` under `prefix`:
+        `app.static("/static", "public")` answers `/static/css/app.css` with
+        `public/css/app.css`. Paths that leave the directory get a 404."""
+        root = Path(directory).resolve()
+        if not root.is_dir():
+            raise NotADirectoryError(f"not a directory: {directory}")
+
+        def serve(request: Request, path: str) -> Response:
+            try:
+                target = (root / path).resolve()
+            except (OSError, ValueError):  # e.g. a null byte in the path
+                raise HTTPException(404) from None
+            if not target.is_relative_to(root) or not target.is_file():
+                raise HTTPException(404)
+            return Response.file(target)
+
+        name = f"korvex.static:{prefix}"  # unique per prefix: all serve() share a qualname
+        self.router.route(f"{prefix.rstrip('/')}/*path", name)
+        self._handlers[name] = serve
+
     def on_startup(self, func: Hook) -> Hook:
         """Decorator: runs the function when the server starts, before the
         first request (to open a database pool, for example). If it raises,
@@ -276,6 +299,9 @@ class App(_RouteDecorators):
             raise NotImplementedError(f"unsupported ASGI scope type: {scope['type']!r}")
 
         response = await self._respond(scope, receive)
+        head = scope["method"] == "HEAD"
+        if head and not isinstance(response, StreamingResponse) and "Content-Length" not in response.headers:
+            response.headers.set("Content-Length", str(len(response.body)))
         await send(
             {
                 "type": "http.response.start",
@@ -283,7 +309,14 @@ class App(_RouteDecorators):
                 "headers": [(n.encode("latin-1"), v.encode("latin-1")) for n, v in response.headers],
             }
         )
-        await send({"type": "http.response.body", "body": response.body})
+        if head:  # same headers as GET, no body
+            await send({"type": "http.response.body", "body": b""})
+        elif isinstance(response, StreamingResponse):
+            async for chunk in response:
+                await send({"type": "http.response.body", "body": chunk, "more_body": True})
+            await send({"type": "http.response.body", "body": b""})
+        else:
+            await send({"type": "http.response.body", "body": response.body})
 
     async def _respond(self, scope: dict, receive: Callable) -> Response:
         request = None
@@ -291,7 +324,10 @@ class App(_RouteDecorators):
             try:
                 found = self.router.match(scope["path"], method=scope["method"])
             except MethodNotAllowed as exc:
-                raise HTTPException(405, headers=[("Allow", ", ".join(exc.allowed))]) from None
+                if scope["method"] == "HEAD" and "GET" in exc.allowed:
+                    found = self.router.match(scope["path"], method="GET")  # HEAD is GET without the body
+                else:
+                    raise HTTPException(405, headers=[("Allow", ", ".join(exc.allowed))]) from None
             if found is None:
                 raise HTTPException(404)
 

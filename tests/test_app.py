@@ -38,9 +38,9 @@ def run_app(app, scope, body=b""):
 
 def response_from(sent):
     start = next(m for m in sent if m["type"] == "http.response.start")
-    body_msg = next(m for m in sent if m["type"] == "http.response.body")
+    body = b"".join(m["body"] for m in sent if m["type"] == "http.response.body")
     headers = [(name.decode("latin-1"), value.decode("latin-1")) for name, value in start["headers"]]
-    return start["status"], headers, body_msg["body"]
+    return start["status"], headers, body
 
 
 def test_get_decorator_registers_route_and_handler():
@@ -535,3 +535,139 @@ def test_set_and_delete_cookie():
         "session=abc; HttpOnly; Max-Age=3600; Path=/; SameSite=lax; Secure",
         'theme=""; Max-Age=0; Path=/; SameSite=lax',
     ]
+
+
+def test_streaming_response_sends_chunks_as_they_come():
+    app = App()
+
+    async def numbers():
+        for n in range(3):
+            yield f"{n}\n"
+
+    @app.get("/async")
+    def stream_async(request):
+        return Response.stream(numbers(), headers=[("Content-Type", "text/plain")])
+
+    @app.get("/sync")
+    def stream_sync(request):
+        return Response.stream([b"a", "b", b"c"])
+
+    sent = run_app(app, make_scope("GET", "/async"))
+    bodies = [m for m in sent if m["type"] == "http.response.body"]
+    assert [m["body"] for m in bodies] == [b"0\n", b"1\n", b"2\n", b""]
+    assert [m.get("more_body", False) for m in bodies] == [True, True, True, False]
+
+    assert response_from(run_app(app, make_scope("GET", "/sync")))[2] == b"abc"
+
+
+def test_file_response(tmp_path):
+    data = bytes(range(256)) * 600  # 150 KB: several chunks
+    (tmp_path / "report.pdf").write_bytes(data)
+    app = App()
+
+    @app.get("/download")
+    def download(request):
+        return Response.file(tmp_path / "report.pdf", filename="rapport été.pdf")
+
+    @app.get("/view")
+    def view(request):
+        return Response.file(tmp_path / "report.pdf")
+
+    status, headers, body = response_from(run_app(app, make_scope("GET", "/download")))
+    assert (status, body) == (200, data)
+    assert ("Content-Type", "application/pdf") in headers
+    assert ("Content-Length", str(len(data))) in headers
+    assert ("Content-Disposition", "attachment; filename*=UTF-8''rapport%20%C3%A9t%C3%A9.pdf") in headers
+
+    _, headers, _ = response_from(run_app(app, make_scope("GET", "/view")))
+    assert not any(name == "Content-Disposition" for name, _ in headers)
+
+
+def test_file_response_for_a_missing_file_raises_right_away(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        Response.file(tmp_path / "missing.txt")
+
+
+def test_static_files(tmp_path):
+    public = tmp_path / "public"
+    (public / "css").mkdir(parents=True)
+    (public / "css" / "app.css").write_text("body {}")
+    (tmp_path / "secret.txt").write_text("password")
+    (public / "link").symlink_to(tmp_path / "secret.txt")
+
+    app = App()
+    app.static("/static", public)
+
+    status, headers, body = response_from(run_app(app, make_scope("GET", "/static/css/app.css")))
+    assert (status, body) == (200, b"body {}")
+    assert ("Content-Type", "text/css") in headers
+
+    for path in [
+        "/static/missing.css",
+        "/static/css",  # a directory
+        "/static/../secret.txt",
+        "/static/css/../../secret.txt",
+        "/static//etc/passwd",
+        "/static/link",  # a symlink out of the directory
+        "/static/a\x00b",
+    ]:
+        status, _, _ = response_from(run_app(app, make_scope("GET", path)))
+        assert status == 404, path
+
+
+def test_static_needs_an_existing_directory(tmp_path):
+    with pytest.raises(NotADirectoryError):
+        App().static("/static", tmp_path / "nope")
+
+
+def test_two_static_directories_dont_overwrite_each_other(tmp_path):
+    for name in ["a", "b"]:
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "file.txt").write_text(name)
+    app = App()
+    app.static("/a", tmp_path / "a")
+    app.static("/b", tmp_path / "b")
+
+    assert response_from(run_app(app, make_scope("GET", "/a/file.txt")))[2] == b"a"
+    assert response_from(run_app(app, make_scope("GET", "/b/file.txt")))[2] == b"b"
+
+
+def test_head_uses_the_get_route_without_the_body(tmp_path):
+    (tmp_path / "f.txt").write_text("hello")
+    app = App()
+    app.static("/static", tmp_path)
+
+    @app.get("/page")
+    def page(request):
+        return Response.text("a page")
+
+    @app.post("/only-post")
+    def only_post(request):
+        return Response.text("posted")
+
+    sent = run_app(app, make_scope("HEAD", "/page"))
+    status, headers, body = response_from(sent)
+    assert (status, body) == (200, b"")
+    assert ("Content-Length", "6") in headers
+
+    status, headers, body = response_from(run_app(app, make_scope("HEAD", "/static/f.txt")))
+    assert (status, body) == (200, b"")
+    assert ("Content-Length", "5") in headers and ("Content-Type", "text/plain") in headers
+
+    status, headers, _ = response_from(run_app(app, make_scope("HEAD", "/only-post")))
+    assert status == 405 and ("Allow", "POST") in headers
+
+
+def test_an_explicit_head_route_wins():
+    app = App()
+
+    @app.get("/x")
+    def get_x(request):
+        return Response.text("get")
+
+    @app.head("/x")
+    def head_x(request):
+        return Response.text("", headers=[("X-From", "head")])
+
+    _, headers, _ = response_from(run_app(app, make_scope("HEAD", "/x")))
+    assert ("X-From", "head") in headers
