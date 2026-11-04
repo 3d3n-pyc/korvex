@@ -9,7 +9,7 @@ small [`main.py`](../examples/deploy/main.py).
 | [uvicorn behind a reverse proxy](#1-uvicorn-behind-a-reverse-proxy) | Your own server or VM | Yes, behind Caddy and nginx, in containers |
 | [Docker](#2-docker) | Fly.io, Railway, Render, Cloud Run, Kubernetes... | Yes, image built and run |
 | [AWS Lambda](#3-aws-lambda) | Serverless on AWS | Locally: handler called with an API Gateway event, not on AWS |
-| [Vercel](#4-vercel) | Serverless on Vercel | No, not deployed yet |
+| [Vercel](#4-vercel) | Serverless on Vercel | Yes, deployed and tested |
 
 ## 1. uvicorn behind a reverse proxy
 
@@ -105,18 +105,28 @@ first use, so they're reused while the Lambda instance stays warm.
 
 ## 4. Vercel
 
-Not deployed yet, so these steps follow Vercel's documentation for
-Python ASGI apps and haven't been checked:
+Vercel finds the app by itself: put it in `main.py` (or `app.py`) as a
+top-level `app` variable, and list `korvex` in `requirements.txt`
+(`examples/deploy/main.py` follows this layout). Then deploy:
 
-- Put the app in `main.py` (or `app.py`) as a top-level `app` variable,
-  and list `korvex` in `requirements.txt`.
-- If Vercel doesn't find it, point to it in `pyproject.toml`:
+```sh
+npx vercel deploy --prod
+```
 
-  ```toml
-  [tool.vercel]
-  entrypoint = "main:app"
-  ```
+If Vercel doesn't find the app, point to it in `pyproject.toml`:
+
+```toml
+[tool.vercel]
+entrypoint = "main:app"
+```
 
 Vercel runs the app through its own runtime, as ASGI, so the server
-options above don't apply. Expect the lookup cache to start empty on
-each new instance. If you deploy it, please report how it went.
+options above don't apply. What was checked on a real deployment:
+
+- Typed path parameters, cookies, forms (urlencoded and multipart, with
+  a file), streaming, `HTTPException`, 404 and 405, and `HEAD` all behave
+  as they do locally.
+- **Startup hooks run once per instance**, not on every request (unlike
+  AWS Lambda with Mangum): 20 requests in a row saw a single startup. So
+  opening a database pool in `@app.on_startup` is fine here.
+- Each new instance starts with an empty lookup cache.

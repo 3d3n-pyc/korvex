@@ -133,7 +133,8 @@ uvicorn mymodule:app
   raises, the server doesn't start.
 
 More in [`examples/`](examples/). To put it in production (behind nginx or
-Caddy, in Docker, on AWS Lambda), see the [deployment guide](docs/deployment.md).
+Caddy, in Docker, on AWS Lambda or Vercel), see the
+[deployment guide](docs/deployment.md).
 
 ## Performance
 

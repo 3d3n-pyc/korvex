@@ -82,8 +82,6 @@ whether free-threaded Python (3.14t) lets one process use several cores.
 
 ## Later
 
-- Deploy to Vercel for real; the deployment guide describes it but it
-  hasn't been checked yet.
 - Optional middleware for security headers and response compression,
   for deployments without a proxy.
 - OpenAPI generated from the registered routes.
