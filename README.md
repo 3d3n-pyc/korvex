@@ -133,7 +133,8 @@ uvicorn mymodule:app
   database pool. Shutdown hooks run in reverse order. If a startup hook
   raises, the server doesn't start.
 
-More in [`examples/`](examples/).
+More in [`examples/`](examples/). To put it in production (behind nginx or
+Caddy, in Docker, on AWS Lambda), see the [deployment guide](docs/deployment.md).
 
 ## Performance
 

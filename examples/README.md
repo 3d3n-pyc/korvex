@@ -6,6 +6,10 @@ Read them in order, each builds on the previous one:
 2. [route_groups.py](route_groups.py): shared prefixes and middleware.
 3. [asgi_app.py](asgi_app.py): a real web API served with uvicorn.
 
+[deploy/](deploy/) holds ready-to-copy deployment files (Dockerfile,
+Caddyfile, nginx.conf, AWS Lambda handler), explained in the
+[deployment guide](../docs/deployment.md).
+
 From the repository root, after `uv run maturin develop --release`:
 
 ```sh

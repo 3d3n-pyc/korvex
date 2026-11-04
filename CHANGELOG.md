@@ -24,6 +24,9 @@
   (`..`, symlinks) get a 404.
 - `HEAD` requests are answered by the `GET` route without the body. They
   used to get a 405.
+- [Deployment guide](docs/deployment.md) with ready-to-copy files in
+  `examples/deploy/`: uvicorn behind Caddy or nginx, Docker, AWS Lambda
+  (Mangum). Vercel is described but not deployed yet.
 - Load test: Falcon and BlackSheep added. Falcon comes within about 10% of
   Korvex; BlackSheep tries routes one by one, which costs it a lot with
   1,000 routes.
