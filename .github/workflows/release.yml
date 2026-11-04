@@ -58,7 +58,7 @@ jobs:
         run: |
           python3 -m venv test-env
           test-env/bin/pip install --quiet dist/*.whl pytest
-          test-env/bin/python -m pytest tests/ -v
+          test-env/bin/pytest tests/ -v
       - name: Test wheel (emulated aarch64)
         if: matrix.target == 'aarch64'
         uses: uraimo/run-on-arch-action@v3
@@ -72,7 +72,7 @@ jobs:
           run: |
             python3 -m venv test-env
             test-env/bin/pip install --quiet dist/*.whl pytest
-            test-env/bin/python -m pytest tests/ -v
+            test-env/bin/pytest tests/ -v
       - uses: actions/upload-artifact@v7
         with:
           name: wheels-linux-${{ matrix.target }}
@@ -104,7 +104,7 @@ jobs:
         run: |
           python3 -m venv test-env
           test-env/bin/pip install --quiet dist/*.whl pytest
-          test-env/bin/python -m pytest tests/ -v
+          test-env/bin/pytest tests/ -v
       - uses: actions/upload-artifact@v7
         with:
           name: wheels-macos-${{ matrix.target }}
@@ -127,7 +127,7 @@ jobs:
         run: |
           python -m venv test-env
           test-env/Scripts/pip install --quiet dist/*.whl pytest
-          test-env/Scripts/python -m pytest tests/ -v
+          test-env/Scripts/pytest tests/ -v
       - uses: actions/upload-artifact@v7
         with:
           name: wheels-windows
@@ -155,7 +155,7 @@ jobs:
         run: |
           python3 -m venv test-env
           test-env/bin/pip install --quiet dist/*.tar.gz pytest
-          test-env/bin/python -m pytest tests/ -v
+          test-env/bin/pytest tests/ -v
       - uses: actions/upload-artifact@v7
         with:
           name: wheels-sdist
