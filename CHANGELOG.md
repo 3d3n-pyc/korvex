@@ -6,9 +6,9 @@
   gives an `int` and `{id:uuid}` a `uuid.UUID`, in `Router.match()` and as
   handler arguments; other values stay strings. The conversion happens in
   Rust, which already checked the format.
-- `@app.on_startup` and `@app.on_shutdown` hooks, sync or async. Shutdown
-  hooks run in reverse order; a failing startup hook stops the server from
-  starting.
+- `@app.on_startup` and `@app.on_shutdown` hooks, sync or async, with or
+  without parentheses. Shutdown hooks run in reverse order; a failing
+  startup hook stops the server from starting.
 - Error handling: `raise HTTPException(status, detail)` from a handler or
   middleware, and `@app.exception_handler(...)` keyed by status (404 and
   405 included) or exception class. Unhandled exceptions, including a

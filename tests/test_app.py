@@ -671,3 +671,28 @@ def test_an_explicit_head_route_wins():
 
     _, headers, _ = response_from(run_app(app, make_scope("HEAD", "/x")))
     assert ("X-From", "head") in headers
+
+
+def test_hooks_work_with_and_without_parentheses():
+    app = App()
+    calls = []
+
+    @app.on_startup
+    def bare():
+        calls.append("startup bare")
+
+    @app.on_startup()
+    async def called():
+        calls.append("startup called")
+
+    @app.on_shutdown()
+    def shutdown_called():
+        calls.append("shutdown called")
+
+    @app.on_shutdown
+    def shutdown_bare():
+        calls.append("shutdown bare")
+
+    assert bare.__name__ == "bare" and called.__name__ == "called"  # decorators return the function
+    run_lifespan(app)
+    assert calls == ["startup bare", "startup called", "shutdown bare", "shutdown called"]

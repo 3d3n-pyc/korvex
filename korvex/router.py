@@ -60,15 +60,16 @@ class Router(_CoreRouter, _Shortcuts):
     """
 
     def __init__(self) -> None:
-        self.match = lru_cache(maxsize=CACHE_SIZE)(super().match)
+        self._cache = lru_cache(maxsize=CACHE_SIZE)(super().match)
+        self.match = self._cache
 
     def route(self, path: str, handler: str, *, method: str = "GET", middleware: Sequence[str] | None = None) -> None:
         super().route(path, handler, method=method, middleware=middleware)
-        self.match.cache_clear()
+        self._cache.cache_clear()
 
     def remove(self, path: str, method: str = "GET") -> bool:
         removed = super().remove(path, method)
-        self.match.cache_clear()
+        self._cache.cache_clear()
         return removed
 
     def group(self, prefix: str = "", *, middleware: Sequence[str] | None = None) -> RouteGroup:

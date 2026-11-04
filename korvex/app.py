@@ -15,7 +15,7 @@ from email.message import Message
 from http import HTTPStatus
 from inspect import isawaitable
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, overload
 from urllib.parse import parse_qs, unquote
 
 from korvex._core import MethodNotAllowed
@@ -115,7 +115,7 @@ class Request:
         order. Files from a `multipart/form-data` form are `UploadedFile`s.
         Any other content type is answered with a 415 error."""
         content_type = Message()
-        content_type["content-type"] = self.headers.get("content-type", "")
+        content_type["content-type"] = self.headers.get("content-type") or ""
         kind = content_type.get_content_type()
         if kind == "application/x-www-form-urlencoded":
             return parse_qs((await self.body()).decode(), keep_blank_values=True)  # type: ignore[return-value]
@@ -267,18 +267,27 @@ class App(_RouteDecorators):
         self.router.route(f"{prefix.rstrip('/')}/*path", name)
         self._handlers[name] = serve
 
-    def on_startup(self, func: Hook) -> Hook:
+    # Both `@app.on_startup` and `@app.on_startup()` work: the overloads
+    # tell type checkers so, and _add_hook handles the two calls.
+    @overload
+    def on_startup(self, func: Hook) -> Hook: ...
+    @overload
+    def on_startup(self, func: None = None) -> Callable[[Hook], Hook]: ...
+    def on_startup(self, func: Hook | None = None) -> Hook | Callable[[Hook], Hook]:
         """Decorator: runs the function when the server starts, before the
         first request (to open a database pool, for example). If it raises,
-        the server doesn't start."""
-        self._on_startup.append(func)
-        return func
+        the server doesn't start. Works with or without parentheses."""
+        return _add_hook(self._on_startup, func)
 
-    def on_shutdown(self, func: Hook) -> Hook:
+    @overload
+    def on_shutdown(self, func: Hook) -> Hook: ...
+    @overload
+    def on_shutdown(self, func: None = None) -> Callable[[Hook], Hook]: ...
+    def on_shutdown(self, func: Hook | None = None) -> Hook | Callable[[Hook], Hook]:
         """Decorator: runs the function when the server stops. Shutdown
-        hooks run in reverse order, so what was opened first closes last."""
-        self._on_shutdown.append(func)
-        return func
+        hooks run in reverse order, so what was opened first closes last.
+        Works with or without parentheses."""
+        return _add_hook(self._on_shutdown, func)
 
     def exception_handler(self, key: int | type[Exception]) -> Callable[[ExceptionHandler], ExceptionHandler]:
         """Decorator: answers errors with the function's `Response`. `key` is
@@ -417,6 +426,15 @@ async def _call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """Calls a sync or async function and returns its result."""
     result = func(*args, **kwargs)
     return await result if isawaitable(result) else result
+
+
+def _add_hook(hooks: list[Hook], func: Hook | None) -> Hook | Callable[[Hook], Hook]:
+    """Registers `func` (`@app.on_startup`), or returns a decorator that
+    will (`@app.on_startup()`)."""
+    if func is None:
+        return lambda f: _add_hook(hooks, f)  # type: ignore[return-value]
+    hooks.append(func)
+    return func
 
 
 async def _run_hooks(hooks: Iterable[Hook], event: str, send: Callable) -> bool:

@@ -130,7 +130,8 @@ uvicorn mymodule:app
 - `@app.on_startup` and `@app.on_shutdown` run a function (sync or async)
   when the server starts and stops, for example to open and close a
   database pool. Shutdown hooks run in reverse order. If a startup hook
-  raises, the server doesn't start.
+  raises, the server doesn't start. Both `@app.on_startup` and
+  `@app.on_startup()` work.
 
 More in [`examples/`](examples/). To put it in production (behind nginx or
 Caddy, in Docker, on AWS Lambda or Vercel), see the
