@@ -1,12 +1,4 @@
-"""Patches Cargo.toml's package version to match the git tag that
-triggered this workflow run (e.g. tag "v0.1.0" -> version = "0.1.0").
-
-Cargo.toml is the single source of truth for the version — pyproject.toml
-declares `dynamic = ["version"]` so maturin reads it from there. This
-script exists so the checked-in Cargo.toml can stay at a fixed dev
-placeholder; the real version only ever comes from the tag that triggers
-a release build, never from a manually-edited file.
-"""
+"""Sets the version in Cargo.toml from the git tag (v0.2.0 -> 0.2.0)."""
 
 import os
 import re
@@ -18,10 +10,7 @@ version = ref_name.removeprefix("v")
 
 cargo_toml = Path("Cargo.toml")
 content = cargo_toml.read_text()
-# Matches the [package] table's own `version = "..."` specifically (the
-# shortest span from `[package]` to the next `version = ` line) rather
-# than a bare `^version = ".*"$` anywhere in the file, which would also
-# match [dependencies.pyo3]'s own `version = "0.29.0"` below it.
+# The first `version = ` after [package], not the dependencies' ones.
 pattern = re.compile(r'(\[package\].*?\nversion = )".*?"', re.DOTALL)
 patched, count = pattern.subn(rf'\1"{version}"', content, count=1)
 if count != 1:

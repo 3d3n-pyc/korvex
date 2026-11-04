@@ -1,4 +1,4 @@
-"""Benchmark: korvex.App's full request-handling cost (match_route +
+"""Benchmark: korvex.App's full request-handling cost (match +
 middleware + handler + Response + ASGI send) vs an equivalent minimal
 Starlette app, calling each directly via the ASGI protocol — no real
 socket or server involved, so this isolates in-process framework

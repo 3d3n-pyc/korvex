@@ -1,10 +1,4 @@
-"""Tests for korvex.App / korvex.Request — a minimal ASGI application.
-
-Exercised directly against the ASGI calling convention (scope/receive/send),
-with no server or extra dependency involved: `asyncio.run` drives the
-coroutine, and plain dicts/closures stand in for what a real ASGI server
-would send/collect.
-"""
+"""Tests for `App` and `Request`, called directly through ASGI (no server)."""
 
 import asyncio
 import json
@@ -119,7 +113,7 @@ def test_returns_405_with_allow_header_for_wrong_method():
 
 def test_handler_decorator_attaches_to_an_existing_route_name():
     app = App()
-    app.router.add_route("/health", "health_check")
+    app.router.route("/health", "health_check")
 
     @app.handler("health_check")
     def health(request):
@@ -132,7 +126,7 @@ def test_handler_decorator_attaches_to_an_existing_route_name():
 
 def test_missing_handler_raises_lookup_error():
     app = App()
-    app.router.add_route("/health", "health_check")
+    app.router.route("/health", "health_check")
 
     with pytest.raises(LookupError):
         run_app(app, make_scope("GET", "/health"))
@@ -264,21 +258,6 @@ def test_lifespan_startup_and_shutdown_are_acknowledged():
     asyncio.run(App()({"type": "lifespan"}, receive, send))
 
     assert sent == [{"type": "lifespan.startup.complete"}, {"type": "lifespan.shutdown.complete"}]
-
-
-def test_app_repr_reports_handler_and_middleware_counts():
-    app = App()
-
-    @app.get("/health")
-    def health(request):
-        return Response.text("ok")
-
-    @app.middleware("auth")
-    def auth(request):
-        return None
-
-    assert "handlers=1" in repr(app)
-    assert "middleware=1" in repr(app)
 
 
 def test_app_composes_with_route_groups():

@@ -1,217 +1,195 @@
-"""Benchmark: korvex.Router vs other Python routers, at increasing scale.
+"""Benchmark: route lookup in korvex vs other Python routers.
 
-Run with:
-    uv run pytest benches/bench_router.py --benchmark-only -v
+Every router gets the same routes and the same lookups. Before timing,
+each lookup is checked to find the right handler, so no router is timed
+on a failure path.
 
-To add a new competitor, add one entry to ROUTERS below with a
-`build(routes)` function and a `lookup(router, path)` function.
+Sanic and Litestar keep an LRU cache of past lookups. The benchmark
+replays the same 200 paths, so with the cache they would only be timed
+on cache hits. Their plain names below bypass the cache to time the
+actual matching; the `(cached)` variants keep it.
+
+Run:
+    uv run pytest benches/bench_router.py --benchmark-only
+    uv run pytest benches/bench_router.py --benchmark-only --benchmark-json=benches/results.json
+    uv run python benches/plot.py   # draws docs/benchmark-{light,dark}.svg
+
+To add a router: write `build(routes) -> router` and
+`lookup(router, path) -> handler name`, then add them to ROUTERS.
 """
 
-import pytest
 import itertools
 import random
 import re
 
 import django
+import pytest
 from django.conf import settings as django_settings
-from flask import Flask
-from sanic import Sanic
-from starlette.requests import Request
-from starlette.routing import Match, Route as StarletteRoute
-from starlette.routing import Router as StarletteRouter
-
-from korvex import Router as KorvexRouter
-
-ROUTE_COUNTS = [100, 1_000, 10_000]
-SAMPLE_SIZE = 200
-SEED = 42
-
-RESOURCES = [
-    "users", "posts", "comments", "orders", "products",
-    "teams", "projects", "tasks", "invoices", "sessions",
-]
-
-
-def _generate_routes(n: int) -> list[str]:
-    """Generates a reproducible mix of static and dynamic routes,
-    using Korvex's `{param}` syntax as the canonical format.
-    """
-    rng = random.Random(SEED)
-    routes = []
-    for i in range(n):
-        resource = rng.choice(RESOURCES)
-        if rng.random() < 0.5:
-            routes.append(f"/{resource}/{i}/static")
-        else:
-            routes.append(f"/{resource}/{{id}}/detail_{i}")
-    return routes
-
-
-def _lookup_paths(routes: list[str], sample_size: int) -> list[str]:
-    rng = random.Random(SEED + 1)
-    sample = rng.sample(routes, min(sample_size, len(routes)))
-    return [path.replace("{id}", "123") for path in sample]
-
-
-# --- korvex --------------------------------------------------------------
-
-
-def _build_korvex(routes: list[str]) -> KorvexRouter:
-    router = KorvexRouter()
-    for i, path in enumerate(routes):
-        router.add_route(path, f"handler_{i}")
-    return router
-
-
-def _lookup_korvex(router: KorvexRouter, path: str) -> None:
-    router.match_route(path)
-
-
-# --- starlette -------------------------------------------------------------
-
-
-async def _starlette_endpoint(request: Request) -> None:
-    return None
-
-
-def _build_starlette(routes: list[str]) -> StarletteRouter:
-    router = StarletteRouter()
-    for path in routes:
-        router.routes.append(StarletteRoute(path, _starlette_endpoint))
-    return router
-
-
-def _lookup_starlette(router: StarletteRouter, path: str) -> None:
-    scope = {"type": "http", "path": path, "method": "GET"}
-    for route in router.routes:
-        match, _ = route.matches(scope)
-        if match == Match.FULL:
-            break
-
-
-# --- flask -----------------------------------------------------------------
-
-
-def _flask_endpoint():
-    return ""
-
-
-def _to_flask_path(path: str) -> str:
-    """Converts `{param}` (korvex syntax) to `<param>` (Flask syntax)."""
-    return path.replace("{", "<").replace("}", ">")
-
-
-def _build_flask(routes: list[str]) -> Flask:
-    app = Flask(__name__)
-    for i, path in enumerate(routes):
-        app.add_url_rule(_to_flask_path(path), f"handler_{i}", _flask_endpoint)
-    return app
-
-
-def _lookup_flask(app: Flask, path: str) -> None:
-    adapter = app.url_map.bind("localhost")
-    try:
-        adapter.match(path, method="GET")
-    except Exception:
-        pass
-
-
-# --- django ------------------------------------------------------------
 
 if not django_settings.configured:
-    django_settings.configure(DEBUG=True, ALLOWED_HOSTS=["*"])
+    django_settings.configure(DEBUG=False, ALLOWED_HOSTS=["*"])
     django.setup()
 
 from django.urls import path as django_path  # noqa: E402
 from django.urls.resolvers import RegexPattern, URLResolver  # noqa: E402
+from flask import Flask  # noqa: E402
+from litestar import Litestar  # noqa: E402
+from litestar import get as litestar_get  # noqa: E402
+from sanic import Sanic  # noqa: E402
+from starlette.routing import Match  # noqa: E402
+from starlette.routing import Route as StarletteRoute  # noqa: E402
+
+from korvex import Router  # noqa: E402
+
+ROUTE_COUNTS = [100, 1_000, 10_000]
+LOOKUPS = 200
+SEED = 42
+RESOURCES = ["users", "posts", "comments", "orders", "products", "teams", "projects", "tasks", "invoices", "sessions"]
 
 
-def _django_endpoint(request, **kwargs):
-    return None
+def generate_routes(n: int) -> list[str]:
+    """Half static (`/users/7/static`), half with a parameter (`/users/{id}/detail_7`)."""
+    rng = random.Random(SEED)
+    routes = []
+    for i in range(n):
+        resource = rng.choice(RESOURCES)
+        routes.append(f"/{resource}/{i}/static" if rng.random() < 0.5 else f"/{resource}/{{id}}/detail_{i}")
+    return routes
 
 
-def _to_django_path(path: str) -> str:
-    """Converts `{param}` (korvex syntax) to `<str:param>` (Django syntax)."""
-    converted = re.sub(r"\{(\w+)\}", r"<str:\1>", path)
-    return converted.lstrip("/")
+def handler_name(i: int) -> str:
+    return f"handler_{i}"
 
 
-def _build_django(routes: list[str]) -> URLResolver:
-    patterns = [django_path(_to_django_path(p), _django_endpoint) for p in routes]
-    return URLResolver(RegexPattern(r"^/", name="root"), patterns)
+# --- korvex ---
 
 
-def _lookup_django(resolver: URLResolver, path: str) -> None:
-    try:
-        resolver.resolve(path)
-    except Exception:
-        pass
-
-
-# --- sanic -------------------------------------------------------------
-
-
-def _sanic_endpoint(request):
-    return None
-
-
-def _to_sanic_path(path: str) -> str:
-    """Converts `{param}` (korvex syntax) to `<param:str>` (Sanic syntax)."""
-    return re.sub(r"\{(\w+)\}", r"<\1:str>", path)
-
-
-def _build_sanic(routes: list[str]) -> Sanic:
-    Sanic.test_mode = True
-    app = Sanic(f"bench_{id(routes)}")
+def build_korvex(routes):
+    router = Router()
     for i, path in enumerate(routes):
-        app.add_route(_sanic_endpoint, _to_sanic_path(path), name=f"handler_{i}")
+        router.route(path, handler_name(i))
+    return router
+
+
+def lookup_korvex(router, path):
+    return router.match(path)[0]
+
+
+# --- starlette (also FastAPI's router): tries each route in turn ---
+
+
+async def endpoint(request):
+    return None
+
+
+def build_starlette(routes):
+    return [StarletteRoute(path, endpoint, name=handler_name(i)) for i, path in enumerate(routes)]
+
+
+def lookup_starlette(routes, path):
+    scope = {"type": "http", "path": path, "method": "GET"}
+    for route in routes:
+        if route.matches(scope)[0] == Match.FULL:
+            return route.name
+
+
+# --- flask (werkzeug) ---
+
+
+def build_flask(routes):
+    app = Flask(__name__)
+    for i, path in enumerate(routes):
+        app.add_url_rule(path.replace("{", "<").replace("}", ">"), handler_name(i), endpoint)
+    return app.url_map.bind("localhost")
+
+
+def lookup_flask(adapter, path):
+    return adapter.match(path, method="GET")[0]
+
+
+# --- django ---
+
+
+def build_django(routes):
+    patterns = [
+        django_path(re.sub(r"\{(\w+)\}", r"<str:\1>", path).lstrip("/"), endpoint, name=handler_name(i))
+        for i, path in enumerate(routes)
+    ]
+    return URLResolver(RegexPattern(r"^/"), patterns)
+
+
+def lookup_django(resolver, path):
+    return resolver.resolve(path).url_name
+
+
+# --- sanic ---
+
+
+def build_sanic(routes):
+    Sanic.test_mode = True
+    app = Sanic(f"bench_{len(routes)}")
+    for i, path in enumerate(routes):
+        app.add_route(endpoint, re.sub(r"\{(\w+)\}", r"<\1:str>", path), name=handler_name(i))
     app.router.finalize()
-    return app
+    return app.router
 
 
-def _lookup_sanic(app: Sanic, path: str) -> None:
-    try:
-        app.router.get(path, "GET", "localhost")
-    except Exception:
-        pass
+def lookup_sanic(router, path):
+    return type(router).get.__wrapped__(router, path, "GET", None)[0].name.rsplit(".", 1)[-1]
 
 
-# --- Registry ------------------------------------------------------------
-#
-# `build(routes)` -> opaque router object
-# `lookup(router, path)` -> performs one route match (return value unused)
+def lookup_sanic_cached(router, path):
+    return router.get(path, "GET", None)[0].name.rsplit(".", 1)[-1]
+
+
+# --- litestar ---
+
+
+async def litestar_endpoint() -> None:
+    return None
+
+
+def build_litestar(routes):
+    handlers = [
+        litestar_get(path.replace("{id}", "{id:str}"), name=handler_name(i))(litestar_endpoint)
+        for i, path in enumerate(routes)
+    ]
+    return Litestar(handlers).asgi_router
+
+
+def lookup_litestar(router, path):
+    return router._handle_routing(path, "GET")[1].name
+
+
+def lookup_litestar_cached(router, path):
+    return router.handle_routing(path, "GET")[1].name
+
 
 ROUTERS = {
-    "korvex": (_build_korvex, _lookup_korvex),
-    "starlette": (_build_starlette, _lookup_starlette),
-    "flask": (_build_flask, _lookup_flask),
-    "django": (_build_django, _lookup_django),
-    "sanic": (_build_sanic, _lookup_sanic),
+    "korvex": (build_korvex, lookup_korvex),
+    "litestar": (build_litestar, lookup_litestar),
+    "sanic": (build_sanic, lookup_sanic),
+    "flask": (build_flask, lookup_flask),
+    "django": (build_django, lookup_django),
+    "starlette": (build_starlette, lookup_starlette),
+    "sanic (cached)": (build_sanic, lookup_sanic_cached),
+    "litestar (cached)": (build_litestar, lookup_litestar_cached),
 }
 
-PARAMS = list(itertools.product(ROUTE_COUNTS, ROUTERS.keys()))
+CASES = list(itertools.product(ROUTE_COUNTS, ROUTERS))
 
 
-@pytest.fixture(
-    params=PARAMS,
-    ids=[f"{name}-{n}routes" for n, name in PARAMS],
-)
-def bench_case(request):
-    n_routes, router_name = request.param
-    routes = _generate_routes(n_routes)
-    lookups = _lookup_paths(routes, SAMPLE_SIZE)
-
+@pytest.mark.parametrize(("n_routes", "router_name"), CASES, ids=[f"{name}-{n}" for n, name in CASES])
+def test_router_lookup(benchmark, n_routes, router_name):
     build, lookup = ROUTERS[router_name]
+    routes = generate_routes(n_routes)
     router = build(routes)
 
-    return router, lookup, lookups
+    indexes = random.Random(SEED + 1).sample(range(n_routes), min(LOOKUPS, n_routes))
+    cases = [(routes[i].replace("{id}", "123"), handler_name(i)) for i in indexes]
+    for path, expected in cases:
+        assert lookup(router, path) == expected, f"{router_name} matched {path} wrongly"
 
-
-def test_router_lookup(benchmark, bench_case) -> None:
-    router, lookup, lookups = bench_case
-
-    def run() -> None:
-        for path in lookups:
-            lookup(router, path)
-
-    benchmark(run)
+    paths = [path for path, _ in cases]
+    benchmark.extra_info.update(router=router_name, routes=n_routes, lookups=len(paths))
+    benchmark(lambda: [lookup(router, path) for path in paths])

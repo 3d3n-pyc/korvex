@@ -1,46 +1,35 @@
-"""A minimal ASGI application wired to a `Router` — the thin layer that
-lets you actually serve requests, e.g. `uvicorn mymodule:app`.
+"""`App`: an ASGI application built on `Router`.
 
-Korvex still never touches a socket, speaks HTTP, or manages a request's
-lifecycle beyond this: that's the ASGI server's job (uvicorn, hypercorn,
-daphne, ...), which already does it well and fast. `App` is only the
-glue — match a path, run middleware, call a handler, send a `Response` —
-built entirely from the standard library (`json`, `urllib.parse`,
-`inspect`) plus `Router`/`Response`/`Headers`, already in this package.
-No new dependency, sync or async servers all work the same way, because
-ASGI is a calling convention, not a library.
+Run it with any ASGI server (uvicorn, hypercorn, granian...). For each
+request, `App` matches the path, runs the route's middleware, calls the
+handler and sends its `Response`.
 """
 
 from __future__ import annotations
 
-import json as _json
+import json
 from collections.abc import Awaitable, Callable, Sequence
 from inspect import isawaitable
-from typing import Any, TypeVar, Union
+from typing import Any, Optional, Union
 from urllib.parse import parse_qs
 
 from korvex._core import MethodNotAllowed
 from korvex.response import Headers, JSONValue, Response
 from korvex.router import Router
 
-# `Union`, not `X | Y`: see the note by `JSONValue` in response.py — these
-# are plain runtime assignments, not deferred by `from __future__ import
-# annotations`, so they need to stay 3.9-compatible themselves.
+# `Union`/`Optional` rather than `|`: these lines run at import time, and
+# `|` between types needs Python 3.10+.
 Handler = Callable[..., Union[Response, Awaitable[Response]]]
-"""A route handler: `(request, **path_params) -> Response`, sync or
-async. `path_params` are always `str` — Korvex validates a constrained
-segment's *shape* (`{id:int}`) but never converts its type."""
+"""`(request, **path_params) -> Response`, sync or async. Path params are
+always `str`: `{id:int}` checks the format but doesn't convert."""
 
-MiddlewareFn = Callable[["Request"], Union[Response, None, Awaitable[Union[Response, None]]]]
-"""A middleware hook: `(request) -> Response | None`, sync or async.
-Returning a `Response` short-circuits — the handler (and any remaining
-middleware) never runs; returning `None` continues to the next one."""
-
-_T = TypeVar("_T")
+Middleware = Callable[["Request"], Union[Optional[Response], Awaitable[Optional[Response]]]]
+"""`(request) -> Response | None`, sync or async. Returning a `Response`
+sends it right away; returning `None` moves on to the next step."""
 
 
 class Request:
-    """A read-only view of one incoming ASGI HTTP request."""
+    """An incoming HTTP request."""
 
     __slots__ = ("method", "path", "headers", "query_params", "path_params", "_receive")
 
@@ -53,8 +42,7 @@ class Request:
         self._receive = receive
 
     async def body(self) -> bytes:
-        """Reads and returns the full request body, buffering as many
-        ASGI `http.request` messages as the server sends."""
+        """Reads the whole request body."""
         chunks = []
         more_body = True
         while more_body:
@@ -65,27 +53,19 @@ class Request:
 
     async def json(self) -> JSONValue:
         """Reads the body and parses it as JSON."""
-        return _json.loads(await self.body())
+        return json.loads(await self.body())
 
     def __repr__(self) -> str:
         return f"Request({self.method} {self.path!r})"
 
 
 class App:
-    """An ASGI application: matches requests with `router`, dispatches to
-    handlers/middleware registered here under the same opaque names
-    `Router` deals in. `App.get`/`.post`/etc. register a route and its
-    handler in one step; `Router` itself stays name-only and doesn't know
-    `App`, `Request`, or `Response` exist — this is purely an optional
-    layer on top, for whoever wants to actually run a server rather than
-    dispatch by hand.
-
-    Run it with any ASGI server, e.g.::
+    """An ASGI application.
 
         app = App()
 
         @app.get("/users/{id:int}")
-        async def get_user(request, id):
+        def get_user(request, id):
             return Response.json({"id": id})
 
         # uvicorn mymodule:app
@@ -94,40 +74,16 @@ class App:
     def __init__(self, router: Router | None = None) -> None:
         self.router = router if router is not None else Router()
         self._handlers: dict[str, Handler] = {}
-        self._middleware: dict[str, MiddlewareFn] = {}
-
-    def handler(self, name: str) -> Callable[[Handler], Handler]:
-        """Attaches `name` (as already used in `router.add_route`/`router.group(...)`)
-        to a handler function. Use this when routes were registered with
-        explicit string names rather than through `.get`/`.post`/etc."""
-
-        def register(func: Handler) -> Handler:
-            self._handlers[name] = func
-            return func
-
-        return register
-
-    def middleware(self, name: str) -> Callable[[MiddlewareFn], MiddlewareFn]:
-        """Attaches `name` (as used in a route's `middleware=[...]`) to a
-        middleware hook."""
-
-        def register(func: MiddlewareFn) -> MiddlewareFn:
-            self._middleware[name] = func
-            return func
-
-        return register
+        self._middleware: dict[str, Middleware] = {}
 
     def route(
         self, path: str, *, method: str = "GET", middleware: Sequence[str] | None = None
     ) -> Callable[[Handler], Handler]:
-        """Registers `path`/`method` on `router` and attaches the decorated
-        function as its handler in one step, under an opaque name derived
-        from the function itself (visible via `router.routes()` for
-        debugging)."""
+        """Decorator: registers the function as the handler for `path`."""
 
         def register(func: Handler) -> Handler:
             name = f"{func.__module__}.{func.__qualname__}"
-            self.router.add_route(path, name, method=method, middleware=middleware)
+            self.router.route(path, name, method=method, middleware=middleware)
             self._handlers[name] = func
             return func
 
@@ -154,77 +110,80 @@ class App:
     def options(self, path: str, *, middleware: Sequence[str] | None = None) -> Callable[[Handler], Handler]:
         return self.route(path, method="OPTIONS", middleware=middleware)
 
+    def handler(self, name: str) -> Callable[[Handler], Handler]:
+        """Decorator: attaches a function to a handler name already
+        registered on `app.router` (e.g. through a route group)."""
+
+        def register(func: Handler) -> Handler:
+            self._handlers[name] = func
+            return func
+
+        return register
+
+    def middleware(self, name: str) -> Callable[[Middleware], Middleware]:
+        """Decorator: attaches a function to a middleware name used in routes."""
+
+        def register(func: Middleware) -> Middleware:
+            self._middleware[name] = func
+            return func
+
+        return register
+
     async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
         if scope["type"] == "lifespan":
-            await self._run_lifespan(receive, send)
+            await _acknowledge_lifespan(receive, send)
             return
         if scope["type"] != "http":
-            raise NotImplementedError(f"App only handles ASGI 'http' and 'lifespan' scopes, got {scope['type']!r}")
+            raise NotImplementedError(f"unsupported ASGI scope type: {scope['type']!r}")
 
-        try:
-            result = self.router.match_route(scope["path"], method=scope["method"])
-        except MethodNotAllowed as exc:
-            allowed = ", ".join(exc.args[0])
-            await self._send(send, Response.text("Method Not Allowed", status=405, headers=[("Allow", allowed)]))
-            return
-
-        if result is None:
-            await self._send(send, Response.text("Not Found", status=404))
-            return
-
-        handler_name, path_params, middleware_names = result
-        request = Request(scope, receive, path_params)
-
-        for name in middleware_names:
-            middleware = self._middleware.get(name)
-            if middleware is None:
-                raise LookupError(f"no middleware registered for {name!r}; use @app.middleware({name!r})")
-            short_circuit = await _call(middleware, request)
-            if short_circuit is not None:
-                await self._send(send, short_circuit)
-                return
-
-        handler = self._handlers.get(handler_name)
-        if handler is None:
-            raise LookupError(f"no handler registered for {handler_name!r}; use @app.handler({handler_name!r})")
-        response = await _call(handler, request, **path_params)
-        await self._send(send, response)
-
-    @staticmethod
-    async def _send(send: Callable, response: Response) -> None:
+        response = await self._respond(scope, receive)
         await send(
             {
                 "type": "http.response.start",
                 "status": response.status,
-                "headers": [(name.encode("latin-1"), value.encode("latin-1")) for name, value in response.headers],
+                "headers": [(n.encode("latin-1"), v.encode("latin-1")) for n, v in response.headers],
             }
         )
         await send({"type": "http.response.body", "body": response.body})
 
-    @staticmethod
-    async def _run_lifespan(receive: Callable, send: Callable) -> None:
-        """The minimal correct handling of ASGI's `lifespan` scope: no
-        startup/shutdown hooks yet, just acknowledging each event so
-        servers that send them (most do, by default) don't hang or fail."""
-        while True:
-            message = await receive()
-            if message["type"] == "lifespan.startup":
-                await send({"type": "lifespan.startup.complete"})
-            elif message["type"] == "lifespan.shutdown":
-                await send({"type": "lifespan.shutdown.complete"})
-                return
+    async def _respond(self, scope: dict, receive: Callable) -> Response:
+        try:
+            found = self.router.match(scope["path"], method=scope["method"])
+        except MethodNotAllowed as exc:
+            return Response.text("Method Not Allowed", status=405, headers=[("Allow", ", ".join(exc.allowed))])
+        if found is None:
+            return Response.text("Not Found", status=404)
+
+        handler_name, path_params, middleware_names = found
+        request = Request(scope, receive, path_params)
+
+        for name in middleware_names:
+            if name not in self._middleware:
+                raise LookupError(f"no middleware named {name!r}; register one with @app.middleware({name!r})")
+            early_response = await _call(self._middleware[name], request)
+            if early_response is not None:
+                return early_response
+
+        if handler_name not in self._handlers:
+            raise LookupError(f"no handler named {handler_name!r}; register one with @app.handler({handler_name!r})")
+        return await _call(self._handlers[handler_name], request, **path_params)
 
     def __repr__(self) -> str:
-        return f"App(router={self.router!r}, handlers={len(self._handlers)}, middleware={len(self._middleware)})"
+        return f"App(router={self.router!r})"
 
 
-async def _call(func: Callable[..., Union[_T, Awaitable[_T]]], *args: Any, **kwargs: Any) -> _T:
-    """Calls `func`, awaiting its result if it returned one (an `async
-    def` function) rather than the value itself (a plain `def`) — this is
-    the one spot in this module allowed to stay generic over "any handler
-    or middleware shape", so its `*args`/`**kwargs` are the one legitimate
-    `Any` left: forwarding arbitrary arguments to an arbitrary `Callable[...,
-    ...]` needs `ParamSpec` to type more precisely, which needs Python
-    3.10+ (this package supports 3.9+) without an extra dependency."""
+async def _call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Calls a sync or async function and returns its result."""
     result = func(*args, **kwargs)
     return await result if isawaitable(result) else result
+
+
+async def _acknowledge_lifespan(receive: Callable, send: Callable) -> None:
+    """Answers the server's startup/shutdown events (there are no hooks)."""
+    while True:
+        message = await receive()
+        if message["type"] == "lifespan.startup":
+            await send({"type": "lifespan.startup.complete"})
+        elif message["type"] == "lifespan.shutdown":
+            await send({"type": "lifespan.shutdown.complete"})
+            return

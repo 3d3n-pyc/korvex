@@ -1,21 +1,18 @@
-"""Level 3: App — an actual, runnable web API, served by any ASGI server.
+"""Level 3: a web API served over ASGI.
 
-This is the dispatch loop from `basic_router.py`, built in: `App` matches
-the request, runs middleware, calls your handler, and sends a `Response`
-back over ASGI. Korvex still never touches a socket or speaks HTTP
-itself — that's uvicorn's job here (or hypercorn, daphne, ...); `App` is
-only the glue.
+`App` does what `basic_router.py` does by hand: match the request, run
+the middleware, call the handler, send the response.
 
 Run:
-    uv add uvicorn  # or: pip install uvicorn
-    uv run uvicorn examples.asgi_app:app --reload
+    pip install uvicorn
+    uvicorn examples.asgi_app:app --reload
 
-Then, in another terminal:
+Then:
     curl http://127.0.0.1:8000/health
     curl http://127.0.0.1:8000/users/42
     curl -X POST http://127.0.0.1:8000/users -d '{"name": "Ada"}'
-    curl http://127.0.0.1:8000/secret                                     # 401
-    curl -H "Authorization: Bearer token" http://127.0.0.1:8000/secret    # 200
+    curl http://127.0.0.1:8000/secret                                   # 401
+    curl -H "Authorization: Bearer token" http://127.0.0.1:8000/secret  # 200
 """
 
 from __future__ import annotations
@@ -50,4 +47,4 @@ def secret(request: Request) -> Response:
 def auth(request: Request) -> Response | None:
     if request.headers.get("Authorization") != "Bearer token":
         return Response.text("Unauthorized", status=401)
-    return None  # continue on to the handler
+    return None  # carry on to the handler

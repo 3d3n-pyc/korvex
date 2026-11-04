@@ -1,24 +1,126 @@
-//! Korvex — a high-performance, Rust-powered router for Python.
+//! The `korvex._core` Python extension: a radix-tree router.
 //!
-//! This crate exposes a single `_core` extension module consumed by the
-//! `korvex` Python package; end users should `import korvex`, not this
-//! module directly.
+//! Users import `korvex`, which wraps this module. The routing logic in
+//! `tree`, `path` and `method` is plain Rust; only this file knows about
+//! Python.
 
-use pyo3::exceptions::PyException;
+use std::collections::HashMap;
+
+use pyo3::create_exception;
+use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::prelude::*;
 
-mod router;
+mod method;
+mod path;
+mod tree;
 
-use router::Router;
+use method::Method;
+use tree::{Node, Outcome, Route};
 
-pyo3::create_exception!(
+create_exception!(
     _core,
     MethodNotAllowed,
     PyException,
-    "Raised by `Router.match_route` when `path` matches a registered route \
-     but not for the requested method. `args[0]` is the list of methods \
-     that are allowed for that path."
+    "The path exists, but not for this method (HTTP 405). \
+     `allowed` lists the methods that are registered for it."
 );
+
+/// `(handler, params, middleware)`, e.g. `("get_user", {"id": "42"}, ["auth"])`.
+type Match = (String, HashMap<String, String>, Vec<String>);
+
+/// The compiled router. `korvex.Router` subclasses it to add the
+/// `get`/`post`/... shortcuts and `group()`.
+#[pyclass(subclass, module = "korvex._core")]
+struct Router {
+    root: Node,
+}
+
+#[pymethods]
+impl Router {
+    #[new]
+    fn new() -> Self {
+        Self {
+            root: Node::default(),
+        }
+    }
+
+    /// Registers `handler` for `path` and `method`, replacing any route
+    /// already there. Raises `ValueError` for an invalid path or method.
+    #[pyo3(signature = (path, handler, *, method = "GET", middleware = None))]
+    fn route(
+        &mut self,
+        path: &str,
+        handler: String,
+        method: &str,
+        middleware: Option<Vec<String>>,
+    ) -> PyResult<()> {
+        let route = Route {
+            handler,
+            middleware: middleware.unwrap_or_default(),
+        };
+        self.root
+            .insert(path, parse_method(method)?, route)
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    /// Returns `(handler, params, middleware)`, or `None` if nothing
+    /// matches `path`. Raises `MethodNotAllowed` if `path` matches but
+    /// not for `method`.
+    #[pyo3(name = "match", signature = (path, method = "GET"))]
+    fn find(&self, py: Python<'_>, path: &str, method: &str) -> PyResult<Option<Match>> {
+        let mut params = Vec::new();
+        match self.root.find(path, parse_method(method)?, &mut params) {
+            Outcome::Matched(route) => {
+                let params = params
+                    .into_iter()
+                    .map(|(name, value)| (name.to_string(), value.to_string()))
+                    .collect();
+                Ok(Some((
+                    route.handler.clone(),
+                    params,
+                    route.middleware.clone(),
+                )))
+            }
+            Outcome::NotFound => Ok(None),
+            Outcome::MethodNotAllowed(routes) => {
+                let allowed: Vec<&str> = routes.iter().map(|(m, _)| m.as_str()).collect();
+                let err = MethodNotAllowed::new_err(format!("allowed: {}", allowed.join(", ")));
+                err.value(py).setattr("allowed", allowed)?;
+                Err(err)
+            }
+        }
+    }
+
+    /// Removes the route registered for exactly `path` (a pattern like
+    /// `/users/{id:int}`, not a concrete URL) and `method`. Returns
+    /// whether there was one.
+    #[pyo3(signature = (path, method = "GET"))]
+    fn remove(&mut self, path: &str, method: &str) -> PyResult<bool> {
+        self.root
+            .remove(path, parse_method(method)?)
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    /// Every route as `(path, method, handler, middleware)`, sorted by path
+    /// then method.
+    fn routes(&self) -> Vec<(String, &'static str, String, Vec<String>)> {
+        let mut routes = self.root.routes();
+        routes.sort_by(|a, b| (&a.0, a.1).cmp(&(&b.0, b.1)));
+        routes
+            .into_iter()
+            .map(|(path, method, route)| (path, method.as_str(), route.handler, route.middleware))
+            .collect()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Router(routes={})", self.root.routes().len())
+    }
+}
+
+fn parse_method(method: &str) -> PyResult<Method> {
+    Method::parse(method)
+        .ok_or_else(|| PyValueError::new_err(format!("unknown HTTP method: {method:?}")))
+}
 
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {

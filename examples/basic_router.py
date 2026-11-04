@@ -1,11 +1,7 @@
-"""Level 1: just the router — register routes, match a path by hand.
+"""Level 1: the router on its own.
 
-This is Korvex at its lowest level: `Router` only ever deals in opaque
-strings (a path pattern in, a handler name + params out). It never calls
-anything itself — dispatching `handler_name` to real code is entirely up
-to you, as shown in `handle()` below. See `route_groups.py` for shared
-prefixes/middleware, and `asgi_app.py` for a version of this same
-dispatch loop that Korvex does for you, wired up to a real server.
+`Router` maps a path to a handler *name*. Calling the matching code is up
+to you; here, a plain dict does it.
 
 Run: python examples/basic_router.py
 """
@@ -13,36 +9,34 @@ Run: python examples/basic_router.py
 from korvex import MethodNotAllowed, Router
 
 router = Router()
-router.get("/health", "health_check")
+router.get("/health", "health")
 router.get("/users/{id:int}", "get_user")
 router.post("/users", "create_user")
-router.get("/static/*filepath", "serve_static")
+router.get("/static/*path", "static")
 
-# The registry mapping each opaque handler name to real code — this is
-# the part Korvex intentionally has no opinion about.
 HANDLERS = {
-    "health_check": lambda: "OK",
+    "health": lambda: "OK",
     "get_user": lambda id: f"user #{id}",
     "create_user": lambda: "created",
-    "serve_static": lambda filepath: f"serving {filepath}",
+    "static": lambda path: f"serving {path}",
 }
 
 
 def handle(path: str, method: str = "GET") -> str:
     try:
-        result = router.match_route(path, method=method)
+        found = router.match(path, method)
     except MethodNotAllowed as exc:
-        return f"405 Method Not Allowed (allowed: {', '.join(exc.args[0])})"
-    if result is None:
+        return f"405 Method Not Allowed (allowed: {', '.join(exc.allowed)})"
+    if found is None:
         return "404 Not Found"
-    handler_name, params, _middleware = result
-    return HANDLERS[handler_name](**params)
+    handler, params, _middleware = found
+    return HANDLERS[handler](**params)
 
 
 if __name__ == "__main__":
-    print(handle("/health"))
-    print(handle("/users/42"))
-    print(handle("/users", method="POST"))
-    print(handle("/static/css/app.css"))
-    print(handle("/unknown"))
-    print(handle("/users/42", method="DELETE"))
+    print(handle("/health"))  # OK
+    print(handle("/users/42"))  # user #42
+    print(handle("/users", "POST"))  # created
+    print(handle("/static/css/app.css"))  # serving css/app.css
+    print(handle("/unknown"))  # 404 Not Found
+    print(handle("/users/42", "DELETE"))  # 405 Method Not Allowed (allowed: GET)

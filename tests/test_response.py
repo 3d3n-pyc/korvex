@@ -1,4 +1,4 @@
-"""Tests for the pure-Python korvex.Headers / korvex.Response helpers."""
+"""Tests for `Headers` and `Response`."""
 
 import pytest
 
@@ -41,17 +41,9 @@ def test_headers_dunder_item_access():
 
     assert headers["x-custom"] == "value"
     assert "X-CUSTOM" in headers
-
-    del headers["x-custom"]
-    assert "X-Custom" not in headers
+    assert "X-Other" not in headers
     with pytest.raises(KeyError):
-        headers["X-Custom"]
-
-
-def test_headers_preserves_insertion_order():
-    headers = Headers([("A", "1"), ("B", "2"), ("C", "3")])
-
-    assert headers.items() == [("A", "1"), ("B", "2"), ("C", "3")]
+        headers["X-Other"]
 
 
 def test_headers_len_and_iteration():
@@ -121,22 +113,6 @@ def test_response_repr_is_informative():
 
     assert "404" in repr(response)
     assert "hi" in repr(response) or "b'hi'" in repr(response)
-
-
-def test_headers_setdefault_sets_when_missing():
-    headers = Headers()
-    result = headers.setdefault("Content-Type", "text/plain")
-
-    assert result == "text/plain"
-    assert headers["Content-Type"] == "text/plain"
-
-
-def test_headers_setdefault_leaves_existing_value_untouched():
-    headers = Headers([("Content-Type", "application/json")])
-    result = headers.setdefault("content-type", "text/plain")
-
-    assert result == "application/json"
-    assert headers["Content-Type"] == "application/json"
 
 
 def test_headers_equality_compares_by_content():

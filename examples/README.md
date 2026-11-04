@@ -1,25 +1,15 @@
 # Examples
 
-Three levels of the same API, from the bare router up to a running server.
-Read them in this order:
+Read them in order, each builds on the previous one:
 
-1. **[basic_router.py](basic_router.py)** — `Router` alone: register routes,
-   match a path, dispatch by hand. The lowest level; everything else is
-   built on top of this.
-2. **[route_groups.py](route_groups.py)** — `RouteGroup`: shared prefixes and
-   middleware, nested groups, and `router.routes()` for introspection.
-3. **[asgi_app.py](asgi_app.py)** — `App`: a real, runnable web API served by
-   any ASGI server (uvicorn, hypercorn, ...).
+1. [basic_router.py](basic_router.py): the router alone, calling handlers by hand.
+2. [route_groups.py](route_groups.py): shared prefixes and middleware.
+3. [asgi_app.py](asgi_app.py): a real web API served with uvicorn.
 
-## Running
-
-From the repository root, with Korvex installed in the environment
-(`uv run maturin develop --release` if you haven't already):
+From the repository root, after `uv run maturin develop --release`:
 
 ```sh
 uv run python examples/basic_router.py
 uv run python examples/route_groups.py
-
-uv add uvicorn  # only needed for this one
-uv run uvicorn examples.asgi_app:app --reload
+uv run --with uvicorn uvicorn examples.asgi_app:app --reload
 ```

@@ -1,25 +1,7 @@
-# Builds and publishes wheels on every `v*` tag push (or manually via
-# workflow_dispatch, which builds but skips publishing — useful to check
-# the matrix still builds without cutting a release).
-#
-# Versioning: Cargo.toml is the single source of truth (pyproject.toml
-# declares `dynamic = ["version"]`, so maturin reads it from there). The
-# checked-in Cargo.toml version is just a dev placeholder — this workflow
-# overwrites it to match the pushed tag (`.github/scripts/set_version_from_tag.py`)
-# before building, so a release's version always comes from the tag, never
-# from a manually-edited file that could drift out of sync.
-#
-# Platforms: manylinux x86_64/aarch64, macOS x86_64/aarch64 (Intel and
-# Apple Silicon), Windows x64, plus an sdist. Trimmed from what `maturin
-# generate-ci github` produces by default (which also covers musllinux,
-# 32-bit/s390x/ppc64le Linux, WASM, Android, and free-threaded builds) —
-# add a platform back here if you actually need it.
-#
-# Every build is verified, not just compiled: each job installs the
-# wheel (or sdist) it just built into a fresh venv and runs the real
-# test suite against it - natively where the runner already matches the
-# target (macOS both targets, Windows, Linux x86_64), under QEMU where it
-# doesn't (Linux aarch64, cross-compiled on an x86_64 runner).
+# On a `v*` tag: build wheels for every platform, install each one in a
+# fresh venv and run the tests against it, then publish to PyPI.
+# Run by hand (workflow_dispatch) to build and test without publishing.
+# The version comes from the tag (see .github/scripts/set_version_from_tag.py).
 name: Release
 
 on:
@@ -48,11 +30,9 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist
           manylinux: auto
-      # x86_64 runs on this same (x86_64) runner, so it's tested directly;
-      # aarch64 is cross-compiled here and can't execute on this runner's
-      # CPU, so it's tested under QEMU emulation instead. Building
-      # successfully doesn't prove the wheel actually works - installing
-      # it and running the real test suite against it does.
+      # aarch64 is cross-compiled on an x86_64 runner, so it's tested under QEMU.
+      # Tests call the venv's `pytest`, not `python -m pytest`, which would
+      # import the source `korvex/` folder instead of the installed wheel.
       - name: Test wheel
         if: matrix.target == 'x86_64'
         run: |
@@ -97,9 +77,6 @@ jobs:
         with:
           target: ${{ matrix.target }}
           args: --release --out dist
-      # Both matrix entries build natively on their own runner (an actual
-      # Intel or Apple Silicon Mac) - no cross-compilation, so a plain
-      # native install-and-test works for either.
       - name: Test wheel
         run: |
           python3 -m venv test-env
@@ -145,10 +122,7 @@ jobs:
         with:
           command: sdist
           args: --out dist
-      # Installing an sdist means building it from source right there -
-      # unlike the prebuilt wheels above, this needs an actual Rust
-      # toolchain on the installing machine, same as anyone installing
-      # korvex on a platform with no prebuilt wheel would.
+      # Installing an sdist compiles it, so this needs Rust.
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Test sdist
@@ -168,8 +142,8 @@ jobs:
     needs: [linux, macos, windows, sdist]
     environment: pypi
     permissions:
-      id-token: write # PyPI Trusted Publishing (OIDC) - no stored token needed
-      contents: write # attach wheels to the GitHub Release
+      id-token: write # PyPI trusted publishing
+      contents: write # GitHub release
     steps:
       - uses: actions/download-artifact@v8
         with:

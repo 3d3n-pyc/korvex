@@ -1,10 +1,5 @@
-//! The HTTP method a route is registered under.
+//! HTTP methods a route can be registered under.
 
-/// An HTTP method a route can be registered under.
-///
-/// A closed, small set rather than an open `Custom(String)` escape hatch:
-/// Korvex targets standard HTTP routing, and a fixed enum keeps method
-/// comparisons integer-cheap instead of string ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Method {
     Get,
@@ -17,11 +12,9 @@ pub enum Method {
 }
 
 impl Method {
-    /// Parses an uppercase HTTP method name, e.g. `"GET"`. Returns `None`
-    /// for anything else — callers turn that into a `PyValueError` at the
-    /// FFI boundary rather than silently defaulting.
-    pub fn parse(method: &str) -> Option<Self> {
-        Some(match method {
+    /// Parses an uppercase method name like `"GET"`.
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name {
             "GET" => Self::Get,
             "POST" => Self::Post,
             "PUT" => Self::Put,
@@ -51,19 +44,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_known_methods() {
-        assert_eq!(Method::parse("GET"), Some(Method::Get));
-        assert_eq!(Method::parse("DELETE"), Some(Method::Delete));
-    }
-
-    #[test]
-    fn rejects_unknown_or_lowercase_methods() {
-        assert_eq!(Method::parse("get"), None);
-        assert_eq!(Method::parse("TRACE"), None);
-    }
-
-    #[test]
-    fn as_str_round_trips_through_parse() {
+    fn parse_and_as_str_round_trip() {
         for method in [
             Method::Get,
             Method::Post,
@@ -75,5 +56,11 @@ mod tests {
         ] {
             assert_eq!(Method::parse(method.as_str()), Some(method));
         }
+    }
+
+    #[test]
+    fn rejects_unknown_or_lowercase_names() {
+        assert_eq!(Method::parse("get"), None);
+        assert_eq!(Method::parse("TRACE"), None);
     }
 }

@@ -3,109 +3,148 @@
 [![CI](https://github.com/3d3n-pyc/korvex/actions/workflows/ci.yml/badge.svg)](https://github.com/3d3n-pyc/korvex/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A high-performance router for Python, backed by a Rust radix tree — with an
-optional, equally lightweight ASGI layer for actually hosting it.
-
-Korvex is deliberately small: the core is a router and nothing else. It
-matches a path to an opaque handler name; it never calls your code itself.
-Everything above that (an ASGI `App`, `Response`/`Headers` helpers, route
-groups) is a thin, optional layer built on top — you can use as much or as
-little of it as you want.
-
-## Why
-
-- **Fast routing.** A radix tree in Rust, exposed through PyO3, with an
-  allocation-free matching path (no `Vec` of segments, no `String` clones for
-  captured params). Benchmarked at 10×–1000× faster route lookups than
-  Flask/Django/Starlette's own routers (see [`benches/`](benches/)).
-- **Small surface.** `Router` deals only in opaque strings — a path pattern
-  in, a handler name + params out. It doesn't know what a `Response` is, and
-  never will; that keeps the matching engine simple and independently
-  testable (`src/router/engine/`, zero `PyO3` dependency).
-- **Host it or don't.** `korvex.App` is a real ASGI application (works with
-  uvicorn, Granian, hypercorn, ...) if you want to actually serve requests —
-  but it's a couple hundred lines of pure Python on top of the router
-  (`korvex/app.py`), not a requirement.
-
-## Install
+A fast router for Python, written in Rust, with an optional ASGI app on top.
 
 ```sh
 pip install korvex
-# or, to also pull in a server for the ASGI examples:
-pip install "korvex[serve]"
 ```
 
-Building from source requires [maturin](https://www.maturin.rs/) and a Rust
-toolchain — see [CONTRIBUTING.md](CONTRIBUTING.md).
+## The router
 
-## Quickstart
+`Router` maps a path and an HTTP method to a handler **name**. It never
+calls your code: what you do with the name is up to you.
 
 ```python
 from korvex import Router
 
 router = Router()
 router.get("/users/{id:int}", "get_user")
-router.post("/users", "create_user")
+router.post("/users", "create_user", middleware=["auth"])
 
-router.match_route("/users/42")
-# -> ("get_user", {"id": "42"}, [])
+router.match("/users/42")         # ("get_user", {"id": "42"}, [])
+router.match("/users", "POST")    # ("create_user", {}, ["auth"])
+router.match("/nope")             # None
+router.match("/users", "DELETE")  # raises MethodNotAllowed, .allowed == ["POST"]
 ```
 
-`Router` never calls your code — `match_route` just tells you which opaque
-handler name matched. Dispatching that to real code is up to you, or use
-`App` to have Korvex do it:
+### Path syntax
+
+| Segment     | Matches                              | Example            |
+|-------------|--------------------------------------|--------------------|
+| `users`     | exactly `users`                      | `/users`           |
+| `{id}`      | any segment                          | `/users/{id}`      |
+| `{id:int}`  | an integer (`42`, `-7`)              | `/users/{id:int}`  |
+| `{id:uuid}` | a UUID                               | `/items/{id:uuid}` |
+| `*path`     | the rest of the path (last segment)  | `/static/*path`    |
+
+Captured values are always strings. When several routes could match,
+the most specific one wins: literal, then `{id:int}`/`{id:uuid}`, then
+`{id}`, then `*path`.
+
+### API
+
+| Method                                           | Does                                                     |
+|--------------------------------------------------|----------------------------------------------------------|
+| `route(path, handler, *, method="GET", middleware=None)` | Registers a route (replaces an existing one).    |
+| `get` / `post` / `put` / `patch` / `delete` / `head` / `options(path, handler, *, middleware=None)` | Shortcuts for `route`. |
+| `match(path, method="GET")`                      | `(handler, params, middleware)`, `None`, or raises `MethodNotAllowed`. |
+| `remove(path, method="GET")`                     | Removes a route by its pattern. Returns whether it existed. |
+| `routes()`                                       | Every route as `(path, method, handler, middleware)`.    |
+| `group(prefix, *, middleware=None)`              | A `RouteGroup` (see below).                              |
+
+Invalid paths or methods raise `ValueError`.
+
+### Route groups
+
+```python
+api = router.group("/api", middleware=["auth"])
+api.get("/users", "list_users")             # GET /api/users, middleware ["auth"]
+
+admin = api.group("/admin", middleware=["admin"])
+admin.get("/stats", "stats")                # GET /api/admin/stats, middleware ["auth", "admin"]
+```
+
+## The ASGI app
+
+`App` runs the matched handler for you. Serve it with any ASGI server
+(uvicorn, hypercorn, granian...).
 
 ```python
 from korvex import App, Response
 
 app = App()
 
-@app.get("/users/{id:int}")
-def get_user(request, id):
+@app.get("/users/{id:int}", middleware=["auth"])
+async def get_user(request, id):
     return Response.json({"id": id})
 
-# uvicorn mymodule:app
+@app.middleware("auth")
+def auth(request):
+    if request.headers.get("Authorization") is None:
+        return Response.text("Unauthorized", status=401)  # stops here
+    return None                                          # carries on
 ```
 
-See [`examples/`](examples/) for the router alone, route groups with
-middleware, and the full ASGI app — each one runnable as-is.
+```sh
+pip install "korvex[serve]"   # installs uvicorn
+uvicorn mymodule:app
+```
 
-## Features
+- Handlers receive the `Request` plus path params as keyword arguments,
+  and return a `Response`. Middleware returns a `Response` to answer
+  early, or `None` to continue. Both can be sync or async.
+- `Request` has `method`, `path`, `headers`, `query_params`,
+  `path_params`, and `await request.body()` / `await request.json()`.
+- `Response(body, status=, headers=)`, `Response.text(...)`,
+  `Response.json(...)`, `Response.redirect(...)`.
+- Unknown paths get a 404; known paths with the wrong method get a 405
+  with an `Allow` header.
+- Routes registered on `app.router` directly (for example through a
+  group) are linked to a function with `@app.handler("name")`.
 
-- Static, dynamic (`{id}`), constrained (`{id:int}`, `{id:uuid}`), and
-  wildcard (`*filepath`) path segments
-- Per-route HTTP methods, with `405 Method Not Allowed` (not a bare 404)
-  when a path matches but the method doesn't
-- Route groups with shared prefixes and middleware (`router.group(...)`)
-- Route introspection (`router.routes()`) and removal (`router.remove_route(...)`)
-- An optional ASGI `App`: decorator-based handler/middleware registration,
-  sync or async, zero extra dependencies
-- Fully typed (`korvex/py.typed`, `.pyi` stubs for the compiled `Router`)
+More in [`examples/`](examples/).
 
 ## Performance
 
-Routing lookups beat Flask/Django/Starlette by 10×–1000× (`benches/bench_router.py`).
-Once wired into a full ASGI app, the framework-level gap narrows — most of
-the per-request cost becomes Python-level handler/response work, common to
-any framework — but the server you host it with matters far more than the
-framework: swapping uvicorn for a Rust-based ASGI server (e.g.
-[Granian](https://github.com/emmett-framework/granian)) measured roughly
-5× the throughput in this project's own testing, with zero code changes,
-since `App` speaks plain ASGI. See `benches/bench_app.py` for the
-methodology; treat any specific numbers as a starting point for your own
-measurements, not a guarantee — they depend heavily on hardware, Python
-version, and workload.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/benchmark-dark.svg">
+  <img alt="Time per route lookup: Korvex 372 ns, Litestar 711 ns, Sanic 3.4 µs, Flask 3.5 µs, Django 1.3 ms, Starlette 1.4 ms at 10,000 routes. With their LRU cache and repeated URLs, Litestar takes 88 ns and Sanic 210 ns." src="docs/benchmark-light.svg">
+</picture>
+
+Median time per lookup, 10,000 routes:
+
+| Router | Without cache | With the router's cache, same URLs repeated |
+|---|---|---|
+| **Korvex** | **372 ns** | (no cache) |
+| Litestar | 711 ns | 88 ns |
+| Sanic | 3.4 µs | 210 ns |
+| Flask | 3.5 µs | |
+| Django | 1.3 ms | |
+| Starlette / FastAPI | 1.4 ms | |
+
+- Korvex does the actual matching fastest, and its time stays flat as
+  routes are added. Django and Starlette try routes one by one, so they
+  slow down linearly.
+- Litestar and Sanic cache the last 1,024 lookups. When the same URLs come
+  back, that cache beats Korvex. It helps less with parameters
+  (`/users/1`, `/users/2`, ... are all different URLs).
+- This measures routing only. In a full app, the handler and the ASGI
+  server cost more than the router.
+
+Reproduce with `uv run pytest benches/bench_router.py --benchmark-only
+--benchmark-json=benches/results.json`, then `uv run python benches/plot.py`
+to redraw the chart. Results depend on the machine: measure your own
+workload before relying on any number.
 
 ## Development
 
 ```sh
-git clone https://github.com/3d3n-pyc/korvex
-cd korvex
-uv run maturin develop --release
-uv run pytest
+uv run maturin develop --release   # build the Rust extension
+uv run pytest                      # Python tests
+cargo test                         # Rust tests
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full checklist.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
