@@ -87,7 +87,7 @@ def test_path_params_are_passed_as_keyword_arguments():
 
     status, _, body = response_from(run_app(app, make_scope("GET", "/users/42")))
     assert status == 200
-    assert json.loads(body) == {"id": "42"}
+    assert json.loads(body) == {"id": 42}
 
 
 def test_returns_404_for_unknown_route():

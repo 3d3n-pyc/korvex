@@ -4,6 +4,8 @@ The matching rules are tested in depth in Rust (`src/tree.rs`); these
 tests check the Python API on top of them.
 """
 
+from uuid import UUID
+
 import pytest
 
 from korvex import MethodNotAllowed, RouteGroup, Router
@@ -80,7 +82,7 @@ def test_matching_priority():
     )
 
     assert router.match("/files/readme")[0] == "literal"
-    assert router.match("/files/42")[:2] == ("int_param", {"id": "42"})
+    assert router.match("/files/42")[:2] == ("int_param", {"id": 42})
     assert router.match("/files/notes")[:2] == ("param", {"name": "notes"})
     assert router.match("/files/a/b")[:2] == ("wildcard", {"rest": "a/b"})
 
@@ -93,6 +95,17 @@ def test_uuid_constraint(value, matches):
     router = make_router(("/items/{id:uuid}", "item", "GET"))
 
     assert (router.match(f"/items/{value}") is not None) == matches
+
+
+def test_params_are_converted_by_their_constraint():
+    router = make_router(("/u/{id:int}/{key:uuid}/{name}/{alias:str}/*rest", "x", "GET"))
+    key = "123E4567-E89B-12D3-A456-426614174000"
+
+    _, params, _ = router.match(f"/u/-7/{key}/ada/al/a/b")
+
+    assert params == {"id": -7, "key": UUID(key), "name": "ada", "alias": "al", "rest": "a/b"}
+    assert type(params["id"]) is int
+    assert type(params["key"]) is UUID
 
 
 def test_method_defaults_to_get():

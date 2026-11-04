@@ -26,7 +26,7 @@ router = Router()
 router.get("/users/{id:int}", "get_user")
 router.post("/users", "create_user", middleware=["auth"])
 
-router.match("/users/42")         # ("get_user", {"id": "42"}, ())
+router.match("/users/42")         # ("get_user", {"id": 42}, ())
 router.match("/users", "POST")    # ("create_user", {}, ("auth",))
 router.match("/nope")             # None
 router.match("/users", "DELETE")  # raises MethodNotAllowed, .allowed == ["POST"]
@@ -42,7 +42,8 @@ router.match("/users", "DELETE")  # raises MethodNotAllowed, .allowed == ["POST"
 | `{id:uuid}` | a UUID                               | `/items/{id:uuid}` |
 | `*path`     | the rest of the path (last segment)  | `/static/*path`    |
 
-Captured values are always strings. When several routes could match,
+`{id:int}` gives an `int` and `{id:uuid}` a `uuid.UUID`; every other
+captured value is a string. When several routes could match,
 the most specific one wins: literal, then `{id:int}`/`{id:uuid}`, then
 `{id}`, then `*path`.
 

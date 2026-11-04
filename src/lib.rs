@@ -7,13 +7,15 @@
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyMappingProxy, PyTuple};
+use pyo3::sync::PyOnceLock;
+use pyo3::types::{PyDict, PyMappingProxy, PyTuple, PyType};
 
 mod method;
 mod path;
 mod tree;
 
 use method::Method;
+use path::Constraint;
 use tree::{Node, Outcome, Route};
 
 create_exception!(
@@ -24,7 +26,7 @@ create_exception!(
      `allowed` lists the methods that are registered for it."
 );
 
-/// `(handler, params, middleware)`, e.g. `("get_user", {"id": "42"}, ("auth",))`.
+/// `(handler, params, middleware)`, e.g. `("get_user", {"id": 42}, ("auth",))`.
 /// Fully immutable (params is a read-only mapping), so `korvex.Router` can
 /// cache and share it between calls.
 type Match<'py> = (String, Bound<'py, PyMappingProxy>, Bound<'py, PyTuple>);
@@ -76,8 +78,8 @@ impl Router {
         match self.root.find(path, parse_method(method)?, &mut params) {
             Outcome::Matched(route) => {
                 let dict = PyDict::new(py);
-                for (name, value) in params {
-                    dict.set_item(name, value)?;
+                for (name, constraint, value) in params {
+                    dict.set_item(name, convert(py, constraint, value)?)?;
                 }
                 Ok(Some((
                     route.handler.clone(),
@@ -121,6 +123,28 @@ impl Router {
 
     fn __repr__(&self) -> String {
         format!("Router(routes={})", self.root.routes().len())
+    }
+}
+
+/// `uuid.UUID`, imported once.
+static UUID: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+
+/// Turns a captured value into what its constraint promises: an `int` for
+/// `{id:int}`, a `uuid.UUID` for `{id:uuid}`, a `str` otherwise.
+fn convert<'py>(
+    py: Python<'py>,
+    constraint: Constraint,
+    value: &str,
+) -> PyResult<Bound<'py, PyAny>> {
+    match constraint {
+        Constraint::Any => Ok(value.into_pyobject(py)?.into_any()),
+        Constraint::Int => {
+            let number: i64 = value
+                .parse()
+                .map_err(|_| PyValueError::new_err(format!("not an integer: {value:?}")))?;
+            Ok(number.into_pyobject(py)?.into_any())
+        }
+        Constraint::Uuid => UUID.import(py, "uuid", "UUID")?.call1((value,)),
     }
 }
 

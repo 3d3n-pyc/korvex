@@ -20,8 +20,8 @@ from korvex.router import Router
 # `Union`/`Optional` rather than `|`: these lines run at import time, and
 # `|` between types needs Python 3.10+.
 Handler = Callable[..., Union[Response, Awaitable[Response]]]
-"""`(request, **path_params) -> Response`, sync or async. Path params are
-always `str`: `{id:int}` checks the format but doesn't convert."""
+"""`(request, **path_params) -> Response`, sync or async. Path params come
+converted: `int` for `{id:int}`, `uuid.UUID` for `{id:uuid}`, else `str`."""
 
 Middleware = Callable[["Request"], Union[Optional[Response], Awaitable[Optional[Response]]]]
 """`(request) -> Response | None`, sync or async. Returning a `Response`
@@ -33,7 +33,7 @@ class Request:
 
     __slots__ = ("method", "path", "headers", "query_params", "path_params", "_receive")
 
-    def __init__(self, scope: dict, receive: Callable[[], Awaitable[dict]], path_params: Mapping[str, str]) -> None:
+    def __init__(self, scope: dict, receive: Callable[[], Awaitable[dict]], path_params: Mapping[str, Any]) -> None:
         self.method: str = scope["method"]
         self.path: str = scope["path"]
         self.headers = Headers((k.decode("latin-1"), v.decode("latin-1")) for k, v in scope["headers"])

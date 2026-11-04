@@ -26,4 +26,4 @@ if __name__ == "__main__":
 
     handler, params, middleware = router.match("/api/v1/users/42")
     print(handler, dict(params), middleware)
-    # get_user {'id': '42'} ('auth',)
+    # get_user {'id': 42} ('auth',)

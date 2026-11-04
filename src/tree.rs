@@ -17,8 +17,9 @@ pub struct Route {
     pub middleware: Vec<String>,
 }
 
-/// Captured `(name, value)` pairs, borrowed from the tree and the path.
-pub type Params<'a> = Vec<(&'a str, &'a str)>;
+/// Captured `(name, constraint, value)`, borrowed from the tree and the
+/// path. The constraint tells the caller how to convert the value.
+pub type Params<'a> = Vec<(&'a str, Constraint, &'a str)>;
 
 /// The result of looking up a path for one method.
 #[derive(Debug)]
@@ -236,7 +237,7 @@ impl Node {
             if !param.constraint.matches(segment) {
                 continue;
             }
-            params.push((param.name.as_str(), segment));
+            params.push((param.name.as_str(), param.constraint, segment));
             match param.node.find_from(segments.clone(), method, params) {
                 found @ Outcome::Matched(_) => return found,
                 failed => best = best.or(failed),
@@ -245,7 +246,7 @@ impl Node {
         }
 
         if let Some(wildcard) = &self.wildcard {
-            params.push((wildcard.name.as_str(), rest_of_path));
+            params.push((wildcard.name.as_str(), Constraint::Any, rest_of_path));
             match wildcard.methods.lookup(method) {
                 found @ Outcome::Matched(_) => return found,
                 failed => best = best.or(failed),
@@ -316,7 +317,11 @@ mod tests {
 
     /// Summarizes a lookup as `"handler"`, `"404"` or `"405 GET,POST"`,
     /// plus the captured params.
-    fn lookup<'a>(root: &'a Node, method: Method, path: &'a str) -> (String, Params<'a>) {
+    fn lookup<'a>(
+        root: &'a Node,
+        method: Method,
+        path: &'a str,
+    ) -> (String, Vec<(&'a str, &'a str)>) {
         let mut params = Vec::new();
         let summary = match root.find(path, method, &mut params) {
             Outcome::Matched(route) => route.handler.clone(),
@@ -326,6 +331,10 @@ mod tests {
                 format!("405 {}", names.join(","))
             }
         };
+        let params = params
+            .into_iter()
+            .map(|(name, _, value)| (name, value))
+            .collect();
         (summary, params)
     }
 
@@ -392,6 +401,23 @@ mod tests {
         assert_eq!(
             lookup(&root, Get, "/users/abc"),
             ("by_slug".into(), vec![("slug", "abc")])
+        );
+    }
+
+    #[test]
+    fn reports_each_capture_constraint() {
+        use Constraint::{Any, Int, Uuid};
+        let root = tree(&[("/u/{id:int}/{key:uuid}/{name}/*rest", Get, "x")]);
+        let mut params = Vec::new();
+        let path = "/u/42/123e4567-e89b-12d3-a456-426614174000/ada/a/b";
+        assert!(matches!(
+            root.find(path, Get, &mut params),
+            Outcome::Matched(_)
+        ));
+        let constraints: Vec<_> = params.iter().map(|(name, c, _)| (*name, *c)).collect();
+        assert_eq!(
+            constraints,
+            [("id", Int), ("key", Uuid), ("name", Any), ("rest", Any)]
         );
     }
 

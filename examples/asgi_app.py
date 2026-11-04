@@ -28,7 +28,7 @@ def health(request: Request) -> Response:
 
 
 @app.get("/users/{id:int}")
-def get_user(request: Request, id: str) -> Response:
+def get_user(request: Request, id: int) -> Response:
     return Response.json({"id": id})
 
 

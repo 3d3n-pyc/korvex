@@ -50,7 +50,7 @@ class Router(_CoreRouter, _Shortcuts):
 
         router = Router()
         router.get("/users/{id:int}", "get_user")
-        router.match("/users/42")  # ("get_user", {"id": "42"}, ())
+        router.match("/users/42")  # ("get_user", {"id": 42}, ())
 
     The matching itself is done by the Rust base class. `match` results
     are cached: the last `CACHE_SIZE` distinct lookups are answered without
