@@ -1,0 +1,15 @@
+FROM python:3.14-slim
+WORKDIR /app
+
+# Korvex ships prebuilt wheels: no Rust toolchain needed.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY main.py .
+
+# Run as an unprivileged user, not root.
+RUN useradd --no-create-home --shell /usr/sbin/nologin app
+USER app
+
+EXPOSE 8000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

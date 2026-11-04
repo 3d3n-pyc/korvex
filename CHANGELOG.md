@@ -1,7 +1,34 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
+- Breaking: path parameters are converted by their constraint. `{id:int}`
+  gives an `int` and `{id:uuid}` a `uuid.UUID`, in `Router.match()` and as
+  handler arguments; other values stay strings. The conversion happens in
+  Rust, which already checked the format.
+- `@app.on_startup` and `@app.on_shutdown` hooks, sync or async, with or
+  without parentheses. Shutdown hooks run in reverse order; a failing
+  startup hook stops the server from starting.
+- Error handling: `raise HTTPException(status, detail)` from a handler or
+  middleware, and `@app.exception_handler(...)` keyed by status (404 and
+  405 included) or exception class. Unhandled exceptions, including a
+  missing handler or middleware, now give a 500 logged to the `korvex`
+  logger instead of propagating to the server.
+- `app.group(prefix, middleware=...)` returns an `AppGroup`: decorators
+  (`@api.get(...)`) under a shared prefix and middleware, nestable.
+- `request.cookies`, `await request.form()` (urlencoded and multipart,
+  files as `UploadedFile`; other content types get a 415, undecodable text
+  a 400), and
+  `response.set_cookie()` / `response.delete_cookie()`. No new dependency.
+- `Response.stream(chunks)`, `Response.file(path, filename=None)` and
+  `app.static(prefix, directory)`. Static paths that leave the directory
+  (`..`, symlinks) get a 404.
+- `HEAD` requests are answered by the `GET` route without the body. They
+  used to get a 405.
+- `await request.json()` answers invalid JSON with a 400 instead of a 500.
+- [Deployment guide](docs/deployment.md) with ready-to-copy files in
+  `examples/deploy/`: uvicorn behind Caddy or nginx, Docker, AWS Lambda
+  (Mangum) and Vercel, the last one checked on a real deployment.
 - Load test: Falcon and BlackSheep added. Falcon comes within about 10% of
   Korvex; BlackSheep tries routes one by one, which costs it a lot with
   1,000 routes.

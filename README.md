@@ -6,9 +6,8 @@
 A fast router for Python, written in Rust, with an optional ASGI app on top.
 
 Korvex is young (alpha). Its routing is fast (see [Performance](#performance)),
-but it lacks much of what full frameworks offer: WebSockets, streaming,
-startup hooks, validation, OpenAPI. The [roadmap](ROADMAP.md) lists what's
-coming.
+but it lacks some of what full frameworks offer: WebSockets, validation,
+OpenAPI. The [roadmap](ROADMAP.md) lists what's coming.
 
 ```sh
 pip install korvex
@@ -26,7 +25,7 @@ router = Router()
 router.get("/users/{id:int}", "get_user")
 router.post("/users", "create_user", middleware=["auth"])
 
-router.match("/users/42")         # ("get_user", {"id": "42"}, ())
+router.match("/users/42")         # ("get_user", {"id": 42}, ())
 router.match("/users", "POST")    # ("create_user", {}, ("auth",))
 router.match("/nope")             # None
 router.match("/users", "DELETE")  # raises MethodNotAllowed, .allowed == ["POST"]
@@ -42,7 +41,8 @@ router.match("/users", "DELETE")  # raises MethodNotAllowed, .allowed == ["POST"
 | `{id:uuid}` | a UUID                               | `/items/{id:uuid}` |
 | `*path`     | the rest of the path (last segment)  | `/static/*path`    |
 
-Captured values are always strings. When several routes could match,
+`{id:int}` gives an `int` and `{id:uuid}` a `uuid.UUID`; every other
+captured value is a string. When several routes could match,
 the most specific one wins: literal, then `{id:int}`/`{id:uuid}`, then
 `{id}`, then `*path`.
 
@@ -103,15 +103,40 @@ uvicorn mymodule:app
   and return a `Response`. Middleware returns a `Response` to answer
   early, or `None` to continue. Both can be sync or async.
 - `Request` has `method`, `path`, `headers`, `query_params`,
-  `path_params`, and `await request.body()` / `await request.json()`.
+  `path_params`, `cookies`, and `await request.body()`,
+  `await request.json()`, `await request.form()`. A form maps each field
+  to its values; files from a multipart form are `UploadedFile`s
+  (`filename`, `content_type`, `data`). A body that can't be parsed is
+  answered with a 400.
 - `Response(body, status=, headers=)`, `Response.text(...)`,
-  `Response.json(...)`, `Response.redirect(...)`.
+  `Response.json(...)`, `Response.redirect(...)`, and
+  `response.set_cookie(...)` / `response.delete_cookie(...)`.
+- `Response.stream(chunks)` sends a body piece by piece, from a sync or
+  async generator. `Response.file(path, filename=None)` sends a file in
+  chunks (with `filename`, as a download). `app.static("/static",
+  "public")` serves a directory; paths that leave it get a 404.
+- `HEAD` requests are answered by the `GET` route, without the body.
 - Unknown paths get a 404; known paths with the wrong method get a 405
   with an `Allow` header.
-- Routes registered on `app.router` directly (for example through a
-  group) are linked to a function with `@app.handler("name")`.
+- `raise HTTPException(404, "user not found")` in a handler or middleware
+  answers with that error. `@app.exception_handler(404)` (a status) or
+  `@app.exception_handler(ValueError)` (an exception class) customizes the
+  response. Any other exception gives a 500 and is logged to the `korvex`
+  logger.
+- `app.group(prefix, middleware=[...])` works like `router.group()`, with
+  decorators: `api = app.group("/api")`, then `@api.get("/users")`.
+  Groups nest.
+- Routes registered on `app.router` directly are linked to a function
+  with `@app.handler("name")`.
+- `@app.on_startup` and `@app.on_shutdown` run a function (sync or async)
+  when the server starts and stops, for example to open and close a
+  database pool. Shutdown hooks run in reverse order. If a startup hook
+  raises, the server doesn't start. Both `@app.on_startup` and
+  `@app.on_startup()` work.
 
-More in [`examples/`](examples/).
+More in [`examples/`](examples/). To put it in production (behind nginx or
+Caddy, in Docker, on AWS Lambda or Vercel), see the
+[deployment guide](docs/deployment.md).
 
 ## Performance
 

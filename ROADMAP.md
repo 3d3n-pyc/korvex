@@ -2,13 +2,15 @@
 
 Where Korvex is going. Versions are a rough order, not promises.
 
-## Where it stands (0.3)
+## Where it stands (0.4)
 
 - **Fast routing.** On one CPU core, Korvex serves the most requests per
   second of the frameworks tested, with the least memory (see the README).
-- **Small feature set.** A router, route groups, and a minimal ASGI `App`.
-  Compared with FastAPI, Litestar or Django, a lot is missing: WebSockets,
-  streaming, static files, startup hooks, validation, OpenAPI.
+- **The basics of a web app.** A router, route groups, and an ASGI `App`
+  with typed path parameters, startup and shutdown hooks, error handling,
+  cookies and forms, streaming, files and static directories, and a
+  deployment guide. Compared with FastAPI, Litestar or Django, still
+  missing: WebSockets, validation, OpenAPI.
 - **Young.** Alpha, one maintainer, no known production use yet.
 
 Two rules hold for everything below:
@@ -17,26 +19,6 @@ Two rules hold for everything below:
    new feature is a layer on top that can be skipped.
 2. No performance claim without a benchmark in `benches/` that checks it
    measures the right thing.
-
-## 0.4: what a real app needs first
-
-- **Typed path parameters.** `{id:int}` gives the handler an `int`, not a
-  string that only looks like one.
-- **Startup and shutdown hooks** (`@app.on_startup`), for database pools
-  and the like.
-- **Error handling.** Custom 404/405 responses and exception handlers,
-  instead of a bare 500.
-- **Responses:** streaming, files, and static directories.
-- **Request:** cookies and form data.
-- **`app.group()`**, so groups and decorators work together without going
-  through `app.router` and `@app.handler`.
-- **A deployment guide**, each case checked by a real deployment:
-  - behind nginx or Caddy, with uvicorn (the recommended setup today);
-  - in a Docker container (Fly.io, Railway, Cloud Run...);
-  - serverless: Vercel, and AWS Lambda through an adapter such as Mangum.
-    These run `App` through their own runtime, as plain ASGI, which is one
-    more reason it must stay ASGI. Startup and shutdown hooks have to work
-    there too.
 
 ## Behind a reverse proxy
 

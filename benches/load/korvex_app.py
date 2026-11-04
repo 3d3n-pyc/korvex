@@ -16,4 +16,4 @@ async def filler(request, id):
 
 @app.get("/users/{id:int}")
 async def get_user(request, id):
-    return Response.json({"id": int(id), "name": f"user {id}"})
+    return Response.json({"id": id, "name": f"user {id}"})
