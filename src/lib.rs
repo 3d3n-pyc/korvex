@@ -12,6 +12,7 @@ use pyo3::types::{PyDict, PyMappingProxy, PyTuple, PyType};
 
 mod method;
 mod path;
+mod server;
 mod tree;
 
 use method::Method;
@@ -156,6 +157,7 @@ fn parse_method(method: &str) -> PyResult<Method> {
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Router>()?;
+    m.add_function(wrap_pyfunction!(server::serve, m)?)?;
     m.add("MethodNotAllowed", m.py().get_type::<MethodNotAllowed>())?;
     Ok(())
 }

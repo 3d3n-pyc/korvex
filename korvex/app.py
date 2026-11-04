@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Optional, Union, overload
 from urllib.parse import parse_qs, unquote
 
+from korvex import _core
 from korvex._core import MethodNotAllowed
 from korvex.response import Headers, JSONValue, Response, StreamingResponse
 from korvex.router import RouteGroup, Router
@@ -399,6 +400,34 @@ class App(_RouteDecorators):
             elif message["type"] == "lifespan.shutdown":
                 await _run_hooks(reversed(self._on_shutdown), "shutdown", send)
                 return
+
+    def run(self, host: str = "127.0.0.1", port: int = 8000) -> None:
+        """Serves the app with Korvex's built-in server, until Ctrl+C.
+        Prototype: one process, no streaming, handlers that don't await."""
+        _core.serve(self._native, host, port)
+
+    def _native(
+        self, method: str, path: str, query_string: bytes, headers: list[tuple[bytes, bytes]], body: bytes
+    ) -> tuple[int, list[tuple[bytes, bytes]], bytes]:
+        """Called by the built-in server for each request, with the request
+        already read in full. Runs the same dispatch as under ASGI, without
+        an event loop: a coroutine that never waits completes on its first step."""
+        scope = {"type": "http", "method": method, "path": unquote(path), "query_string": query_string, "headers": headers}
+
+        async def receive() -> dict:
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        coroutine = self._respond(scope, receive)
+        try:
+            coroutine.send(None)
+        except StopIteration as done:
+            response: Response = done.value
+        else:
+            coroutine.close()
+            raise NotImplementedError("the prototype server can't run handlers that wait on I/O yet")
+        if isinstance(response, StreamingResponse):
+            raise NotImplementedError("the prototype server can't stream yet")
+        return response.status, [(n.encode("latin-1"), v.encode("latin-1")) for n, v in response.headers], response.body
 
     def __repr__(self) -> str:
         return f"App(router={self.router!r})"
