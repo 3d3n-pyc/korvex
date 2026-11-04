@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Iterator
-from typing import Union
+from http.cookies import SimpleCookie
+from typing import Literal, Optional, Union
 
 # `Union` rather than `|`: this line runs at import time, and `|` between
 # types needs Python 3.10+.
@@ -94,6 +95,41 @@ class Response:
         response = cls(status=status, headers=headers)
         response.headers.set("Location", location)
         return response
+
+    def set_cookie(
+        self,
+        name: str,
+        value: str,
+        *,
+        max_age: Optional[int] = None,
+        path: str = "/",
+        domain: Optional[str] = None,
+        secure: bool = False,
+        httponly: bool = False,
+        samesite: Optional[Literal["lax", "strict", "none"]] = "lax",
+    ) -> None:
+        """Adds a `Set-Cookie` header. `max_age` is in seconds; without it,
+        the cookie lasts until the browser closes."""
+        cookie: SimpleCookie = SimpleCookie()
+        cookie[name] = value
+        morsel = cookie[name]
+        morsel["path"] = path
+        if max_age is not None:
+            morsel["max-age"] = max_age
+        if domain:
+            morsel["domain"] = domain
+        if secure:
+            morsel["secure"] = True
+        if httponly:
+            morsel["httponly"] = True
+        if samesite:
+            morsel["samesite"] = samesite
+        self.headers.add("Set-Cookie", morsel.OutputString())
+
+    def delete_cookie(self, name: str, *, path: str = "/", domain: Optional[str] = None) -> None:
+        """Tells the browser to remove a cookie (same `path` and `domain`
+        as when it was set)."""
+        self.set_cookie(name, "", max_age=0, path=path, domain=domain)
 
     @classmethod
     def _with_type(cls, body: str, content_type: str, status: int, headers: Iterable[tuple[str, str]]) -> Response:

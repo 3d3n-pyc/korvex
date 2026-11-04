@@ -104,9 +104,13 @@ uvicorn mymodule:app
   and return a `Response`. Middleware returns a `Response` to answer
   early, or `None` to continue. Both can be sync or async.
 - `Request` has `method`, `path`, `headers`, `query_params`,
-  `path_params`, and `await request.body()` / `await request.json()`.
+  `path_params`, `cookies`, and `await request.body()`,
+  `await request.json()`, `await request.form()`. A form maps each field
+  to its values; files from a multipart form are `UploadedFile`s
+  (`filename`, `content_type`, `data`).
 - `Response(body, status=, headers=)`, `Response.text(...)`,
-  `Response.json(...)`, `Response.redirect(...)`.
+  `Response.json(...)`, `Response.redirect(...)`, and
+  `response.set_cookie(...)` / `response.delete_cookie(...)`.
 - Unknown paths get a 404; known paths with the wrong method get a 405
   with an `Allow` header.
 - `raise HTTPException(404, "user not found")` in a handler or middleware

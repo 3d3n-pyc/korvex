@@ -16,6 +16,9 @@
   logger instead of propagating to the server.
 - `app.group(prefix, middleware=...)` returns an `AppGroup`: decorators
   (`@api.get(...)`) under a shared prefix and middleware, nestable.
+- `request.cookies`, `await request.form()` (urlencoded and multipart,
+  files as `UploadedFile`; other content types get a 415), and
+  `response.set_cookie()` / `response.delete_cookie()`. No new dependency.
 - Load test: Falcon and BlackSheep added. Falcon comes within about 10% of
   Korvex; BlackSheep tries routes one by one, which costs it a lot with
   1,000 routes.

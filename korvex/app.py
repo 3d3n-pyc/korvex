@@ -10,10 +10,11 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from email.message import Message
 from http import HTTPStatus
 from inspect import isawaitable
 from typing import Any, Optional, Union
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, unquote
 
 from korvex._core import MethodNotAllowed
 from korvex.response import Headers, JSONValue, Response
@@ -50,10 +51,27 @@ class HTTPException(Exception):
         super().__init__(status, self.detail)
 
 
+class UploadedFile:
+    """A file sent in a `multipart/form-data` form."""
+
+    __slots__ = ("filename", "content_type", "data")
+
+    def __init__(self, filename: str, content_type: str, data: bytes) -> None:
+        self.filename = filename
+        self.content_type = content_type
+        self.data = data
+
+    def __repr__(self) -> str:
+        return f"UploadedFile({self.filename!r}, {self.content_type!r}, {len(self.data)} bytes)"
+
+
+FormData = dict[str, list[Union[str, UploadedFile]]]
+
+
 class Request:
     """An incoming HTTP request."""
 
-    __slots__ = ("method", "path", "headers", "query_params", "path_params", "_receive")
+    __slots__ = ("method", "path", "headers", "query_params", "path_params", "_receive", "_cookies")
 
     def __init__(self, scope: dict, receive: Callable[[], Awaitable[dict]], path_params: Mapping[str, Any]) -> None:
         self.method: str = scope["method"]
@@ -62,6 +80,19 @@ class Request:
         self.query_params: dict[str, list[str]] = parse_qs(scope.get("query_string", b"").decode("latin-1"))
         self.path_params = path_params
         self._receive = receive
+        self._cookies: dict[str, str] | None = None
+
+    @property
+    def cookies(self) -> dict[str, str]:
+        """The cookies sent by the client, parsed on first use."""
+        if self._cookies is None:
+            self._cookies = {}
+            for header in self.headers.get_all("cookie"):
+                for pair in header.split(";"):
+                    name, sep, value = pair.partition("=")
+                    if sep and name.strip():
+                        self._cookies[name.strip()] = unquote(value.strip().strip('"'))
+        return self._cookies
 
     async def body(self) -> bytes:
         """Reads the whole request body."""
@@ -76,6 +107,19 @@ class Request:
     async def json(self) -> JSONValue:
         """Reads the body and parses it as JSON."""
         return json.loads(await self.body())
+
+    async def form(self) -> FormData:
+        """Reads the body as a form: each field name maps to its values, in
+        order. Files from a `multipart/form-data` form are `UploadedFile`s.
+        Any other content type is answered with a 415 error."""
+        content_type = Message()
+        content_type["content-type"] = self.headers.get("content-type", "")
+        kind = content_type.get_content_type()
+        if kind == "application/x-www-form-urlencoded":
+            return parse_qs((await self.body()).decode(), keep_blank_values=True)  # type: ignore[return-value]
+        if kind == "multipart/form-data" and content_type.get_param("boundary"):
+            return _parse_multipart(await self.body(), str(content_type.get_param("boundary")))
+        raise HTTPException(415, "expected a form (urlencoded or multipart)")
 
     def __repr__(self) -> str:
         return f"Request({self.method} {self.path!r})"
@@ -305,6 +349,32 @@ class App(_RouteDecorators):
 
     def __repr__(self) -> str:
         return f"App(router={self.router!r})"
+
+
+def _parse_multipart(body: bytes, boundary: str) -> FormData:
+    """Splits a `multipart/form-data` body on its boundary. Each part is a
+    few header lines, a blank line, then the field's value."""
+    form: FormData = {}
+    for part in body.split(b"--" + boundary.encode())[1:]:
+        if part.startswith(b"--"):  # the closing boundary
+            break
+        head, _, data = part.removeprefix(b"\r\n").partition(b"\r\n\r\n")
+        headers = Message()
+        for line in head.decode("utf-8", "replace").split("\r\n"):
+            name, _, value = line.partition(":")
+            headers[name.strip()] = value.strip()
+        field = headers.get_param("name", header="content-disposition")
+        if not isinstance(field, str):
+            continue
+        data = data.removesuffix(b"\r\n")
+        filename = headers.get_filename()
+        value: str | UploadedFile
+        if filename is None:
+            value = data.decode(headers.get_content_charset() or "utf-8")
+        else:
+            value = UploadedFile(filename, headers.get_content_type(), data)
+        form.setdefault(field, []).append(value)
+    return form
 
 
 async def _call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:

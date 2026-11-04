@@ -468,3 +468,70 @@ def test_app_group_registers_handlers_under_a_prefix_and_middleware():
     assert (status, body, calls) == (200, b"stats", ["auth", "admin", "audit"])
 
     assert repr(admin) == "AppGroup(prefix='/api/admin', middleware=['auth', 'admin'])"
+
+
+def form_app():
+    """An app whose POST /form echoes what request.form() returned."""
+    app = App()
+
+    @app.post("/form")
+    async def form(request):
+        fields = await request.form()
+        echo = {
+            name: [v if isinstance(v, str) else [v.filename, v.content_type, v.data.hex()] for v in values]
+            for name, values in fields.items()
+        }
+        return Response.json(echo)
+
+    return app
+
+
+def test_request_cookies():
+    app = App()
+
+    @app.get("/")
+    def home(request):
+        return Response.json(request.cookies)
+
+    scope = make_scope("GET", "/", headers=[("Cookie", 'session=abc; theme="dark"'), ("Cookie", "lang=fr")])
+    _, _, body = response_from(run_app(app, scope))
+    assert json.loads(body) == {"session": "abc", "theme": "dark", "lang": "fr"}
+
+
+def test_urlencoded_form():
+    scope = make_scope("POST", "/form", headers=[("Content-Type", "application/x-www-form-urlencoded")])
+    _, _, body = response_from(run_app(form_app(), scope, body=b"tag=a&tag=b&name=Ada+L&empty="))
+    assert json.loads(body) == {"tag": ["a", "b"], "name": ["Ada L"], "empty": [""]}
+
+
+def test_multipart_form_with_a_binary_file():
+    data = b"\x00\x01\r\n\r\nbinary\r\n"
+    body = (
+        b"--XyZ\r\n"
+        b'Content-Disposition: form-data; name="title"\r\n\r\n'
+        b"Holiday \xc3\xa9t\xc3\xa9\r\n"
+        b"--XyZ\r\n"
+        b'Content-Disposition: form-data; name="photo"; filename="beach.png"\r\n'
+        b"Content-Type: image/png\r\n\r\n" + data + b"\r\n"
+        b"--XyZ--\r\n"
+    )
+    scope = make_scope("POST", "/form", headers=[("Content-Type", "multipart/form-data; boundary=XyZ")])
+    _, _, response = response_from(run_app(form_app(), scope, body=body))
+    assert json.loads(response) == {"title": ["Holiday été"], "photo": [["beach.png", "image/png", data.hex()]]}
+
+
+def test_form_rejects_other_content_types():
+    scope = make_scope("POST", "/form", headers=[("Content-Type", "application/json")])
+    status, _, _ = response_from(run_app(form_app(), scope, body=b"{}"))
+    assert status == 415
+
+
+def test_set_and_delete_cookie():
+    response = Response.text("ok")
+    response.set_cookie("session", "abc", max_age=3600, secure=True, httponly=True)
+    response.delete_cookie("theme")
+
+    assert response.headers.get_all("Set-Cookie") == [
+        "session=abc; HttpOnly; Max-Age=3600; Path=/; SameSite=lax; Secure",
+        'theme=""; Max-Age=0; Path=/; SameSite=lax',
+    ]
