@@ -2,7 +2,7 @@
 
 Where Korvex is going. Versions are a rough order, not promises.
 
-## Where it stands (0.9)
+## Where it stands (0.10)
 
 - **Fast.** On one CPU core, Korvex serves the most requests per second of
   the frameworks tested, with the least memory. Its built-in server serves
@@ -12,9 +12,11 @@ Where Korvex is going. Versions are a rough order, not promises.
   cookies and forms, streaming, files and static directories, WebSockets,
   app-wide hooks, CORS, request IDs and rate limiting; validation from
   type annotations with msgspec or pydantic, headers, cookies and forms
-  as parameters, and dependencies; an OpenAPI document and Swagger UI; a
-  built-in server with workers, graceful shutdown, size limits, timeouts,
-  backpressure and WebSocket pings; and a deployment guide.
+  (models too) as parameters, and dependencies, which guard routes,
+  groups and WebSockets; custom route constraints and host-based
+  routing; an OpenAPI document and Swagger UI; a built-in server with
+  workers, graceful shutdown, size limits, timeouts, backpressure and
+  WebSocket pings; and a deployment guide.
 - **Young.** Alpha, one maintainer, no known production use yet.
 
 Two rules hold for everything below:
@@ -53,20 +55,6 @@ then, a version may break things; each break is listed in the changelog
 with how to update.
 
 The versions go from what shapes the API to what only adds to it.
-
-### 0.10: the API's last open questions
-
-- **Dependencies in middleware.** Route middleware (`@app.middleware`,
-  `middleware=[...]`) and route dependencies (`dependencies=[...]`) now do
-  the same job. Settle it: one way to guard a group of routes, the other
-  kept for what only it can do, or deprecated.
-- **App hooks see the WebSocket handshake**, as dependencies already do.
-- **Custom route constraints**, beyond `int` and `uuid` (`{slug:slug}`, a
-  regex, a function), without making the router any less opaque: the
-  router still only gets a method and a path, and gives back a name.
-- **Host-based routing**: routes for `api.example.com` apart from
-  `example.com`, as a layer on top of the router.
-- **A model filled from form fields**, like a JSON body.
 
 ### 0.11: ready-made middleware
 
