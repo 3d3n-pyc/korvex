@@ -16,6 +16,7 @@ import signal
 import socket
 import stat
 import sys
+import threading
 import time
 import traceback
 from collections.abc import Awaitable, Callable
@@ -47,6 +48,7 @@ class Config(NamedTuple):
     ws_ping_interval: float = 20.0
     forwarded_host: bool = False
     constraints: tuple[tuple[str, str], ...] = ()  # the app's own route constraints, for body_limits
+    threads: int = 1  # event loops per worker, each in its own thread
 
 
 def run(app: App, host: str, port: int, *, workers: int, graceful_timeout: float, config: Config) -> None:
@@ -54,12 +56,19 @@ def run(app: App, host: str, port: int, *, workers: int, graceful_timeout: float
         raise NotImplementedError("the built-in server needs Linux or macOS; use uvicorn on Windows")
     if workers < 1:
         raise ValueError("workers must be at least 1")
+    if config.threads < 1:
+        raise ValueError("threads must be at least 1")
+    if config.threads > 1 and getattr(sys, "_is_gil_enabled", lambda: True)():
+        logger.warning(
+            "threads=%d with the GIL on: the threads share one core. A free-threaded Python (3.14t) runs them in parallel",
+            config.threads,
+        )
     if config.access_log:
         _enable_access_log()
     listener = _listen_unix(config.uds) if config.uds else _listen_tcp(host, port)
     try:
         if workers == 1:
-            asyncio.run(serve(app, listener.detach(), graceful_timeout, config))
+            serve_process(app, listener.detach(), graceful_timeout, config)
         else:
             supervise(app, listener, workers, graceful_timeout, config)
     finally:
@@ -96,9 +105,64 @@ def _enable_access_log() -> None:
         access_logger.addHandler(handler)
 
 
-async def serve(app: App, fd: int, graceful_timeout: float, config: Config) -> None:
+def serve_process(app: App, fd: int, graceful_timeout: float, config: Config) -> None:
+    """Serves in this process: one event loop, or `config.threads` of them,
+    each in its own thread with its own server on a copy of the socket."""
+    if config.threads == 1:
+        asyncio.run(serve(app, fd, graceful_timeout, config))
+        return
+    lock = threading.Lock()
+    loops: list[tuple[asyncio.AbstractEventLoop, asyncio.Event]] = []
+    stopping = threading.Event()
+    failures: list[BaseException] = []
+
+    def stop_all(signum: int | None = None, frame: object = None) -> None:
+        stopping.set()
+        with lock:
+            for loop, stop in loops:
+                loop.call_soon_threadsafe(stop.set)
+
+    def joined(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
+        with lock:
+            loops.append((loop, stop))
+        if stopping.is_set():  # asked to stop before this one was running
+            loop.call_soon_threadsafe(stop.set)
+
+    def run_loop(thread_fd: int) -> None:
+        try:
+            asyncio.run(serve(app, thread_fd, graceful_timeout, config, joined=joined))
+        except BaseException as error:  # a failing startup hook, say: stop the others too
+            failures.append(error)
+            stop_all()
+
+    fds = [fd] + [os.dup(fd) for _ in range(config.threads - 1)]
+    previous = {sig: signal.signal(sig, stop_all) for sig in (signal.SIGINT, signal.SIGTERM)}
+    threads = [threading.Thread(target=run_loop, args=(f,), name=f"korvex-loop-{n}") for n, f in enumerate(fds)]
+    try:
+        for thread in threads:
+            thread.start()
+        while any(thread.is_alive() for thread in threads):
+            for thread in threads:
+                thread.join(0.1)  # in short steps, so signal handlers get to run
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+    if failures:
+        raise failures[0]
+
+
+async def serve(
+    app: App,
+    fd: int,
+    graceful_timeout: float,
+    config: Config,
+    *,
+    joined: Callable[[asyncio.AbstractEventLoop, asyncio.Event], None] | None = None,
+) -> None:
     """Serves on the listening socket `fd` until SIGINT or SIGTERM, then
-    lets requests in progress finish for up to `graceful_timeout` seconds."""
+    lets requests in progress finish for up to `graceful_timeout` seconds.
+    In a thread of its own, signals go to the main thread instead: it sets
+    the event `joined(loop, event)` was given."""
     from korvex.app import _call, _start_task
 
     try:
@@ -121,8 +185,11 @@ async def serve(app: App, fd: int, graceful_timeout: float, config: Config) -> N
     )
     handle = _logged(app._serve_one) if config.access_log else app._serve_one
     stopping = asyncio.Event()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stopping.set)
+    if joined is None:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, stopping.set)
+    else:
+        joined(loop, stopping)
     tasks: set[asyncio.Task] = set()
     websockets: dict[int, asyncio.Queue] = {}  # connection id -> its incoming messages
     waiting: dict[int, asyncio.Future] = {}  # stream or WebSocket id -> woken when its client catches up
@@ -173,8 +240,9 @@ async def serve(app: App, fd: int, graceful_timeout: float, config: Config) -> N
     finally:
         loop.remove_reader(server.fileno())
         server.close()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.remove_signal_handler(sig)
+        if joined is None:
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.remove_signal_handler(sig)
         for hook in reversed(app._on_shutdown):
             await _call(hook)
 
@@ -213,7 +281,7 @@ def supervise(app: App, listener: socket.socket, workers: int, graceful_timeout:
             try:
                 signal.signal(signal.SIGINT, signal.SIG_DFL)
                 signal.signal(signal.SIGTERM, signal.SIG_DFL)
-                asyncio.run(serve(app, listener.detach(), graceful_timeout, config))
+                serve_process(app, listener.detach(), graceful_timeout, config)
                 code = 0
             except BaseException:
                 traceback.print_exc()

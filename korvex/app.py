@@ -1071,12 +1071,18 @@ class App(_RouteDecorators):
         access_log: bool = False,
         ws_ping_interval: float = 20.0,
         forwarded_host: bool = False,
+        threads: int = 1,
     ) -> None:
         """Serves the app with Korvex's built-in server until Ctrl+C or
         SIGTERM. Linux and macOS only; on Windows, use an ASGI server.
 
         - `workers` processes share the port, each running the startup and
           shutdown hooks. About 3 per 4 CPU cores works best.
+        - `threads` event loops per worker, each in its own thread, each
+          running the startup and shutdown hooks like a worker does. With a
+          free-threaded Python (3.14t), they run in parallel: one process
+          uses several cores and shares its memory. With the GIL, they take
+          turns on one core.
         - On stop, requests in progress get up to `graceful_timeout` seconds.
         - Request bodies over `max_body` bytes get a 413 (a route's own
           `max_body` overrides it); clients get `timeout` seconds to send
@@ -1113,6 +1119,7 @@ class App(_RouteDecorators):
                 ws_ping_interval,
                 forwarded_host,
                 tuple(self.router.constraints()),
+                threads,
             ),
         )
 

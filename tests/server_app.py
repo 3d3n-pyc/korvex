@@ -80,6 +80,13 @@ def pid(request):
     return Response.text(str(os.getpid()))
 
 
+@app.get("/thread")
+def thread(request):
+    import threading
+
+    return Response.text(threading.current_thread().name)
+
+
 @app.get("/crash")
 def crash(request):
     os._exit(1)  # a worker dying abruptly, as if it segfaulted
@@ -172,6 +179,7 @@ if __name__ == "__main__":
     app.run(
         port=int(sys.argv[1]),
         workers=int(os.environ.get("WORKERS", "1")),
+        threads=int(os.environ.get("THREADS", "1")),
         graceful_timeout=float(os.environ.get("GRACE", "30")),
         max_body=int(os.environ.get("MAX_BODY", str(1024 * 1024))),
         timeout=float(os.environ.get("TIMEOUT", "30")),

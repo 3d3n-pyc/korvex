@@ -18,6 +18,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     run.add_argument("--port", type=int, default=8000, help="port to listen on (default: 8000)")
     run.add_argument("--uds", help="listen on this Unix socket path instead of host and port")
     run.add_argument("--workers", type=int, default=1, help="worker processes (default: 1; about 3 per 4 CPU cores)")
+    run.add_argument(
+        "--threads", type=int, default=1, help="event loops per worker, in parallel on free-threaded Python (default: 1)"
+    )
     run.add_argument("--graceful-timeout", type=float, default=30.0, help="seconds requests get to finish on stop")
     run.add_argument("--max-body", type=int, default=1024 * 1024, help="largest request body in bytes (default: 1 MiB)")
     run.add_argument("--timeout", type=float, default=30.0, help="seconds to send the headers, then the body")
@@ -43,6 +46,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         args.host,
         args.port,
         workers=args.workers,
+        threads=args.threads,
         graceful_timeout=args.graceful_timeout,
         max_body=args.max_body,
         timeout=args.timeout,
