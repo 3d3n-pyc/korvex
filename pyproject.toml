@@ -47,6 +47,7 @@ dev = [
     "psutil>=7.2.2",
     "pytest>=8.4.2",
     "pytest-benchmark>=5.2.3",
+    "robyn>=0.88.0",
     "sanic>=25.3.0",
     "starlette>=0.49.3",
     "uvicorn>=0.39.0",
