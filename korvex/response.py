@@ -6,7 +6,7 @@ import asyncio
 import json
 import mimetypes
 import os
-from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from http.cookies import SimpleCookie
 from typing import Any, Literal, Optional, Union
 from urllib.parse import quote
@@ -192,11 +192,12 @@ class StreamingResponse(Response):
     """A response whose body is sent piece by piece: see `Response.stream()`
     and `Response.file()`."""
 
-    __slots__ = ("chunks",)
+    __slots__ = ("chunks", "_on_close")
 
     def __init__(self, chunks: Chunks, *, status: int = 200, headers: Iterable[tuple[str, str]] = ()) -> None:
         super().__init__(status=status, headers=headers)
         self.chunks = chunks
+        self._on_close: list[Callable[[], Awaitable[None]]] = []  # run once sent, or not sent after all
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
         """The chunks as bytes, whether they were sync or async, str or bytes."""

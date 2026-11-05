@@ -11,7 +11,8 @@ import re
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from korvex.schema import Model, path_params, scalar_schema
+from korvex.app import UploadedFile
+from korvex.schema import Model, _unwrap, path_params, scalar_schema
 
 if TYPE_CHECKING:
     from korvex.app import App
@@ -58,25 +59,37 @@ def build(app: App, *, title: str, version: str, description: str | None = None)
         if plan.description:
             operation["description"] = plan.description
 
-        annotated = {p.name: p.type for p in plan.path}
+        everything = plan.everything()  # the handler's parameters and its dependencies'
+        annotated = {p.key: p.type for p in everything if p.source == "path"}
         parameters = [
             {"name": param, "in": "path", "required": True, "schema": scalar_schema(annotated.get(param, given))}
             for param, given in path_params(pattern).items()
         ]
-        for param in plan.query:
-            entry: dict[str, Any] = {"name": param.name, "in": "query", "required": param.required}
-            entry["schema"] = scalar_schema(param.type)
-            if not param.required and param.default is not None and param.default != []:
-                entry["schema"] = {**entry["schema"], "default": _jsonable(param.default)}
+        for param in everything:
+            if param.source not in ("query", "header", "cookie"):
+                continue
+            entry: dict[str, Any] = {"name": param.key, "in": param.source, "required": param.required}
+            entry["schema"] = _with_default(scalar_schema(param.type), param)
             parameters.append(entry)
         if parameters:
             operation["parameters"] = parameters
 
-        if plan.body is not None:
+        body = next((p for p in everything if p.source == "body"), None)
+        form = [p for p in everything if p.source == "form"]
+        if body is not None:
             operation["requestBody"] = {
-                "required": plan.body.required,
-                "content": {"application/json": {"schema": Model(plan.body.type).schema(components)}},
+                "required": body.required,
+                "content": {"application/json": {"schema": Model(body.type).schema(components)}},
             }
+        elif form:
+            files = any(_unwrap(p.type)[0] is UploadedFile for p in form)
+            properties = {p.key: _with_default(_form_schema(p.type), p) for p in form}
+            schema: dict[str, Any] = {"type": "object", "properties": properties}
+            required = [p.key for p in form if p.required]
+            if required:
+                schema["required"] = required
+            kind = "multipart/form-data" if files else "application/x-www-form-urlencoded"
+            operation["requestBody"] = {"required": bool(required), "content": {kind: {"schema": schema}}}
         success: dict[str, Any] = {"description": "Successful response"}
         if plan.response is not None:
             success["content"] = {"application/json": {"schema": plan.response.schema(components)}}
@@ -96,6 +109,20 @@ def build(app: App, *, title: str, version: str, description: str | None = None)
     if components:
         document["components"] = {"schemas": dict(sorted(components.items()))}
     return document
+
+
+def _with_default(schema: dict, param: Any) -> dict:
+    if not param.required and param.default is not None and param.default != []:
+        return {**schema, "default": _jsonable(param.default)}
+    return schema
+
+
+def _form_schema(tp: Any) -> dict:
+    inner, is_list, _ = _unwrap(tp)
+    if inner is UploadedFile:
+        file = {"type": "string", "format": "binary"}
+        return {"type": "array", "items": file} if is_list else file
+    return scalar_schema(tp)
 
 
 def _unique(name: str, used: set[str]) -> str:
