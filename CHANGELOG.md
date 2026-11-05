@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.9.0
+
+The built-in server, ready for production behind a reverse proxy.
+
+- Backpressure: a streamed response, or a WebSocket's outgoing messages,
+  waits once 1 MiB is waiting for a slow client, until it catches up. A
+  client that stopped reading made the handler produce everything into
+  memory before.
+- WebSockets get a ping every `ws_ping_interval` seconds (20 by default;
+  `korvex run --ws-ping-interval`, 0 for none). A client silent until the
+  next ping is closed with 1011.
+- A body over the limit (413), too slow (408) or broken (400) is still
+  decided by the server, but answered by the app: before hooks, exception
+  handlers, after hooks (CORS, request IDs) and the access log see it.
+- `Forwarded` (RFC 7239) and `X-Forwarded-Host` are read from trusted
+  proxies; the host the client asked for replaces the `Host` header the
+  app sees.
+- `X-Forwarded-Proto` believes its rightmost value, like `-Host`: the one
+  the nearest proxy set, not one the client could have written.
+- CI fails a pull request that makes Korvex more than 10% slower than its
+  base branch (`benches/perf_check.py`).
+
 ## 0.8.0
 
 - `Depends(func)`: a parameter gets the value `func` returns. Dependencies

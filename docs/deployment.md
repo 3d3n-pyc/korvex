@@ -34,9 +34,12 @@ korvex run main:app --workers 3 --uds /run/korvex/korvex.sock
   running as another user can connect; restrict access with the
   permissions of its directory (`/run/korvex` here). Keep the path short:
   macOS allows 104 characters.
-- Requests coming through the socket are trusted, so `request.client` and
-  `request.scheme` are the client's, from the proxy's `X-Forwarded-For`
-  and `X-Forwarded-Proto`.
+- Requests coming through the socket are trusted, so `request.client`,
+  `request.scheme` and the `Host` header are the client's, from the
+  proxy's `Forwarded` or `X-Forwarded-For`, `-Proto` and `-Host`.
+- WebSockets get a ping every 20 seconds (`--ws-ping-interval`), which also
+  keeps them open through nginx's 60-second `proxy_read_timeout`; a client
+  that stopped answering is closed.
 - On SIGTERM (systemd, Docker, Kubernetes), requests in progress get up
   to 30 seconds to finish (`--graceful-timeout`).
 - To listen on TCP instead, use `--host 127.0.0.1 --port 8000` with the

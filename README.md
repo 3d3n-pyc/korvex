@@ -327,8 +327,9 @@ or, from Python, `app.run(workers=3)`. The same options exist in both:
 | `--graceful-timeout S` | `30` | On Ctrl+C or SIGTERM, seconds requests in progress get to finish. |
 | `--max-body BYTES` | 1 MiB | Larger request bodies get a 413, larger WebSocket messages close the connection. A route can set its own: `@app.post("/upload", max_body=50_000_000)`. |
 | `--timeout S` | `30` | Seconds a client gets to send the headers, then the body (408 after that). |
-| `--forwarded-allow-ips` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-For` and `X-Forwarded-Proto` set `request.client` and `request.scheme`. `*` trusts any. |
+| `--forwarded-allow-ips` | `127.0.0.1,::1` | Proxies whose `Forwarded` or `X-Forwarded-For`, `-Proto` and `-Host` headers set `request.client`, `request.scheme` and the `Host` header. `*` trusts any. |
 | `--access-log` | off | Log each request. |
+| `--ws-ping-interval S` | `20` | Seconds between pings on open WebSockets; a client silent until the next ping is closed (1011). `0` turns them off. |
 
 How it works: a Rust thread per worker reads each request in full, without
 touching Python, then hands it to the asyncio loop, which runs your
@@ -339,8 +340,15 @@ Things to know:
 - Run it behind a reverse proxy (nginx, Caddy, Traefik) in production: it
   speaks HTTP/1.1 and WebSocket; HTTPS, HTTP/2 and HTTP/3 are the proxy's
   job.
-- The 413 and 408 errors are answered by the server itself, before your
-  app sees the request, so `@app.exception_handler` doesn't apply to them.
+- A body over the limit (413), too slow (408) or broken (400) is decided
+  by the server, but answered by the app, without the body: before hooks,
+  `@app.exception_handler(413)`, after hooks and the access log all apply.
+  The connection closes after it.
+- A slow client can't make a stream or a WebSocket pile up in memory: once
+  1 MiB waits for it, the handler's next send waits until it catches up.
+- From a trusted proxy, `Forwarded` (RFC 7239) wins over the
+  `X-Forwarded-*` headers. For `X-Forwarded-Proto` and `-Host`, the
+  rightmost value counts: the one the nearest proxy set.
 - The `App` is still a plain ASGI app: uvicorn, Granian or a serverless
   platform keep working, and Windows needs one of them.
 
