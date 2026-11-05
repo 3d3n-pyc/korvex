@@ -472,11 +472,10 @@ def test_redis_store_limits_like_the_memory_store():
 def test_redis_store_is_shared_and_atomic_across_clients():
     import uuid
 
+    url, prefix = redis_url(), f"test:{uuid.uuid4().hex}:"  # skips without redis or a server
     import redis.asyncio
 
     from korvex.middleware import RedisStore
-
-    url, prefix = redis_url(), f"test:{uuid.uuid4().hex}:"
 
     async def race():
         # Two "workers", each with its own client, 50 requests at once.
@@ -493,11 +492,11 @@ def test_redis_store_is_shared_and_atomic_across_clients():
 
 
 def test_redis_store_fails_open_or_closed(caplog):
+    redis = pytest.importorskip("redis")
     import redis.asyncio
 
     from korvex.middleware import RedisStore
 
-    pytest.importorskip("redis")
     nowhere = "redis://127.0.0.1:1/0"  # nothing listens there
 
     async def ask(fail_open):
