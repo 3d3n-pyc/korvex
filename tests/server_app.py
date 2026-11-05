@@ -92,7 +92,7 @@ async def import_data(request):
 
 @app.get("/client")
 def client(request):
-    return Response.json({"client": request.client, "scheme": request.scheme})
+    return Response.json({"client": request.client, "scheme": request.scheme, "host": request.headers.get("host")})
 
 
 @app.websocket("/ws/{room}")

@@ -29,7 +29,7 @@ use tokio_tungstenite::tungstenite::protocol::frame::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::{Role, WebSocketConfig};
 
 use crate::proxy::resolve;
-use crate::server::{Event, Headers, ResponseBody, Shared, internal_error, plain};
+use crate::server::{Event, Headers, ResponseBody, Shared, internal_error, plain, request_headers};
 
 /// What the client sent on an open WebSocket, for Python.
 pub enum Incoming {
@@ -172,20 +172,20 @@ pub async fn handshake(
         .unwrap_or_default();
     let on_upgrade = hyper::upgrade::on(&mut request);
     let (parts, _) = request.into_parts();
-    let (client, scheme) = resolve(peer, &parts.headers, &shared.trusted);
+    let resolved = resolve(peer, &parts.headers, &shared.trusted);
     let id = shared.next_websocket.fetch_add(1, Ordering::Relaxed);
     let (decision, decided) = oneshot::channel();
     let (outgoing, to_send) = mpsc::unbounded_channel();
     shared.push(Event::WebSocket(Opening {
         path: parts.uri.path().to_owned(),
         query: parts.uri.query().unwrap_or("").as_bytes().to_vec(),
-        headers: parts
-            .headers
-            .iter()
-            .map(|(name, value)| (name.as_str().as_bytes().to_vec(), value.as_bytes().to_vec()))
-            .collect(),
-        client,
-        scheme: if scheme == "https" { "wss" } else { "ws" },
+        headers: request_headers(&parts.headers, resolved.host.as_deref()),
+        client: resolved.client,
+        scheme: if resolved.scheme == "https" {
+            "wss"
+        } else {
+            "ws"
+        },
         connection: WsConnection {
             id,
             decision: Mutex::new(Some(decision)),

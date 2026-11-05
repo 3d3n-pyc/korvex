@@ -1,18 +1,18 @@
 //! Who the client really is, behind a reverse proxy.
 //!
 //! A proxy connects to the server itself, so the connection's address is
-//! the proxy's; it passes the client's address in `X-Forwarded-For` and
-//! the original scheme in `X-Forwarded-Proto`. Those headers are only
-//! believed when the connection comes from a trusted proxy: anyone else
-//! could write them to pretend to be someone else.
+//! the proxy's; it passes what the client used in headers: the standard
+//! `Forwarded` (RFC 7239), or the older `X-Forwarded-For`, `-Proto` and
+//! `-Host`. Those headers are only believed when the connection comes from
+//! a trusted proxy: anyone else could write them to pretend to be someone
+//! else. `Forwarded`, when present, wins over the `X-Forwarded-*` ones.
 
 use std::net::{IpAddr, SocketAddr};
 
 use hyper::HeaderMap;
 
-/// The proxies whose `X-Forwarded-*` headers are believed. Connections
-/// over a Unix socket are always trusted: only a local process can open
-/// one.
+/// The proxies whose forwarding headers are believed. Connections over a
+/// Unix socket are always trusted: only a local process can open one.
 #[derive(Debug)]
 pub struct Trusted {
     all: bool,
@@ -42,52 +42,221 @@ impl Trusted {
     fn trusts(&self, address: IpAddr) -> bool {
         self.all || self.addresses.contains(&address)
     }
+
+    /// Whether a forwarded address is a trusted proxy. One that isn't an IP
+    /// address (`unknown`, an obfuscated `_name`) isn't, unless all are.
+    fn trusts_entry(&self, entry: &str) -> bool {
+        self.all
+            || split_host_port(entry)
+                .0
+                .parse()
+                .is_ok_and(|ip| self.trusts(ip))
+    }
 }
 
-/// The client's address (`None` over a Unix socket without proxy headers)
-/// and the scheme it used.
-pub fn resolve(
-    peer: Option<SocketAddr>,
-    headers: &HeaderMap,
-    trusted: &Trusted,
-) -> (Option<(String, u16)>, &'static str) {
-    let mut client = peer.map(|address| (address.ip().to_string(), address.port()));
-    let mut scheme = "http";
+/// What the client used, as far as the server can tell.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Resolved {
+    /// `(host, port)` of the client; `None` over a Unix socket without
+    /// proxy headers. The port is 0 when a proxy didn't pass it.
+    pub client: Option<(String, u16)>,
+    pub scheme: &'static str,
+    /// The `Host` the client asked for, when a trusted proxy passed it.
+    pub host: Option<String>,
+}
+
+pub fn resolve(peer: Option<SocketAddr>, headers: &HeaderMap, trusted: &Trusted) -> Resolved {
+    let mut resolved = Resolved {
+        client: peer.map(|address| (address.ip().to_string(), address.port())),
+        scheme: "http",
+        host: None,
+    };
     if peer.is_some_and(|address| !trusted.trusts(address.ip())) {
-        return (client, scheme);
+        return resolved;
     }
-
-    if first_value(headers, "x-forwarded-proto")
-        .is_some_and(|proto| proto.eq_ignore_ascii_case("https"))
-    {
-        scheme = "https";
+    let elements = forwarded(headers);
+    if elements.is_empty() {
+        resolve_x_forwarded(headers, trusted, &mut resolved);
+    } else {
+        resolve_forwarded(&elements, trusted, &mut resolved);
     }
+    resolved
+}
 
-    // Each proxy appends the address it saw, so the list reads client,
-    // proxy 1, proxy 2... Walking from the right, skip the trusted proxies:
-    // the first other entry is the client. Anything left of it may have
-    // been written by the client itself.
-    let entries: Vec<&str> = headers
-        .get_all("x-forwarded-for")
+/// `X-Forwarded-For: client, proxy1, proxy2`, each proxy appending the
+/// address it saw. Walking from the right, skip the trusted proxies: the
+/// first other entry is the client; anything left of it may have been
+/// written by the client itself. For `-Proto` and `-Host`, the rightmost
+/// value is believed: the one the nearest proxy set or appended.
+fn resolve_x_forwarded(headers: &HeaderMap, trusted: &Trusted, resolved: &mut Resolved) {
+    let entries = values(headers, "x-forwarded-for");
+    let untrusted = entries
+        .iter()
+        .rev()
+        .find(|entry| !trusted.trusts_entry(entry));
+    if let Some(entry) = untrusted.or(entries.first()) {
+        resolved.client = Some(((*entry).to_string(), 0));
+    }
+    if let Some(proto) = values(headers, "x-forwarded-proto").last() {
+        resolved.scheme = scheme(proto);
+    }
+    resolved.host = values(headers, "x-forwarded-host")
+        .last()
+        .and_then(|host| valid_host(host));
+}
+
+/// `Forwarded: for=client;proto=https;host=example.com, for=proxy1`: one
+/// element per proxy, each describing the request that proxy received.
+/// The client's element is found the same way, from the right; its `proto`
+/// and `host` are what the client used.
+fn resolve_forwarded(elements: &[Element], trusted: &Trusted, resolved: &mut Resolved) {
+    let client = elements
+        .iter()
+        .rev()
+        .find(|element| {
+            element
+                .for_
+                .as_deref()
+                .is_none_or(|entry| !trusted.trusts_entry(entry))
+        })
+        .or(elements.first());
+    let Some(element) = client else { return };
+    if let Some(entry) = &element.for_ {
+        let (host, port) = split_host_port(entry);
+        resolved.client = Some((host.to_string(), port));
+    }
+    if let Some(proto) = &element.proto {
+        resolved.scheme = scheme(proto);
+    }
+    resolved.host = element.host.as_deref().and_then(valid_host);
+}
+
+fn scheme(proto: &str) -> &'static str {
+    if proto.eq_ignore_ascii_case("https") {
+        "https"
+    } else {
+        "http"
+    }
+}
+
+/// A host name or address, with an optional port: nothing else, so a
+/// forwarded value can't smuggle anything into the `Host` the app sees.
+fn valid_host(host: &str) -> Option<String> {
+    let ok = !host.is_empty()
+        && host.len() <= 255
+        && host.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b':' | b'[' | b']' | b'_')
+        });
+    ok.then(|| host.to_ascii_lowercase())
+}
+
+/// Every comma-separated value of a header, in order, over all its lines.
+fn values<'a>(headers: &'a HeaderMap, name: &str) -> Vec<&'a str> {
+    headers
+        .get_all(name)
         .iter()
         .filter_map(|value| value.to_str().ok())
         .flat_map(|value| value.split(','))
         .map(str::trim)
         .filter(|entry| !entry.is_empty())
-        .collect();
-    let untrusted = entries
-        .iter()
-        .rev()
-        .find(|entry| entry.parse().map_or(true, |ip| !trusted.trusts(ip)));
-    if let Some(entry) = untrusted.or(entries.first()) {
-        client = Some(((*entry).to_string(), 0));
-    }
-    (client, scheme)
+        .collect()
 }
 
-fn first_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
-    let value = headers.get(name)?.to_str().ok()?;
-    Some(value.split(',').next()?.trim())
+/// `192.0.2.1:8080` -> `("192.0.2.1", 8080)`, `[2001:db8::1]:80` ->
+/// `("2001:db8::1", 80)`; no port, or one that isn't a number, gives 0.
+fn split_host_port(entry: &str) -> (&str, u16) {
+    if let Some(rest) = entry.strip_prefix('[') {
+        let (host, after) = rest.split_once(']').unwrap_or((rest, ""));
+        return (
+            host,
+            after
+                .strip_prefix(':')
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(0),
+        );
+    }
+    match entry.split_once(':') {
+        Some((host, port)) if !port.contains(':') => (host, port.parse().unwrap_or(0)),
+        _ => (entry, 0), // no port, or a bare IPv6 address
+    }
+}
+
+/// One proxy's element of a `Forwarded` header.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Element {
+    for_: Option<String>,
+    proto: Option<String>,
+    host: Option<String>,
+}
+
+/// The elements of every `Forwarded` header line, in order. Values can be
+/// quoted (`for="[2001:db8::1]:80"`); unknown parameters are skipped.
+fn forwarded(headers: &HeaderMap) -> Vec<Element> {
+    let mut elements = Vec::new();
+    for line in headers
+        .get_all("forwarded")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+    {
+        for part in split_unquoted(line, ',') {
+            let mut element = Element::default();
+            for pair in split_unquoted(part, ';') {
+                let Some((name, value)) = pair.split_once('=') else {
+                    continue;
+                };
+                let value = unquote(value.trim());
+                match name.trim().to_ascii_lowercase().as_str() {
+                    "for" => element.for_ = Some(value),
+                    "proto" => element.proto = Some(value),
+                    "host" => element.host = Some(value),
+                    _ => {}
+                }
+            }
+            if element != Element::default() {
+                elements.push(element);
+            }
+        }
+    }
+    elements
+}
+
+/// Splits on `separator`, except inside double quotes.
+fn split_unquoted(text: &str, separator: char) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let (mut start, mut quoted, mut escaped) = (0, false, false);
+    for (index, c) in text.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            c if c == separator && !quoted => {
+                parts.push(text[start..index].trim());
+                start = index + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    parts.push(text[start..].trim());
+    parts.retain(|part| !part.is_empty());
+    parts
+}
+
+fn unquote(value: &str) -> String {
+    match value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
+        Some(inner) => {
+            let mut out = String::with_capacity(inner.len());
+            let mut chars = inner.chars();
+            while let Some(c) = chars.next() {
+                out.push(if c == '\\' {
+                    chars.next().unwrap_or(c)
+                } else {
+                    c
+                });
+            }
+            out
+        }
+        None => value.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -98,11 +267,7 @@ mod tests {
         Trusted::parse(&items.iter().map(ToString::to_string).collect::<Vec<_>>()).unwrap()
     }
 
-    fn resolved(
-        peer: &str,
-        headers: &[(&'static str, &str)],
-        trust: &[&str],
-    ) -> (Option<(String, u16)>, &'static str) {
+    fn resolved(peer: &str, headers: &[(&'static str, &str)], trust: &[&str]) -> Resolved {
         let mut map = HeaderMap::new();
         for (name, value) in headers {
             map.append(*name, value.parse().unwrap());
@@ -116,23 +281,36 @@ mod tests {
         Some((host.to_string(), port))
     }
 
+    fn plain(client: Option<(String, u16)>, scheme: &'static str) -> Resolved {
+        Resolved {
+            client,
+            scheme,
+            host: None,
+        }
+    }
+
     #[test]
     fn without_a_proxy_the_connection_is_the_client() {
         assert_eq!(
             resolved("203.0.113.9:5000", &[], &["127.0.0.1"]),
-            (client("203.0.113.9", 5000), "http")
+            plain(client("203.0.113.9", 5000), "http")
         );
     }
 
     #[test]
-    fn a_trusted_proxy_passes_the_client_and_scheme() {
+    fn a_trusted_proxy_passes_the_client_scheme_and_host() {
         let headers = [
             ("x-forwarded-for", "203.0.113.9"),
             ("x-forwarded-proto", "https"),
+            ("x-forwarded-host", "Example.com:8443"),
         ];
         assert_eq!(
             resolved("127.0.0.1:5000", &headers, &["127.0.0.1"]),
-            (client("203.0.113.9", 0), "https")
+            Resolved {
+                client: client("203.0.113.9", 0),
+                scheme: "https",
+                host: Some("example.com:8443".into())
+            }
         );
     }
 
@@ -141,10 +319,12 @@ mod tests {
         let headers = [
             ("x-forwarded-for", "10.0.0.1"),
             ("x-forwarded-proto", "https"),
+            ("x-forwarded-host", "evil.example"),
+            ("forwarded", "for=10.0.0.1;proto=https;host=evil.example"),
         ];
         assert_eq!(
             resolved("203.0.113.9:5000", &headers, &["127.0.0.1"]),
-            (client("203.0.113.9", 5000), "http")
+            plain(client("203.0.113.9", 5000), "http")
         );
     }
 
@@ -154,7 +334,22 @@ mod tests {
         let headers = [("x-forwarded-for", "6.6.6.6, 203.0.113.9")];
         assert_eq!(
             resolved("127.0.0.1:5000", &headers, &["127.0.0.1"]),
-            (client("203.0.113.9", 0), "http")
+            plain(client("203.0.113.9", 0), "http")
+        );
+    }
+
+    #[test]
+    fn the_rightmost_proto_and_host_are_believed() {
+        // The client wrote its own values; the proxy appended the real ones.
+        let headers = [
+            ("x-forwarded-proto", "https, http"),
+            ("x-forwarded-host", "evil.example"),
+            ("x-forwarded-host", "shop.example"),
+        ];
+        let got = resolved("127.0.0.1:5000", &headers, &["127.0.0.1"]);
+        assert_eq!(
+            (got.scheme, got.host.as_deref()),
+            ("http", Some("shop.example"))
         );
     }
 
@@ -167,7 +362,7 @@ mod tests {
         let trust = ["127.0.0.1", "10.0.0.2", "10.0.0.3"];
         assert_eq!(
             resolved("127.0.0.1:5000", &headers, &trust),
-            (client("203.0.113.9", 0), "http")
+            plain(client("203.0.113.9", 0), "http")
         );
     }
 
@@ -179,9 +374,9 @@ mod tests {
         ];
         assert_eq!(
             resolved("", &headers, &[]),
-            (client("203.0.113.9", 0), "https")
+            plain(client("203.0.113.9", 0), "https")
         );
-        assert_eq!(resolved("", &[], &[]), (None, "http"));
+        assert_eq!(resolved("", &[], &[]), plain(None, "http"));
     }
 
     #[test]
@@ -189,18 +384,103 @@ mod tests {
         let headers = [("x-forwarded-for", "203.0.113.9, 10.0.0.2")];
         assert_eq!(
             resolved("10.0.0.3:1", &headers, &["*"]),
-            (client("203.0.113.9", 0), "http")
+            plain(client("203.0.113.9", 0), "http")
         );
     }
 
     #[test]
     fn only_http_and_https_are_accepted_as_schemes() {
         let headers = [("x-forwarded-proto", "javascript")];
-        assert_eq!(resolved("127.0.0.1:1", &headers, &["127.0.0.1"]).1, "http");
+        assert_eq!(
+            resolved("127.0.0.1:1", &headers, &["127.0.0.1"]).scheme,
+            "http"
+        );
+    }
+
+    #[test]
+    fn a_host_with_anything_but_name_characters_is_ignored() {
+        for host in ["a b", "x.example/evil", "x.example\"", "x@y", ""] {
+            let headers = [("x-forwarded-host", host)];
+            assert_eq!(
+                resolved("127.0.0.1:1", &headers, &["127.0.0.1"]).host,
+                None,
+                "{host:?}"
+            );
+        }
     }
 
     #[test]
     fn rejects_invalid_trusted_addresses() {
         assert!(Trusted::parse(&["not-an-ip".to_string()]).is_err());
+    }
+
+    #[test]
+    fn the_forwarded_header() {
+        let headers = [(
+            "forwarded",
+            "for=203.0.113.9:4711;proto=https;host=shop.example",
+        )];
+        assert_eq!(
+            resolved("127.0.0.1:1", &headers, &["127.0.0.1"]),
+            Resolved {
+                client: client("203.0.113.9", 4711),
+                scheme: "https",
+                host: Some("shop.example".into())
+            }
+        );
+    }
+
+    #[test]
+    fn forwarded_with_quotes_ipv6_and_a_chain() {
+        // The client wrote the first element; proxy 10.0.0.2 the last one.
+        let headers = [
+            ("forwarded", "for=6.6.6.6;host=evil.example"),
+            (
+                "forwarded",
+                r#"for="[2001:db8::17]:4711";proto=https;host="shop.example", for=10.0.0.2"#,
+            ),
+        ];
+        let got = resolved("127.0.0.1:1", &headers, &["127.0.0.1", "10.0.0.2"]);
+        assert_eq!(
+            got,
+            Resolved {
+                client: client("2001:db8::17", 4711),
+                scheme: "https",
+                host: Some("shop.example".into())
+            }
+        );
+    }
+
+    #[test]
+    fn forwarded_wins_over_the_x_forwarded_headers() {
+        let headers = [
+            ("x-forwarded-for", "198.51.100.1"),
+            ("forwarded", "for=203.0.113.9"),
+        ];
+        assert_eq!(
+            resolved("127.0.0.1:1", &headers, &["127.0.0.1"]).client,
+            client("203.0.113.9", 0)
+        );
+    }
+
+    #[test]
+    fn obfuscated_and_unknown_clients_are_kept_as_given() {
+        let headers = [("forwarded", "for=_hidden, for=unknown")];
+        assert_eq!(
+            resolved("127.0.0.1:1", &headers, &["127.0.0.1"]).client,
+            client("unknown", 0)
+        );
+    }
+
+    #[test]
+    fn splitting_and_unquoting() {
+        assert_eq!(
+            split_unquoted(r#"a="x,y";b, c"#, ','),
+            vec![r#"a="x,y";b"#, "c"]
+        );
+        assert_eq!(unquote(r#""a\"b""#), r#"a"b"#);
+        assert_eq!(split_host_port("[::1]:80"), ("::1", 80));
+        assert_eq!(split_host_port("::1"), ("::1", 0));
+        assert_eq!(split_host_port("1.2.3.4:x"), ("1.2.3.4", 0));
     }
 }

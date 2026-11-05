@@ -519,7 +519,7 @@ async fn handle(
         return Ok(websocket::handshake(request, peer, shared, shutdown).await);
     }
     let (parts, body) = request.into_parts();
-    let (client, scheme) = resolve(peer, &parts.headers, &shared.trusted);
+    let resolved = resolve(peer, &parts.headers, &shared.trusted);
     // Read the whole body before Python sees the request, within the size
     // limit and the timeout, so a slow or huge upload never holds a worker.
     let limit = shared.body_limit(parts.method.as_str(), parts.uri.path());
@@ -546,14 +546,10 @@ async fn handle(
         method: parts.method.as_str().to_owned(),
         path: parts.uri.path().to_owned(),
         query: parts.uri.query().unwrap_or("").as_bytes().to_vec(),
-        headers: parts
-            .headers
-            .iter()
-            .map(|(name, value)| (name.as_str().as_bytes().to_vec(), value.as_bytes().to_vec()))
-            .collect(),
+        headers: request_headers(&parts.headers, resolved.host.as_deref()),
         body,
-        client,
-        scheme,
+        client: resolved.client,
+        scheme: resolved.scheme,
         reply,
     }));
     // An error means Python dropped the request without answering (it raised).
@@ -565,6 +561,21 @@ async fn handle(
         }) => build(status, &headers, body),
         Err(_) => internal_error(),
     })
+}
+
+/// The request's headers for Python. `host`, when a trusted proxy passed
+/// the one the client asked for, replaces the `Host` header: the app sees
+/// the host the client used, as it sees the client's address and scheme.
+pub fn request_headers(headers: &hyper::HeaderMap, host: Option<&str>) -> Headers {
+    let mut list: Headers = headers
+        .iter()
+        .filter(|(name, _)| host.is_none() || *name != hyper::header::HOST)
+        .map(|(name, value)| (name.as_str().as_bytes().to_vec(), value.as_bytes().to_vec()))
+        .collect();
+    if let Some(host) = host {
+        list.insert(0, (b"host".to_vec(), host.as_bytes().to_vec()));
+    }
+    list
 }
 
 fn build(

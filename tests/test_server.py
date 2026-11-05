@@ -302,19 +302,31 @@ def test_trusted_proxy_headers_set_client_and_scheme(server):
     headers = {"X-Forwarded-For": "6.6.6.6, 203.0.113.9", "X-Forwarded-Proto": "https"}
     _, _, body = fetch(f"{base}/client", headers=headers)
     # 127.0.0.1 is trusted by default; 6.6.6.6 was written by the client itself.
-    assert json.loads(body) == {"client": ["203.0.113.9", 0], "scheme": "https"}
+    assert json.loads(body) == {"client": ["203.0.113.9", 0], "scheme": "https", "host": f"127.0.0.1:{base.rsplit(':', 1)[1]}"}
     _, _, body = fetch(f"{base}/client")
     assert json.loads(body)["client"][0] == "127.0.0.1"
+
+
+def test_forwarded_and_x_forwarded_host_from_a_trusted_proxy(server):
+    base, _ = server
+    headers = {"X-Forwarded-Host": "shop.example"}
+    assert json.loads(fetch(f"{base}/client", headers=headers)[2])["host"] == "shop.example"
+    headers = {"Forwarded": 'for="[2001:db8::1]:4711";proto=https;host=shop.example', "X-Forwarded-For": "198.51.100.1"}
+    result = json.loads(fetch(f"{base}/client", headers=headers)[2])
+    assert result == {"client": ["2001:db8::1", 4711], "scheme": "https", "host": "shop.example"}
 
 
 def test_proxy_headers_from_untrusted_addresses_are_ignored():
     port = free_port()
     process = start(port, FORWARDED_ALLOW="10.9.9.9")
     try:
-        headers = {"X-Forwarded-For": "203.0.113.9", "X-Forwarded-Proto": "https"}
+        headers = {"X-Forwarded-For": "203.0.113.9", "X-Forwarded-Proto": "https", "X-Forwarded-Host": "evil.example"}
         _, _, body = fetch(f"http://127.0.0.1:{port}/client", headers=headers)
         result = json.loads(body)
         assert result["client"][0] == "127.0.0.1" and result["scheme"] == "http"
+        assert result["host"] == f"127.0.0.1:{port}"
+        _, _, body = fetch(f"http://127.0.0.1:{port}/client", headers={"Forwarded": "for=203.0.113.9;host=evil.example"})
+        assert json.loads(body)["host"] == f"127.0.0.1:{port}"
     finally:
         process.kill()
 
@@ -337,7 +349,7 @@ def test_unix_socket():
     connection.request("GET", "/client", headers={"X-Forwarded-For": "203.0.113.9"})
     response = connection.getresponse()
     # Over a Unix socket, the proxy is trusted: only a local process can connect.
-    assert (response.status, json.loads(response.read())) == (200, {"client": ["203.0.113.9", 0], "scheme": "http"})
+    assert (response.status, json.loads(response.read())) == (200, {"client": ["203.0.113.9", 0], "scheme": "http", "host": "localhost"})
     connection.close()
     code, _ = stop_and_collect(process)
     assert code == 0
