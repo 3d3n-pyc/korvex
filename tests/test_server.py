@@ -181,7 +181,12 @@ def test_workers_each_start_and_serve():
     port = free_port()
     process = start(port, WORKERS="3")
     base = f"http://127.0.0.1:{port}"
-    pids = {fetch(f"{base}/pid")[2] for _ in range(60)}
+    # The first worker to be ready can take every request while the others
+    # are still starting, so keep asking until a second one answers.
+    pids = set()
+    deadline = time.monotonic() + 10
+    while len(pids) < 2 and time.monotonic() < deadline:
+        pids.add(fetch(f"{base}/pid")[2])
     code, output = stop_and_collect(process)
     assert code == 0
     assert output.count("STARTED") == 3 and output.count("STOPPED") == 3
