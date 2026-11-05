@@ -328,7 +328,7 @@ or, from Python, `app.run(workers=3)`. The same options exist in both:
 | `--max-body BYTES` | 1 MiB | Larger request bodies get a 413, larger WebSocket messages close the connection. A route can set its own: `@app.post("/upload", max_body=50_000_000)`. |
 | `--timeout S` | `30` | Seconds a client gets to send the headers, then the body (408 after that). |
 | `--forwarded-allow-ips` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-For` and `-Proto` (or `Forwarded`, when neither is there) set `request.client` and `request.scheme`. `*` trusts any. |
-| `--forwarded-host` | off | Also believe their `X-Forwarded-Host` (or `Forwarded`'s `host`) for the `Host` header. Only if the proxy sets it itself: nginx passes a client's on as is. |
+| `--forwarded-host` | off | Also believe the host they forward for the `Host` header: `X-Forwarded-Host`, or `Forwarded`'s `host` when there's no `X-Forwarded-For` or `-Proto`. Only if the proxy sets the header it uses itself (nginx passes a client's `X-Forwarded-Host` on as is), and a proxy that uses `Forwarded` must also strip a client's `X-Forwarded-*`. |
 | `--access-log` | off | Log each request. |
 | `--ws-ping-interval S` | `20` | Seconds between pings on open WebSockets; a client silent until the next ping is closed (1011). `0` turns them off. |
 

@@ -217,6 +217,12 @@ struct Element {
 
 /// The elements of every `Forwarded` header line, in order. Values can be
 /// quoted (`for="[2001:db8::1]:80"`); unknown parameters are skipped.
+///
+/// A line with a quote left open (or ending on a backslash) makes the whole
+/// header ignored. A proxy appends its element after the client's value:
+/// `<client's value>, for=<client>`. An open quote at the end of the
+/// client's value would swallow the proxy's element, leaving the client's
+/// own as the only one, so the trust walk would pick it.
 fn forwarded(headers: &HeaderMap) -> Vec<Element> {
     let mut elements = Vec::new();
     for line in headers
@@ -224,9 +230,13 @@ fn forwarded(headers: &HeaderMap) -> Vec<Element> {
         .iter()
         .filter_map(|v| v.to_str().ok())
     {
-        for part in split_unquoted(line, ',') {
+        let Some(parts) = split_unquoted(line, ',') else {
+            return Vec::new();
+        };
+        for part in parts {
             let mut element = Element::default();
-            for pair in split_unquoted(part, ';') {
+            // A part of a balanced line is balanced too.
+            for pair in split_unquoted(part, ';').unwrap_or_default() {
                 let Some((name, value)) = pair.split_once('=') else {
                     continue;
                 };
@@ -246,8 +256,9 @@ fn forwarded(headers: &HeaderMap) -> Vec<Element> {
     elements
 }
 
-/// Splits on `separator`, except inside double quotes.
-fn split_unquoted(text: &str, separator: char) -> Vec<&str> {
+/// Splits on `separator`, except inside double quotes; `None` if a quote
+/// is left open or the text ends on an escape.
+fn split_unquoted(text: &str, separator: char) -> Option<Vec<&str>> {
     let mut parts = Vec::new();
     let (mut start, mut quoted, mut escaped) = (0, false, false);
     for (index, c) in text.char_indices() {
@@ -262,9 +273,12 @@ fn split_unquoted(text: &str, separator: char) -> Vec<&str> {
             _ => {}
         }
     }
+    if quoted || escaped {
+        return None;
+    }
     parts.push(text[start..].trim());
     parts.retain(|part| !part.is_empty());
-    parts
+    Some(parts)
 }
 
 fn unquote(value: &str) -> String {
@@ -510,6 +524,22 @@ mod tests {
     }
 
     #[test]
+    fn a_quote_left_open_by_the_client_cant_hide_the_proxys_element() {
+        // The client sent `Forwarded: for=6.6.6.6;host=evil.example;x="` and
+        // the proxy appended its own element on the same line.
+        let line = r#"for=6.6.6.6;host=evil.example;x=", for=203.0.113.9;host=shop.example"#;
+        let got = resolved("127.0.0.1:1", &[("forwarded", line)], &["127.0.0.1"]);
+        assert_eq!(got, plain(client("127.0.0.1", 1), "http")); // ignored, not believed
+        // The same, without the trick: the proxy's element is the one believed.
+        let line = "for=6.6.6.6;host=evil.example, for=203.0.113.9;host=shop.example";
+        let got = resolved("127.0.0.1:1", &[("forwarded", line)], &["127.0.0.1"]);
+        assert_eq!(
+            (got.client, got.host.as_deref()),
+            (client("203.0.113.9", 0), Some("shop.example"))
+        );
+    }
+
+    #[test]
     fn the_forwarded_host_is_only_believed_when_asked() {
         let headers = [
             ("x-forwarded-for", "203.0.113.9"),
@@ -540,8 +570,10 @@ mod tests {
     fn splitting_and_unquoting() {
         assert_eq!(
             split_unquoted(r#"a="x,y";b, c"#, ','),
-            vec![r#"a="x,y";b"#, "c"]
+            Some(vec![r#"a="x,y";b"#, "c"])
         );
+        assert_eq!(split_unquoted(r#"a="open, b"#, ','), None);
+        assert_eq!(split_unquoted(r#"a="x\"#, ','), None);
         assert_eq!(unquote(r#""a\"b""#), r#"a"b"#);
         assert_eq!(split_host_port("[::1]:80"), ("::1", 80));
         assert_eq!(split_host_port("::1"), ("::1", 0));

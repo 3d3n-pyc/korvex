@@ -16,7 +16,8 @@ The built-in server, ready for production behind a reverse proxy.
   handlers, after hooks (CORS, request IDs) and the access log see it.
 - `Forwarded` (RFC 7239) is read from trusted proxies when they send no
   `X-Forwarded-For` or `-Proto`: nginx, Caddy and Traefik set those, and
-  pass a client's own `Forwarded` on untouched.
+  pass a client's own `Forwarded` on untouched. A `Forwarded` line with a
+  quote left open is ignored: it could hide the element a proxy appends.
 - `forwarded_host=True` (`korvex run --forwarded-host`): the host a trusted
   proxy forwards (`X-Forwarded-Host`, or `Forwarded`'s `host`) replaces the
   `Host` header the app sees. Off by default, as in Django and Werkzeug:
