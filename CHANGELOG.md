@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.9.0
+
+The built-in server, ready for production behind a reverse proxy.
+
+- Backpressure: a streamed response, or a WebSocket's outgoing messages,
+  waits once 1 MiB is waiting for a slow client, until it catches up. A
+  client that stopped reading made the handler produce everything into
+  memory before.
+- WebSockets get a ping every `ws_ping_interval` seconds (20 by default;
+  `korvex run --ws-ping-interval`, 0 for none). A client silent until the
+  next ping is closed with 1011.
+- A body over the limit (413), too slow (408) or broken (400) is still
+  decided by the server, but answered by the app: before hooks, exception
+  handlers, after hooks (CORS, request IDs) and the access log see it.
+- `Forwarded` (RFC 7239) is read from trusted proxies when they send no
+  `X-Forwarded-For` or `-Proto`: nginx, Caddy and Traefik set those, and
+  pass a client's own `Forwarded` on untouched. A `Forwarded` line with a
+  quote left open is ignored: it could hide the element a proxy appends.
+- `forwarded_host=True` (`korvex run --forwarded-host`): the host a trusted
+  proxy forwards (`X-Forwarded-Host`, or `Forwarded`'s `host`) replaces the
+  `Host` header the app sees. Off by default, as in Django and Werkzeug:
+  nginx passes a client's `X-Forwarded-Host` on as is.
+- `X-Forwarded-Proto` believes its rightmost value, like `-Host`: the one
+  the nearest proxy set, not one the client could have written.
+- CI fails a pull request that makes Korvex more than 10% slower than its
+  base branch (`benches/perf_check.py`).
+
 ## 0.8.0
 
 - `Depends(func)`: a parameter gets the value `func` returns. Dependencies

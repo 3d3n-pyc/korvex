@@ -663,10 +663,11 @@ class App(_RouteDecorators):
         finally:
             await _finish(response, path)  # sent or not, what waited for it runs
 
-    async def _respond(self, scope: dict, receive: Callable) -> Response:
+    async def _respond(self, scope: dict, receive: Callable, error: int = 0) -> Response:
         """The response to one request: before hooks, then the route (its
         middleware and handler), then after hooks, with errors turned into
-        responses at each step."""
+        responses at each step. With `error`, the route is replaced by that
+        HTTP error."""
         request = Request(scope, receive, {})
         try:
             response = None
@@ -675,6 +676,8 @@ class App(_RouteDecorators):
                 if response is not None:
                     break
             if response is None:
+                if error:
+                    raise HTTPException(error)
                 response = await self._dispatch(request)
         except Exception as exc:
             response = await self._handle_error(request, exc)
@@ -752,9 +755,11 @@ class App(_RouteDecorators):
         scheme: str,
         connection: Any,
         incoming: asyncio.Queue,
+        writable: Callable[[int], Awaitable[None]] | None = None,
     ) -> None:
         """Runs a WebSocket from the built-in server through the same code
-        as under ASGI: it speaks ASGI messages over the Rust connection."""
+        as under ASGI: it speaks ASGI messages over the Rust connection. A
+        send waits on `writable(connection.id)` while the client is behind."""
         offered = next((v.decode("latin-1") for k, v in headers if k == b"sec-websocket-protocol"), "")
         scope = {
             "type": "websocket",
@@ -780,9 +785,11 @@ class App(_RouteDecorators):
                 connection.accept(message.get("subprotocol"), message.get("headers") or [])
             elif kind == "websocket.send":
                 if message.get("text") is not None:
-                    connection.send_text(message["text"])
+                    sent = connection.send_text(message["text"])
                 else:
-                    connection.send_bytes(message.get("bytes") or b"")
+                    sent = connection.send_bytes(message.get("bytes") or b"")
+                if sent == 2 and writable is not None:
+                    await writable(connection.id)  # the client is behind: let it catch up
             elif kind == "websocket.close":
                 connection.close(message.get("code", 1000), message.get("reason") or "")
 
@@ -889,6 +896,8 @@ class App(_RouteDecorators):
         uds: str | None = None,
         forwarded_allow_ips: Sequence[str] = ("127.0.0.1", "::1"),
         access_log: bool = False,
+        ws_ping_interval: float = 20.0,
+        forwarded_host: bool = False,
     ) -> None:
         """Serves the app with Korvex's built-in server until Ctrl+C or
         SIGTERM. Linux and macOS only; on Windows, use an ASGI server.
@@ -901,10 +910,17 @@ class App(_RouteDecorators):
           the headers, then the body (408 after that).
         - `uds` listens on a Unix socket at that path instead of host:port,
           for a reverse proxy on the same machine.
-        - `X-Forwarded-For` and `X-Forwarded-Proto` set `request.client` and
-          `request.scheme` when they come from `forwarded_allow_ips` (`"*"`
-          for any) or a Unix socket.
+        - From `forwarded_allow_ips` (`"*"` for any) or a Unix socket,
+          `X-Forwarded-For` and `-Proto` (or `Forwarded`, when neither is
+          there) set `request.client` and `request.scheme`. With
+          `forwarded_host`, for a proxy that sets `X-Forwarded-Host` itself,
+          the host they forward replaces the `Host` header too.
         - `access_log` logs each request to the `korvex.access` logger.
+        - Open WebSockets get a ping every `ws_ping_interval` seconds, and
+          are closed (1011) if the client stays silent until the next one;
+          0 turns pings off.
+        - A streamed response or a WebSocket waits whenever its client is
+          1 MiB behind, until it catches up.
         """
         from korvex import serve
 
@@ -914,7 +930,16 @@ class App(_RouteDecorators):
             port,
             workers=workers,
             graceful_timeout=graceful_timeout,
-            config=serve.Config(max_body, timeout, list(self._body_limits), list(forwarded_allow_ips), uds, access_log),
+            config=serve.Config(
+                max_body,
+                timeout,
+                list(self._body_limits),
+                list(forwarded_allow_ips),
+                uds,
+                access_log,
+                ws_ping_interval,
+                forwarded_host,
+            ),
         )
 
     async def _serve_one(
@@ -927,10 +952,16 @@ class App(_RouteDecorators):
         client: tuple[str, int] | None,
         scheme: str,
         responder: Any,
+        error: int = 0,
+        writable: Callable[[int], Awaitable[None]] | None = None,
     ) -> int:
         """Runs one request taken from the built-in server, through the same
         dispatch as under ASGI, hands the response back to Rust, and returns
-        its status."""
+        its status. `error` is a status the server already decided on (413,
+        408, 400): the request goes through the before hooks, then gets that
+        error's response, as if the route had raised `HTTPException`. A
+        streamed response waits on `writable(responder.id)` whenever its
+        client falls behind."""
         scope = {
             "type": "http",
             "method": method,
@@ -944,7 +975,7 @@ class App(_RouteDecorators):
         async def receive() -> dict:
             return {"type": "http.request", "body": body, "more_body": False}
 
-        response = await self._respond(scope, receive)
+        response = await self._respond(scope, receive, error)
         head = method == "HEAD"
         raw_headers = _raw_headers(response, head)
         if head:
@@ -953,8 +984,11 @@ class App(_RouteDecorators):
             responder.start_stream(response.status, raw_headers)
             try:
                 async for chunk in response:
-                    if not responder.send_chunk(chunk):
+                    sent = responder.send_chunk(chunk)
+                    if sent == 0:
                         break  # the client is gone
+                    if sent == 2 and writable is not None:
+                        await writable(responder.id)  # the client is behind: let it catch up
             finally:
                 responder.end_stream()
                 await _finish(response, path)

@@ -2,7 +2,7 @@
 
 Where Korvex is going. Versions are a rough order, not promises.
 
-## Where it stands (0.8)
+## Where it stands (0.9)
 
 - **Fast.** On one CPU core, Korvex serves the most requests per second of
   the frameworks tested, with the least memory. Its built-in server serves
@@ -13,8 +13,8 @@ Where Korvex is going. Versions are a rough order, not promises.
   app-wide hooks, CORS, request IDs and rate limiting; validation from
   type annotations with msgspec or pydantic, headers, cookies and forms
   as parameters, and dependencies; an OpenAPI document and Swagger UI; a
-  built-in server with workers, graceful shutdown, size limits and
-  timeouts; and a deployment guide.
+  built-in server with workers, graceful shutdown, size limits, timeouts,
+  backpressure and WebSocket pings; and a deployment guide.
 - **Young.** Alpha, one maintainer, no known production use yet.
 
 Two rules hold for everything below:
@@ -41,29 +41,23 @@ Korvex leaves HTTPS, certificates, HTTP/2 and HTTP/3 entirely to the
 proxy. For the rest, it does a light version when that costs almost
 nothing or when only the app knows enough to do it well: the built-in
 server reads requests in full in Rust, limits body sizes and enforces
-timeouts; the app adds rate limiting per user or API key and request IDs. That also helps where there's no full proxy in front: local
+timeouts; the app adds rate limiting per user or API key and request
+IDs. That also helps where there's no full proxy in front: local
 development, or a platform whose load balancer doesn't do everything.
 
 ## Later
 
-- Built-in server, known limits to lift:
-  - streamed responses have no backpressure: a slow client lets a stream
-    pile up in memory;
-  - the 413 and 408 it answers itself skip exception handlers and access
-    logs;
-  - `X-Forwarded-Host` and the standard `Forwarded` header aren't read.
 - Free-threaded Python (3.14t), to let one worker use several cores.
 - A shared rate limit store (Redis), so the limit holds across workers and
   machines.
-- WebSockets: backpressure on outgoing messages, idle timeouts, and a way
-  for app hooks to see the handshake (dependencies already can).
+- WebSockets: a way for app hooks to see the handshake (dependencies
+  already can).
 - Optional middleware for security headers and response compression,
   for deployments without a proxy.
 - Validation: a model filled from form fields, and dependencies
   available to middleware.
 - More route syntax: custom constraints, host-based routing.
 - Benchmarks with several workers and with a real database.
-- A performance check in CI that fails when a change makes Korvex slower.
 
 ## 1.0
 

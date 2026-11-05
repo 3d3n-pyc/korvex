@@ -24,9 +24,17 @@ def main(argv: Sequence[str] | None = None) -> None:
     run.add_argument(
         "--forwarded-allow-ips",
         default="127.0.0.1,::1",
-        help="comma-separated proxy addresses whose X-Forwarded-* headers are trusted, or * (default: 127.0.0.1,::1)",
+        help="comma-separated proxy addresses whose X-Forwarded-* (or Forwarded) headers are trusted, or * (default: 127.0.0.1,::1)",
+    )
+    run.add_argument(
+        "--forwarded-host",
+        action="store_true",
+        help="also believe the proxy's X-Forwarded-Host: only if it sets that header itself",
     )
     run.add_argument("--access-log", action="store_true", help="log each request")
+    run.add_argument(
+        "--ws-ping-interval", type=float, default=20.0, help="seconds between WebSocket pings; 0 for none (default: 20)"
+    )
     run.add_argument("--app-dir", default=".", help="directory to import the module from (default: current directory)")
     args = parser.parse_args(argv)
 
@@ -41,6 +49,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         uds=args.uds,
         forwarded_allow_ips=args.forwarded_allow_ips.split(","),
         access_log=args.access_log,
+        ws_ping_interval=args.ws_ping_interval,
+        forwarded_host=args.forwarded_host,
     )
 
 

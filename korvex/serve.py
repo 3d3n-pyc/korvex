@@ -44,6 +44,8 @@ class Config(NamedTuple):
     trusted_proxies: list[str]
     uds: str | None
     access_log: bool
+    ws_ping_interval: float = 20.0
+    forwarded_host: bool = False
 
 
 def run(app: App, host: str, port: int, *, workers: int, graceful_timeout: float, config: Config) -> None:
@@ -106,7 +108,14 @@ async def serve(app: App, fd: int, graceful_timeout: float, config: Config) -> N
         raise
     loop = asyncio.get_running_loop()
     server = _core.Server(
-        fd, config.uds is not None, config.max_body, config.timeout, config.body_limits, config.trusted_proxies
+        fd,
+        config.uds is not None,
+        config.max_body,
+        config.timeout,
+        config.body_limits,
+        config.trusted_proxies,
+        config.ws_ping_interval,
+        config.forwarded_host,
     )
     handle = _logged(app._serve_one) if config.access_log else app._serve_one
     stopping = asyncio.Event()
@@ -114,6 +123,15 @@ async def serve(app: App, fd: int, graceful_timeout: float, config: Config) -> N
         loop.add_signal_handler(sig, stopping.set)
     tasks: set[asyncio.Task] = set()
     websockets: dict[int, asyncio.Queue] = {}  # connection id -> its incoming messages
+    waiting: dict[int, asyncio.Future] = {}  # stream or WebSocket id -> woken when its client catches up
+
+    async def writable(id: int) -> None:
+        """Waits until the client of stream or WebSocket `id` has caught up."""
+        future = waiting[id] = loop.create_future()
+        try:
+            await future
+        finally:
+            waiting.pop(id, None)
 
     def start(coroutine: Awaitable) -> asyncio.Task:
         task = _start_task(loop, coroutine)
@@ -125,18 +143,23 @@ async def serve(app: App, fd: int, graceful_timeout: float, config: Config) -> N
     def take_requests() -> None:
         for kind, *event in server.take():
             if kind == "http":
-                start(handle(*event))
+                method, path, query, headers, body, client, scheme, responder, error = event
+                start(handle(method, path, query, headers, body, client, scheme, responder, error, writable))
             elif kind == "ws":
                 path, query, headers, client, scheme, connection = event
                 queue: asyncio.Queue = asyncio.Queue()
                 websockets[connection.id] = queue
-                task = start(app._serve_websocket(path, query, headers, client, scheme, connection, queue))
+                task = start(app._serve_websocket(path, query, headers, client, scheme, connection, queue, writable))
                 task.add_done_callback(lambda _, id=connection.id: websockets.pop(id, None))
             elif kind == "ws_message" and event[0] in websockets:
                 key = "text" if isinstance(event[1], str) else "bytes"
                 websockets[event[0]].put_nowait({"type": "websocket.receive", key: event[1]})
             elif kind == "ws_closed" and event[0] in websockets:
                 websockets[event[0]].put_nowait({"type": "websocket.disconnect", "code": event[1]})
+            elif kind == "writable":
+                future = waiting.get(event[0])
+                if future is not None and not future.done():
+                    future.set_result(None)
 
     loop.add_reader(server.fileno(), take_requests)
     try:
@@ -158,9 +181,9 @@ def _logged(serve_one: Callable[..., Awaitable[int]]) -> Callable[..., Awaitable
     """Wraps App._serve_one to log each request: client, request line,
     status and duration."""
 
-    async def serve_logged(method: str, path: str, query: bytes, headers: list, body: bytes, client, scheme, responder) -> int:
+    async def serve_logged(method: str, path: str, query: bytes, headers: list, body: bytes, client, scheme, responder, error: int = 0, writable=None) -> int:
         started = time.perf_counter()
-        status = await serve_one(method, path, query, headers, body, client, scheme, responder)
+        status = await serve_one(method, path, query, headers, body, client, scheme, responder, error, writable)
         target = f"{path}?{query.decode('latin-1')}" if query else path
         host = client[0] if client else "-"
         duration = (time.perf_counter() - started) * 1000

@@ -274,6 +274,24 @@ def test_body_over_the_limit_is_rejected(strict_server):
     assert chunked_post(strict_server, "/echo", [b"x" * 600, b"x" * 600])[0] == 413  # no length announced
 
 
+def test_the_app_answers_the_errors_the_server_decides_on(strict_server):
+    # Its exception handler (413 as JSON) and after hooks (X-Powered-By) apply.
+    status, headers, body = fetch(f"http://127.0.0.1:{strict_server}/echo", method="POST", data=b"x" * 1001)
+    assert (status, json.loads(body)) == (413, {"error": "too large", "path": "/echo"})
+    headers = {k.lower(): v for k, v in headers.items()}
+    assert headers["x-powered-by"] == "korvex" and headers["connection"] == "close"
+    status, body = chunked_post(strict_server, "/echo", [b"x" * 600, b"x" * 600])
+    assert (status, json.loads(body)["error"]) == (413, "too large")
+
+
+def test_server_errors_are_in_the_access_log():
+    port = free_port()
+    process = start(port, MAX_BODY="10", ACCESS_LOG="1", REQUEST_ID="1")
+    fetch(f"http://127.0.0.1:{port}/echo", method="POST", data=b"x" * 11, headers={"X-Request-ID": "req-413"})
+    _, output = stop_and_collect(process)
+    assert '127.0.0.1 "POST /echo" 413' in output and "req-413" in output
+
+
 def test_a_route_can_raise_its_limit(strict_server):
     base = f"http://127.0.0.1:{strict_server}"
     assert fetch(f"{base}/upload", method="POST", data=b"x" * 50_000)[2] == b"50000"
@@ -294,7 +312,7 @@ def test_slow_body_gets_a_408(strict_server):
     with socket.create_connection(("127.0.0.1", strict_server), timeout=5) as client:
         client.sendall(b"POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n" + b"x" * 10)
         response = client.recv(1024)
-    assert response.startswith(b"HTTP/1.1 408")
+    assert response.startswith(b"HTTP/1.1 408") and b"x-powered-by: korvex" in response.lower()
 
 
 def test_trusted_proxy_headers_set_client_and_scheme(server):
@@ -302,19 +320,45 @@ def test_trusted_proxy_headers_set_client_and_scheme(server):
     headers = {"X-Forwarded-For": "6.6.6.6, 203.0.113.9", "X-Forwarded-Proto": "https"}
     _, _, body = fetch(f"{base}/client", headers=headers)
     # 127.0.0.1 is trusted by default; 6.6.6.6 was written by the client itself.
-    assert json.loads(body) == {"client": ["203.0.113.9", 0], "scheme": "https"}
+    assert json.loads(body) == {"client": ["203.0.113.9", 0], "scheme": "https", "host": f"127.0.0.1:{base.rsplit(':', 1)[1]}"}
     _, _, body = fetch(f"{base}/client")
     assert json.loads(body)["client"][0] == "127.0.0.1"
+
+
+def test_a_clients_own_forwarded_and_x_forwarded_host_are_not_believed(server):
+    # Behind nginx or Caddy, which set X-Forwarded-For but pass these on as
+    # the client wrote them: neither may choose the address or the host.
+    base, _ = server
+    port = base.rsplit(":", 1)[1]
+    headers = {"X-Forwarded-For": "203.0.113.9", "Forwarded": "for=6.6.6.6;host=evil.example", "X-Forwarded-Host": "evil.example"}
+    result = json.loads(fetch(f"{base}/client", headers=headers)[2])
+    assert result == {"client": ["203.0.113.9", 0], "scheme": "http", "host": f"127.0.0.1:{port}"}
+
+
+def test_forwarded_and_the_forwarded_host_when_the_proxy_sets_them():
+    port = free_port()
+    process = start(port, FORWARDED_HOST="1")
+    try:
+        base = f"http://127.0.0.1:{port}"
+        assert json.loads(fetch(f"{base}/client", headers={"X-Forwarded-Host": "shop.example"})[2])["host"] == "shop.example"
+        headers = {"Forwarded": 'for="[2001:db8::1]:4711";proto=https;host=shop.example'}  # no X-Forwarded-*: read
+        result = json.loads(fetch(f"{base}/client", headers=headers)[2])
+        assert result == {"client": ["2001:db8::1", 4711], "scheme": "https", "host": "shop.example"}
+    finally:
+        process.kill()
 
 
 def test_proxy_headers_from_untrusted_addresses_are_ignored():
     port = free_port()
     process = start(port, FORWARDED_ALLOW="10.9.9.9")
     try:
-        headers = {"X-Forwarded-For": "203.0.113.9", "X-Forwarded-Proto": "https"}
+        headers = {"X-Forwarded-For": "203.0.113.9", "X-Forwarded-Proto": "https", "X-Forwarded-Host": "evil.example"}
         _, _, body = fetch(f"http://127.0.0.1:{port}/client", headers=headers)
         result = json.loads(body)
         assert result["client"][0] == "127.0.0.1" and result["scheme"] == "http"
+        assert result["host"] == f"127.0.0.1:{port}"
+        _, _, body = fetch(f"http://127.0.0.1:{port}/client", headers={"Forwarded": "for=203.0.113.9;host=evil.example"})
+        assert json.loads(body)["host"] == f"127.0.0.1:{port}"
     finally:
         process.kill()
 
@@ -337,7 +381,7 @@ def test_unix_socket():
     connection.request("GET", "/client", headers={"X-Forwarded-For": "203.0.113.9"})
     response = connection.getresponse()
     # Over a Unix socket, the proxy is trusted: only a local process can connect.
-    assert (response.status, json.loads(response.read())) == (200, {"client": ["203.0.113.9", 0], "scheme": "http"})
+    assert (response.status, json.loads(response.read())) == (200, {"client": ["203.0.113.9", 0], "scheme": "http", "host": "localhost"})
     connection.close()
     code, _ = stop_and_collect(process)
     assert code == 0
@@ -513,3 +557,67 @@ def test_sigterm_closes_websockets_with_1001():
     output, _ = process.communicate(timeout=10)
     assert process.returncode == 0
     assert "WS CLOSED" in output and "STOPPED" in output  # the handler saw the disconnect
+
+
+def test_a_client_that_stops_reading_holds_back_a_stream(server):
+    import http.client
+
+    base, _ = server
+    port = int(base.rsplit(":", 1)[1])
+    sock = socket.socket()
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 64 * 1024)  # before connecting: a small window
+    sock.connect(("127.0.0.1", port))
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    connection.sock = sock
+    connection.request("GET", "/firehose")
+    response = connection.getresponse()
+    response.read(1024)
+    time.sleep(1)  # the client stops reading; without backpressure, the whole 100 MiB would be made by now
+    made = json.loads(fetch(f"{base}/produced")[2])["stream"]
+    assert made < 16 * 1024 * 1024
+    assert len(response.read()) + 1024 == 100 * 1024 * 1024  # then it all arrives, intact
+    connection.close()
+
+
+def test_a_websocket_client_that_stops_reading_holds_back_the_handler(server):
+    base, _ = server
+    port = int(base.rsplit(":", 1)[1])
+    client = WebSocketClient(port, "/ws-firehose")
+    assert client.status == 101
+    time.sleep(1)
+    made = json.loads(fetch(f"{base}/produced")[2])["ws"]
+    assert made < 32 * 1024 * 1024
+    received = 0
+    while received < 100 * 1024 * 1024:
+        opcode, payload = client.recv()
+        assert opcode == 2
+        received += len(payload)
+    client.close()
+
+
+def test_websocket_pings_close_clients_that_went_silent():
+    port = free_port()
+    process = start(port, WS_PING="0.3")
+    try:
+        # One that answers each ping stays connected.
+        alive = WebSocketClient(port, "/ws/lobby?token=secret")
+        deadline = time.monotonic() + 1.2
+        while time.monotonic() < deadline:
+            opcode, payload = alive.recv()
+            assert opcode == 9  # a ping
+            alive.send(10, payload)  # the pong
+        alive.send_text("still here")
+        while (frame := alive.recv())[0] == 9:
+            alive.send(10, frame[1])
+        assert frame == (1, b"lobby: still here")
+        alive.close()
+
+        # One that never answers is closed with 1011 after a ping goes unanswered.
+        silent = WebSocketClient(port, "/ws/lobby?token=secret")
+        started = time.monotonic()
+        while (frame := silent.recv())[0] == 9:
+            pass  # pings, left unanswered
+        assert frame[0] == 8 and int.from_bytes(frame[1][:2], "big") == 1011
+        assert time.monotonic() - started < 2
+    finally:
+        process.kill()

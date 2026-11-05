@@ -39,6 +39,7 @@ benches/      comparisons with other frameworks:
   bench_app.py     the App's own cost per request, against Starlette
   bench_validation.py  validation from annotations, against FastAPI
   bench_dependencies.py  dependencies, against FastAPI
+  perf_check.py    the check CI runs on pull requests: slower than the base?
   load_test.py     frameworks on the same server under load (apps in benches/load/)
   servers.py       servers on the same CPU cores, built-in one included
   plot.py          draws the charts in docs/
