@@ -2,7 +2,7 @@
 
 Where Korvex is going. Versions are a rough order, not promises.
 
-## Where it stands (0.10)
+## Where it stands (0.11)
 
 - **Fast.** On one CPU core, Korvex serves the most requests per second of
   the frameworks tested, with the least memory. Its built-in server serves
@@ -10,7 +10,8 @@ Where Korvex is going. Versions are a rough order, not promises.
 - **The basics of a web app.** A router, route groups, and an ASGI `App`
   with typed path parameters, startup and shutdown hooks, error handling,
   cookies and forms, streaming, files and static directories, WebSockets,
-  app-wide hooks, CORS, request IDs and rate limiting; validation from
+  app-wide hooks, CORS, request IDs, rate limiting (shared through Redis
+  if needed), compression and security headers; validation from
   type annotations with msgspec or pydantic, headers, cookies and forms
   (models too) as parameters, and dependencies, which guard routes,
   groups and WebSockets; custom route constraints and host-based
@@ -55,15 +56,6 @@ then, a version may break things; each break is listed in the changelog
 with how to update.
 
 The versions go from what shapes the API to what only adds to it.
-
-### 0.11: ready-made middleware
-
-- **Response compression** (gzip, and brotli or zstd when installed), for
-  deployments without a proxy to do it.
-- **Security headers**: `Strict-Transport-Security`, `Content-Security-Policy`,
-  `X-Content-Type-Options` and the like, with safe defaults.
-- **A shared rate limit store on Redis**, so a limit holds across workers
-  and machines (`redis` as an optional dependency).
 
 ### 0.12: more than one core per worker
 

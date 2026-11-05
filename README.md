@@ -337,7 +337,26 @@ cors(app, allow_origins=["https://example.com"], allow_credentials=True)
   requests per period; beyond that, a 429 with `Retry-After`. Responses
   carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`.
   Counters live in each worker's memory, so with 3 workers a client can
-  get up to 3 times the limit; `store=` takes a shared store instead.
+  get up to 3 times the limit; `store=RedisStore("redis://...")` shares
+  them between workers and machines (`pip install korvex[redis]`). If
+  Redis can't be reached, requests go through (`fail_open=False` refuses
+  them), and the error is logged.
+- `compress(app)` compresses text-like responses over 500 bytes with
+  zstd (Python 3.14), brotli (`pip install korvex[brotli]`) or gzip,
+  whichever the client prefers among those it accepts, in that order.
+  Streamed responses are compressed piece by piece, each flushed, so a
+  live stream isn't held back. Call it before the other hooks. Mind
+  BREACH: don't compress pages that hold a secret next to something the
+  client sent.
+- `security_headers(app)` adds `X-Frame-Options: DENY`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy`,
+  `Cross-Origin-Opener-Policy`, and `Strict-Transport-Security` on HTTPS
+  requests; `content_security_policy=` adds a CSP (off by default: the
+  right one depends on your pages, and `/docs` loads Swagger UI from a
+  CDN). A response that sets one of these keeps its own.
+
+Behind a reverse proxy, let it compress and add headers instead: it does
+both well, and the app does less.
 
 More in [`examples/`](examples/), up to a [complete app](examples/taskboard/)
 laid out like a real project. To put it in production (behind nginx or

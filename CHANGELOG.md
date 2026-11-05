@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.11.0
+
+Ready-made middleware, for deployments without a proxy.
+
+- `compress(app)`: gzip, brotli (`korvex[brotli]`) or zstd (Python 3.14),
+  the best the client accepts. Text-like content over 500 bytes, and
+  streamed responses piece by piece, each flushed.
+- `security_headers(app)`: `X-Frame-Options`, `X-Content-Type-Options`,
+  `Referrer-Policy`, `Cross-Origin-Opener-Policy`, HSTS on HTTPS only, and
+  an opt-in `Content-Security-Policy`. A response's own headers win.
+- `RedisStore`: a rate limit shared by every worker and machine
+  (`korvex[redis]`), atomic in Redis, failing open by default. A store's
+  `hit()` can now be a coroutine function.
+- `Headers.remove(name)`.
+
 ## 0.10.0
 
 Breaking changes are listed with how to update.
