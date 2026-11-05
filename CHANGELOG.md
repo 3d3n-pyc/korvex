@@ -13,6 +13,11 @@ Breaking changes are listed with how to update.
   exact response). The standalone `Router` keeps its middleware names; a
   route given some through `app.router` answers a 500 in an `App`, rather
   than run without what may be its guard.
+- Before hooks run on WebSocket handshakes too, with the `WebSocket` as
+  the request; one answering, or raising `HTTPException` or `Abort`,
+  refuses the connection. `request_id()` gives WebSocket handlers an ID,
+  and **`rate_limit()` now counts handshakes**. A before hook that only
+  makes sense for HTTP can skip them with `isinstance(request, WebSocket)`.
 - `Abort(response)`: raised in a dependency, a handler or a before hook,
   sends that response as is, past the exception handlers. In a
   WebSocket's dependencies, it refuses the connection.

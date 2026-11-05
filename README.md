@@ -120,7 +120,8 @@ uvicorn mymodule:app
   with an `Allow` header.
 - `@app.before_request` runs before every request, ahead of routing (so
   for unknown paths too), and returns a `Response` to answer right away or
-  `None` to carry on. `@app.after_request` gets every response, errors
+  `None` to carry on. It runs for WebSocket handshakes too, with the
+  `WebSocket` as the request: answering refuses the connection. `@app.after_request` gets every response, errors
   included, and returns the one to send (or `None` to keep it).
 - `raise HTTPException(404, "user not found")` in a handler, a dependency
   or a before hook answers with that error; `raise Abort(response)` with
@@ -275,8 +276,11 @@ async def chat(ws, room, user: CurrentUser):  # no session: refused (403)
   A dependency raising `HTTPException` refuses the connection before it
   opens (403); a handler can also `close()` before `accept()` to refuse.
 - They work the same under ASGI servers and in the built-in server. Groups
-  support them (`api.websocket(...)`), group dependencies included; app
-  hooks don't run for them.
+  support them (`api.websocket(...)`), group dependencies included.
+- Before hooks run on the handshake, so `request_id()` and `rate_limit()`
+  apply, and a hook can refuse a connection whose `Origin` isn't yours:
+  browsers don't check it for WebSockets. After hooks don't run: there's
+  no response to change.
 
 ### Ready-made hooks
 

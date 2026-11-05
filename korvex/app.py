@@ -395,7 +395,7 @@ class AppGroup(_RouteDecorators):
         `path`, under this group's prefix. Its parameters and dependencies
         work as for HTTP handlers (no body), the group's dependencies run
         too, and one raising `HTTPException` refuses the connection (403).
-        App hooks don't run for WebSockets."""
+        Before hooks run on the handshake; after hooks don't."""
 
         def register(func: WebSocketHandler) -> WebSocketHandler:
             name = _route_name(func, self._app._ws_handlers)
@@ -472,8 +472,8 @@ class App(_RouteDecorators):
         """Decorator: registers the function as the WebSocket handler for
         `path`; it gets a `WebSocket`, the path params, and parameters and
         dependencies as HTTP handlers do (no body). A dependency raising
-        `HTTPException` refuses the connection (403). App hooks don't run
-        for WebSockets."""
+        `HTTPException` refuses the connection (403). Before hooks run on
+        the handshake; after hooks don't."""
         return self._root.websocket(path, dependencies=dependencies)
 
     def _plan(self, func: Callable, pattern: str, dependencies: Sequence[Any] = (), *, websocket: bool = False) -> Plan:
@@ -586,7 +586,13 @@ class App(_RouteDecorators):
         """Decorator: runs the function before every request, ahead of
         routing, so it sees unknown paths too. It gets the request
         (`path_params` not filled yet) and returns a `Response` to answer
-        right away, or `None` to carry on. Hooks run in the order declared."""
+        right away, or `None` to carry on. Hooks run in the order declared.
+
+        They run for WebSocket handshakes too, with the `WebSocket` as the
+        request (`isinstance(request, WebSocket)` tells them apart): a hook
+        answering, or raising `HTTPException` or `Abort`, refuses the
+        connection (403). That's the place to check a handshake's `Origin`,
+        which browsers don't check for WebSockets."""
         return _add_hook(self._before_request, func)  # type: ignore[arg-type]
 
     @overload
@@ -780,12 +786,15 @@ class App(_RouteDecorators):
 
     async def _websocket(self, scope: dict, receive: Callable, send: Callable) -> None:
         """Runs a WebSocket connection: its handler, or a refusal (403) for
-        an unknown path or a dependency raising HTTPException. Whatever the
-        handler leaves open gets closed."""
+        an unknown path, a before hook answering, or a dependency raising
+        HTTPException. Whatever the handler leaves open gets closed."""
         found = self._ws_router.match(scope["path"])
         websocket = WebSocket(scope, receive, send, found[1] if found else {})
-        if found is None or found[0] not in self._ws_handlers:
+        if self._before_request and not await self._websocket_hooks_allow(websocket):
             await websocket.close()  # before accept: the client gets a 403
+            return
+        if found is None or found[0] not in self._ws_handlers:
+            await websocket.close()
             return
         name, path_params = found[0], found[1]
         handler = self._ws_handlers[name]
@@ -817,6 +826,22 @@ class App(_RouteDecorators):
             if run is not None:
                 await self._close_quietly(run, None, websocket.path)
         await websocket.close()
+
+    async def _websocket_hooks_allow(self, websocket: WebSocket) -> bool:
+        """Runs the before hooks on a handshake: False if one refuses it
+        (answers, or raises HTTPException or Abort)."""
+        for hook in self._before_request:
+            try:
+                answer = await _call(hook, websocket)
+            except (HTTPException, Abort) as exc:
+                answer = exc.response if isinstance(exc, Abort) else Response.text(exc.detail, status=exc.status)
+            except Exception:
+                logger.exception("before_request hook failed for WebSocket %s", websocket.path)
+                return False
+            if answer is not None:
+                logger.info("WebSocket %s refused by a before hook: %s", websocket.path, answer.status)
+                return False
+        return True
 
     @staticmethod
     async def _close_quietly(run: Run, error: BaseException | None, where: str) -> None:
