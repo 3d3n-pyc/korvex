@@ -11,6 +11,10 @@
   `X-Request-ID`, available through `current_request_id()`, added to log
   records by `RequestIdFilter` and shown in the built-in server's access
   logs.
+- `korvex.middleware.rate_limit(app, requests=..., per=..., key=...)`:
+  per-key limits (client address by default), 429 with `Retry-After`,
+  RateLimit-* headers. In-memory by default, one store per worker; the
+  `RateLimitStore` interface allows a shared one.
 
 ## 0.5.0
 

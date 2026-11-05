@@ -386,3 +386,13 @@ def test_access_log_shows_the_request_id():
     _, output = stop_and_collect(process)
     line = next(line for line in output.splitlines() if '"GET /users/1" 200' in line)
     assert line.endswith(headers["x-request-id"])
+
+
+def test_rate_limit_in_the_built_in_server():
+    port = free_port()
+    process = start(port, RATE_LIMIT="3")
+    try:
+        statuses = [fetch(f"http://127.0.0.1:{port}/users/1")[0] for _ in range(4)]
+        assert statuses == [200, 200, 200, 429]
+    finally:
+        process.kill()

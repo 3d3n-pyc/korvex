@@ -159,6 +159,12 @@ cors(app, allow_origins=["https://example.com"], allow_credentials=True)
   otherwise) and sends it back. `current_request_id()` returns it anywhere
   in your code, `RequestIdFilter` adds it to log records
   (`%(request_id)s`), and the built-in server's access logs show it.
+- `rate_limit(app, requests=100, per=60, key=...)` allows each key (the
+  client's address by default, or an API key, a user ID...) that many
+  requests per period; beyond that, a 429 with `Retry-After`. Responses
+  carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`.
+  Counters live in each worker's memory, so with 3 workers a client can
+  get up to 3 times the limit; `store=` takes a shared store instead.
 
 More in [`examples/`](examples/). To put it in production (behind nginx or
 Caddy, in Docker, on AWS Lambda or Vercel), see the

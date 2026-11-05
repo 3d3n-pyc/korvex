@@ -9,11 +9,13 @@ on an App:
 from __future__ import annotations
 
 import logging
+import math
 import re
+import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Hashable, Sequence
 from contextvars import ContextVar
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple, Optional, Protocol
 
 from korvex.response import Response
 
@@ -145,3 +147,112 @@ class RequestIdFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = _request_id.get() or "-"
         return True
+
+
+class Decision(NamedTuple):
+    """A rate limit store's answer for one request."""
+
+    allowed: bool
+    remaining: int  # requests left before the limit
+    retry_after: float  # seconds until the next request would be allowed (0 if allowed)
+    reset: float  # seconds until the key's whole allowance is back
+
+
+class RateLimitStore(Protocol):
+    """Where rate limit state lives. The store decides, rather than just
+    storing numbers, so a shared store (Redis, say) can do it atomically."""
+
+    def hit(self, key: Hashable, requests: int, per: float) -> Decision: ...
+
+
+class MemoryStore:
+    """Rate limit state in this process's memory. With several workers,
+    each has its own: a client can get up to `requests` x workers.
+
+    Uses GCRA (a token bucket kept as one timestamp per key): up to
+    `requests` at once, then one every `per / requests` seconds."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._next_free: dict[Hashable, float] = {}  # key -> when its allowance is fully back
+        self._calls = 0
+
+    def hit(self, key: Hashable, requests: int, per: float) -> Decision:
+        now = self._clock()
+        interval = per / requests
+        full_back = max(self._next_free.get(key, now), now)
+        allowed_at = full_back - per + interval  # a burst of `requests` fits in `per`
+        if now < allowed_at:
+            return Decision(False, 0, allowed_at - now, full_back - now)
+        full_back += interval
+        self._next_free[key] = full_back
+        self._forget_old(now)
+        remaining = int((per - (full_back - now)) / interval)
+        return Decision(True, max(remaining, 0), 0.0, full_back - now)
+
+    def _forget_old(self, now: float) -> None:
+        """Drops keys whose allowance is fully back, now and then, so memory
+        doesn't grow with every client ever seen."""
+        self._calls += 1
+        if self._calls % 1000 == 0:
+            self._next_free = {k: t for k, t in self._next_free.items() if t > now}
+
+
+def _client_address(request: Request) -> Optional[Hashable]:
+    # An unknown address shares one limit rather than escaping it: behind a
+    # proxy that doesn't send X-Forwarded-For, every address is unknown.
+    return request.client[0] if request.client else "unknown"
+
+
+_decision: ContextVar[Optional[Decision]] = ContextVar("korvex_rate_limit", default=None)
+
+
+def rate_limit(
+    app: App,
+    *,
+    requests: int,
+    per: float,
+    key: Callable[[Request], Optional[Hashable]] = _client_address,
+    store: RateLimitStore | None = None,
+    headers: bool = True,
+) -> None:
+    """Allows each key `requests` requests per `per` seconds; beyond that,
+    requests get a 429 with Retry-After.
+
+    - `key(request)`: who the limit applies to. The client's address by
+      default (requests with an unknown address share one limit); an API
+      key or user ID is fairer behind shared addresses. Return `None` to
+      exempt a request (a health check, say).
+    - `store`: where the state lives; a `MemoryStore` by default, one per
+      worker process.
+    - `headers`: send RateLimit-Limit, RateLimit-Remaining and
+      RateLimit-Reset on every limited response, so clients can slow down.
+
+    Runs as a before hook, so it sees every request; hooks declared before
+    it (like `cors()`, for preflight requests) run first.
+    """
+    if requests < 1 or per <= 0:
+        raise ValueError("requests must be at least 1 and per positive")
+    state = store if store is not None else MemoryStore()
+
+    @app.before_request
+    def check(request: Request) -> Response | None:
+        who = key(request)
+        if who is None:
+            _decision.set(None)
+            return None
+        decision = state.hit(who, requests, per)
+        _decision.set(decision)
+        if decision.allowed:
+            return None
+        return Response.text("Too Many Requests", status=429, headers=[("Retry-After", str(math.ceil(decision.retry_after)))])
+
+    if headers:
+
+        @app.after_request
+        def add_headers(request: Request, response: Response) -> None:
+            decision = _decision.get()
+            if decision is not None:
+                response.headers.set("RateLimit-Limit", str(requests))
+                response.headers.set("RateLimit-Remaining", str(decision.remaining))
+                response.headers.set("RateLimit-Reset", str(math.ceil(decision.reset)))

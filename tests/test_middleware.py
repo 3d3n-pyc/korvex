@@ -7,7 +7,7 @@ import re
 from test_app import make_scope, response_from, run_app
 
 from korvex import App, HTTPException, Response
-from korvex.middleware import RequestIdFilter, cors, current_request_id, request_id
+from korvex.middleware import MemoryStore, RequestIdFilter, cors, current_request_id, rate_limit, request_id
 
 SITE = "https://site.example"
 
@@ -164,3 +164,95 @@ def test_request_id_filter_adds_the_id_to_log_records(caplog):
     _, headers, _ = call(app, "GET", "/", X_Request_ID="trace-42")
     log.warning("outside")
     assert [(r.getMessage(), r.request_id) for r in caplog.records] == [("inside", "trace-42"), ("outside", "-")]
+
+
+class Clock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+
+def limited_app(clock, **options):
+    app = App()
+
+    @app.get("/")
+    def home(request):
+        return Response.text("ok")
+
+    @app.get("/health")
+    def health(request):
+        return Response.text("healthy")
+
+    rate_limit(app, **{"requests": 3, "per": 60, "store": MemoryStore(clock), **options})
+    return app
+
+
+def test_requests_beyond_the_limit_get_a_429():
+    clock = Clock()
+    app = limited_app(clock)
+    statuses = [call(app, "GET", "/")[0] for _ in range(4)]
+    assert statuses == [200, 200, 200, 429]
+    status, headers, body = call(app, "GET", "/")
+    assert (status, body, headers["Retry-After"]) == (429, b"Too Many Requests", "20")
+    clock.now = 20  # one request's worth of time later
+    assert [call(app, "GET", "/")[0] for _ in range(2)] == [200, 429]
+
+
+def test_rate_limit_headers_tell_clients_where_they_stand():
+    app = limited_app(Clock())
+    remaining = [call(app, "GET", "/")[1]["RateLimit-Remaining"] for _ in range(3)]
+    _, headers, _ = call(app, "GET", "/")
+    assert remaining == ["2", "1", "0"]
+    assert headers["RateLimit-Limit"] == "3" and headers["RateLimit-Remaining"] == "0"
+    assert "RateLimit-Limit" not in call(limited_app(Clock(), headers=False), "GET", "/")[1]
+
+
+def test_the_key_decides_who_shares_a_limit():
+    def by_api_key(request):
+        if request.path == "/health":
+            return None  # exempt
+        return request.headers.get("x-api-key")
+
+    app = limited_app(Clock(), key=by_api_key)
+    assert [call(app, "GET", "/", X_API_Key="alice")[0] for _ in range(4)][-1] == 429
+    assert call(app, "GET", "/", X_API_Key="bob")[0] == 200  # bob has his own allowance
+    assert all(call(app, "GET", "/health")[0] == 200 for _ in range(10))
+    assert "RateLimit-Limit" not in call(app, "GET", "/health")[1]
+
+
+def test_preflight_requests_answered_by_cors_first_arent_counted():
+    app = App()
+
+    @app.get("/data")
+    def data(request):
+        return Response.text("ok")
+
+    cors(app, allow_origins=[SITE])
+    rate_limit(app, requests=1, per=60)
+    for _ in range(5):
+        assert preflight(app)[0] == 204
+    assert call(app, "GET", "/data", Origin=SITE)[0] == 200
+
+
+def test_memory_store_forgets_keys_whose_allowance_is_back():
+    clock = Clock()
+    store = MemoryStore(clock)
+    for n in range(999):
+        store.hit(n, 10, 1)
+    clock.now = 5  # every allowance is back
+    store.hit("new", 10, 1)  # the 1,000th call cleans up
+    assert list(store._next_free) == ["new"]
+
+
+def test_rate_limit_rejects_nonsense_settings():
+    import pytest
+
+    with pytest.raises(ValueError):
+        rate_limit(App(), requests=0, per=60)
+
+
+def test_requests_with_an_unknown_address_share_one_limit_instead_of_escaping_it():
+    app = limited_app(Clock())  # the test requests carry no client address
+    assert [call(app, "GET", "/")[0] for _ in range(4)][-1] == 429
