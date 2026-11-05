@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.8.0
+
+- `Depends(func)`: a parameter gets the value `func` returns. Dependencies
+  take parameters like handlers (query, headers, cookies, body, path, the
+  request, other dependencies), can be sync or async, run once per
+  request (`cache=False` otherwise), and can stop the request with
+  `HTTPException`. One that `yield`s is torn down after the handler, or
+  after the stream for a streamed response, with the handler's error
+  raised at the `yield`.
+- `dependencies=[Depends(...)]` on routes, groups and WebSockets.
+- `app.dependency_overrides`, to replace a dependency in tests.
+- `Header()`, `Cookie()`, `Form()` (files too) and `Query(alias=...)`, as
+  a parameter's default or in `Annotated[...]`.
+- WebSocket handlers get parameters and dependencies like HTTP handlers; a
+  dependency raising `HTTPException` refuses the connection.
+- OpenAPI describes headers, cookies, forms, and the parameters of
+  dependencies.
+- `Request.body()` and `form()` can be called more than once.
+- Path parameters annotated with a type Korvex can't convert are refused
+  at registration, like query parameters in 0.7.
+- `examples/taskboard/` guards its API and WebSocket with one dependency.
+
 ## 0.7.0
 
 - Validation from type annotations, with msgspec or pydantic models (both
