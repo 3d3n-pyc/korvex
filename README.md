@@ -157,7 +157,8 @@ uvicorn mymodule:app
   first host pattern that fits owns the request (those without parameters
   first): its routes answer, then the routes declared without a host,
   which answer on every host. `/docs` documents the routes of the host
-  it's served from, and `app.openapi(host=...)` those of any host.
+  it's served from, and `app.openapi(host=...)` those of any host. In the
+  built-in server, a route's `max_body` applies to its path on every host.
 - Routes registered on `app.router` directly are linked to a function
   with `@app.handler("name")`. The App doesn't run the router's middleware
   names: a route that has some answers a 500, rather than run without

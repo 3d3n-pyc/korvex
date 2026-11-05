@@ -555,7 +555,8 @@ class App(_RouteDecorators):
         first, then in the order declared): its routes answer, and routes
         declared without a host when it doesn't have the path; another
         pattern's never do. Calling `host()` again with the same pattern
-        adds to the same routes."""
+        adds to the same routes. In the built-in server, a route's
+        `max_body` applies to its path on every host."""
         normalized = pattern.lower().rstrip(".")
         found = next((h for h in self._hosts if h.pattern == normalized), None)
         if found is None:
