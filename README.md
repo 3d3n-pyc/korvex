@@ -371,6 +371,25 @@ Reproduce with `uv run pytest benches/bench_router.py --benchmark-only
 to redraw both charts. Results depend on the machine: measure your own
 workload before relying on any number.
 
+### Validation
+
+One POST with a small JSON body, answered with JSON, run through the app
+in-process (no server). Median time per request:
+
+| Handler | Time |
+|---|---|
+| **Korvex, msgspec models in and out** | **17.8 µs** |
+| Korvex, pydantic models in and out | 21.0 µs |
+| Korvex, no annotations (`request.json()`, `Response.json()`) | 22.9 µs |
+| FastAPI, the same pydantic models | 76.2 µs |
+
+- Validating is faster than not validating here: msgspec and pydantic
+  decode and encode JSON in compiled code, `request.json()` and
+  `Response.json()` use Python's `json` module.
+- Handlers without annotations take the same time as in 0.6.
+
+Reproduce with `uv run pytest benches/bench_validation.py --benchmark-only`.
+
 ## Development
 
 ```sh

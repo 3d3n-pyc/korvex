@@ -2,7 +2,7 @@
 
 Where Korvex is going. Versions are a rough order, not promises.
 
-## Where it stands (0.6)
+## Where it stands (0.7)
 
 - **Fast.** On one CPU core, Korvex serves the most requests per second of
   the frameworks tested, with the least memory. Its built-in server serves
@@ -10,10 +10,10 @@ Where Korvex is going. Versions are a rough order, not promises.
 - **The basics of a web app.** A router, route groups, and an ASGI `App`
   with typed path parameters, startup and shutdown hooks, error handling,
   cookies and forms, streaming, files and static directories, WebSockets,
-  app-wide hooks, CORS, request IDs and rate limiting; a built-in server
-  with workers, graceful shutdown, size limits and timeouts; and a
-  deployment guide. Compared with FastAPI, Litestar or Django, still
-  missing: validation, OpenAPI.
+  app-wide hooks, CORS, request IDs and rate limiting; validation from
+  type annotations with msgspec or pydantic; an OpenAPI document and
+  Swagger UI; a built-in server with workers, graceful shutdown, size
+  limits and timeouts; and a deployment guide.
 - **Young.** Alpha, one maintainer, no known production use yet.
 
 Two rules hold for everything below:
@@ -43,12 +43,6 @@ server reads requests in full in Rust, limits body sizes and enforces
 timeouts; the app adds rate limiting per user or API key and request IDs. That also helps where there's no full proxy in front: local
 development, or a platform whose load balancer doesn't do everything.
 
-## 0.7: describing the API
-
-- OpenAPI generated from the registered routes, with typed path
-  parameters, served as JSON.
-- Optional request validation through msgspec or pydantic, never required.
-
 ## Later
 
 - Built-in server, known limits to lift:
@@ -64,6 +58,8 @@ development, or a platform whose load balancer doesn't do everything.
   for app hooks to see the handshake.
 - Optional middleware for security headers and response compression,
   for deployments without a proxy.
+- Validation: headers, cookies and form fields as parameters, and
+  dependencies shared between handlers.
 - More route syntax: custom constraints, host-based routing.
 - Benchmarks with several workers and with a real database.
 - A performance check in CI that fails when a change makes Korvex slower.

@@ -25,12 +25,17 @@ korvex/
   router.py   Router (wraps the Rust one) and RouteGroup
   app.py      App and Request (ASGI)
   response.py Response and Headers
+  errors.py   HTTPException and ValidationError
+  schema.py   validation from a handler's annotations (msgspec or pydantic)
+  openapi.py  the OpenAPI document and the Swagger UI page
   middleware.py ready-made hooks: cors(), request_id(), rate_limit()
   serve.py    App.run(): one process, or a supervisor and its workers
   cli.py      the `korvex run` command
 tests/        Python tests (Rust tests live next to the code)
 benches/      comparisons with other frameworks:
   bench_router.py  route matching alone
+  bench_app.py     the App's own cost per request, against Starlette
+  bench_validation.py  validation from annotations, against FastAPI
   load_test.py     frameworks on the same server under load (apps in benches/load/)
   servers.py       servers on the same CPU cores, built-in one included
   plot.py          draws the charts in docs/
@@ -49,6 +54,9 @@ uv run pytest
 ```
 
 CI runs the same checks. New behavior needs a test.
+
+msgspec and pydantic stay optional: import them only where a model of
+theirs is being used, never at the top of a module.
 
 Python code must run on 3.9: write `X | Y` only in annotations (thanks to
 `from __future__ import annotations`), and `Union[X, Y]` elsewhere.

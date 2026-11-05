@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
 
 - Validation from type annotations, with msgspec or pydantic models (both
   optional): a model parameter is the JSON body, typed parameters come
