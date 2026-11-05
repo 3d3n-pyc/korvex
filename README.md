@@ -139,6 +139,50 @@ uvicorn mymodule:app
   raises, the server doesn't start. Both `@app.on_startup` and
   `@app.on_startup()` work.
 
+### Validation
+
+Type annotations say where a handler's parameters come from. Models can be
+[msgspec](https://jcristharif.com/msgspec/) structs or
+[pydantic](https://docs.pydantic.dev/) models; Korvex needs neither.
+
+```python
+import msgspec
+
+class UserIn(msgspec.Struct):
+    name: str
+    age: int
+
+class UserOut(msgspec.Struct):
+    id: int
+    name: str
+
+@app.post("/users")
+async def create(request, body: UserIn, notify: bool = False) -> UserOut:
+    return UserOut(id=1, name=body.name)
+```
+
+- A model (or `list[Model]`) parameter is the JSON body, validated.
+- A path parameter's name gets its value, converted to the annotated type.
+- Other `str`, `int`, `float`, `bool`, `UUID`, `date` or `datetime`
+  parameters (or `Optional` or `list` of them) come from the query string,
+  dates in ISO 8601; a default makes them optional. Any other annotation
+  is refused when the route is registered.
+- A model return annotation turns the returned object into JSON; a
+  returned `Response` is sent as is.
+- Invalid input gets a 422 with `{"detail": [{"loc": ["body", "age"],
+  "msg": ..., "type": ...}]}`. pydantic lists every problem; msgspec stops
+  at the first. `@app.exception_handler(422)` changes the response.
+- Annotations are read once, when the route is registered: a handler
+  without them costs nothing extra, and one that can't be understood fails
+  at import.
+
+`app.openapi(title=..., version=...)` describes the API as an OpenAPI 3.1
+document: paths, typed path and query parameters, request and response
+models, and each handler's docstring (its first line as the summary).
+`app.docs(title=..., version=...)` serves it at `/openapi.json`, with
+Swagger UI at `/docs` to try the API from a browser (loaded from a CDN;
+`docs_path=None` leaves it out).
+
 ### WebSockets
 
 ```python
@@ -186,7 +230,8 @@ cors(app, allow_origins=["https://example.com"], allow_credentials=True)
   Counters live in each worker's memory, so with 3 workers a client can
   get up to 3 times the limit; `store=` takes a shared store instead.
 
-More in [`examples/`](examples/). To put it in production (behind nginx or
+More in [`examples/`](examples/), up to a [complete app](examples/taskboard/)
+laid out like a real project. To put it in production (behind nginx or
 Caddy, in Docker, on AWS Lambda or Vercel), see the
 [deployment guide](docs/deployment.md).
 
@@ -327,6 +372,25 @@ Reproduce with `uv run pytest benches/bench_router.py --benchmark-only
 --benchmark-json=benches/results.json`, then `uv run python benches/plot.py`
 to redraw both charts. Results depend on the machine: measure your own
 workload before relying on any number.
+
+### Validation
+
+One POST with a small JSON body, answered with JSON, run through the app
+in-process (no server). Median time per request:
+
+| Handler | Time |
+|---|---|
+| **Korvex, msgspec models in and out** | **17.8 µs** |
+| Korvex, pydantic models in and out | 21.0 µs |
+| Korvex, no annotations (`request.json()`, `Response.json()`) | 22.9 µs |
+| FastAPI, the same pydantic models | 76.2 µs |
+
+- Validating is faster than not validating here: msgspec and pydantic
+  decode and encode JSON in compiled code, `request.json()` and
+  `Response.json()` use Python's `json` module.
+- Handlers without annotations take the same time as in 0.6.
+
+Reproduce with `uv run pytest benches/bench_validation.py --benchmark-only`.
 
 ## Development
 

@@ -13,21 +13,23 @@ import logging
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from email.message import Message
-from http import HTTPStatus
 from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Optional, Union, overload
 from urllib.parse import parse_qs, unquote
 
 from korvex._core import MethodNotAllowed
+from korvex.errors import HTTPException, ValidationError
 from korvex.response import Headers, JSONValue, Response, StreamingResponse
+from korvex.schema import Plan, needs_plan, plan_for
 from korvex.router import RouteGroup, Router
 
 # `Union`/`Optional` rather than `|`: these lines run at import time, and
 # `|` between types needs Python 3.10+.
-Handler = Callable[..., Union[Response, Awaitable[Response]]]
+Handler = Callable[..., Any]
 """`(request, **path_params) -> Response`, sync or async. Path params come
-converted: `int` for `{id:int}`, `uuid.UUID` for `{id:uuid}`, else `str`."""
+converted: `int` for `{id:int}`, `uuid.UUID` for `{id:uuid}`, else `str`.
+With a model return annotation, it can return the model instead."""
 
 Middleware = Callable[["Request"], Union[Optional[Response], Awaitable[Optional[Response]]]]
 """`(request) -> Response | None`, sync or async. Returning a `Response`
@@ -40,22 +42,13 @@ AfterHook = Callable[["Request", Response], Union[Optional[Response], Awaitable[
 """`(request, response) -> Response | None`, sync or async. Returns the
 response to send, or `None` to keep it as it is."""
 
-ExceptionHandler = Callable[["Request", Exception], Union[Response, Awaitable[Response]]]
-"""`(request, exception) -> Response`, sync or async."""
+ExceptionHandler = Callable[["Request", Any], Union[Response, Awaitable[Response]]]
+"""`(request, exception) -> Response`, sync or async. The exception can be
+annotated with the class the handler is registered for."""
 
 logger = logging.getLogger("korvex")
 
 
-class HTTPException(Exception):
-    """Raise it in a handler or middleware to answer with an HTTP error:
-    `raise HTTPException(404, "user not found")`. Without a `detail`, the
-    standard reason (`Not Found`) is used."""
-
-    def __init__(self, status: int, detail: str | None = None, *, headers: Iterable[tuple[str, str]] = ()) -> None:
-        self.status = status
-        self.detail = detail if detail is not None else HTTPStatus(status).phrase
-        self.headers = list(headers)
-        super().__init__(status, self.detail)
 
 
 class UploadedFile:
@@ -221,7 +214,7 @@ class WebSocket(Request):
     async def send_bytes(self, data: bytes) -> None:
         await self._send({"type": "websocket.send", "bytes": data})
 
-    async def send_json(self, data: JSONValue) -> None:
+    async def send_json(self, data: Any) -> None:
         await self.send_text(json.dumps(data))
 
     async def close(self, code: int = 1000, reason: str = "") -> None:
@@ -345,8 +338,10 @@ class AppGroup(_RouteDecorators):
 
         def register(func: Handler) -> Handler:
             name = f"{func.__module__}.{func.__qualname__}"
+            plan = plan_for(func, self._routes.full_path(path))  # bad annotations fail here, at import
             self._routes.route(path, name, method=method, middleware=middleware)
             self._app._handlers[name] = func
+            self._app._plans[name] = plan
             if max_body is not None:
                 self._app._body_limits.append((method, self._routes.full_path(path), max_body))
             return func
@@ -390,6 +385,7 @@ class App(_RouteDecorators):
         self.router = router if router is not None else Router()
         self._ws_router = Router()  # WebSocket routes: a path can have both
         self._ws_handlers: dict[str, WebSocketHandler] = {}
+        self._plans: dict[str, Plan] = {}  # what each handler's annotations ask for
         self._root = AppGroup(self, self.router.group())
         self._handlers: dict[str, Handler] = {}
         self._middleware: dict[str, Middleware] = {}
@@ -420,6 +416,43 @@ class App(_RouteDecorators):
         `path`; it gets a `WebSocket` and the path params. App hooks don't
         run for WebSockets: check who connects in the handler."""
         return self._root.websocket(path)
+
+    def openapi(self, *, title: str = "API", version: str = "0.1.0", description: str | None = None) -> dict:
+        """An OpenAPI 3.1 description of the app's routes: paths, typed path
+        and query parameters, request and response models, and each
+        handler's docstring (first line as summary). Static files and
+        WebSockets aren't included."""
+        from korvex import openapi
+
+        return openapi.build(self, title=title, version=version, description=description)
+
+    def docs(
+        self,
+        *,
+        title: str = "API",
+        version: str = "0.1.0",
+        description: str | None = None,
+        openapi_path: str = "/openapi.json",
+        docs_path: str | None = "/docs",
+    ) -> None:
+        """Serves the OpenAPI document at `openapi_path` (recomputed on each
+        call, so it follows route changes) and Swagger UI at `docs_path`
+        (loaded from a CDN; `None` to leave it out)."""
+        from korvex import openapi
+
+        def serve_openapi(request: Request) -> Response:
+            return Response.json(self.openapi(title=title, version=version, description=description))
+
+        self.router.route(openapi_path, "korvex.openapi")
+        self._handlers["korvex.openapi"] = serve_openapi
+        if docs_path is not None:
+            page = openapi.swagger_ui(title, openapi_path)
+
+            def serve_docs(request: Request) -> Response:
+                return Response(page, headers=[("Content-Type", "text/html; charset=utf-8")])
+
+            self.router.route(docs_path, "korvex.docs")
+            self._handlers["korvex.docs"] = serve_docs
 
     def handler(self, name: str) -> Callable[[Handler], Handler]:
         """Decorator: attaches a function to a handler name already
@@ -586,7 +619,21 @@ class App(_RouteDecorators):
 
         if handler_name not in self._handlers:
             raise LookupError(f"no handler named {handler_name!r}; register one with @app.handler({handler_name!r})")
-        return await _call(self._handlers[handler_name], request, **path_params)
+        handler = self._handlers[handler_name]
+        plan = self._plan_of(handler_name)
+        if not needs_plan(plan):  # no annotations to act on: called as before, at no cost
+            return await _call(handler, request, **path_params)
+        arguments = {**path_params, **await plan.bind(request, path_params)}
+        return plan.respond(await _call(handler, request, **arguments))
+
+    def _plan_of(self, handler_name: str) -> Plan:
+        """The handler's plan. Handlers attached with @app.handler get theirs
+        on first use, once their route's pattern is known."""
+        plan = self._plans.get(handler_name)
+        if plan is None:
+            pattern = next((path for path, _, name, _ in self.router.routes() if name == handler_name), "")
+            plan = self._plans[handler_name] = plan_for(self._handlers[handler_name], pattern)
+        return plan
 
     async def _serve_websocket(
         self,
@@ -664,6 +711,8 @@ class App(_RouteDecorators):
             except Exception:
                 logger.exception("exception handler failed for %s %s", request.method, request.path)
                 return Response.text("Internal Server Error", status=500)
+        if isinstance(exc, ValidationError):
+            return Response.json({"detail": exc.errors}, status=422, headers=exc.headers)
         if isinstance(exc, HTTPException):
             return Response.text(exc.detail, status=exc.status, headers=exc.headers)
         logger.exception("unhandled error in %s %s", request.method, request.path, exc_info=exc)

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.7.0
+
+- Validation from type annotations, with msgspec or pydantic models (both
+  optional): a model parameter is the JSON body, typed parameters come
+  from the path or the query string (`str`, `int`, `float`, `bool`,
+  `UUID`, `date`, `datetime`), a model return annotation becomes a JSON
+  response. Invalid input gets a 422 listing the problems
+  (`ValidationError`, customizable with `@app.exception_handler(422)`).
+- `app.openapi(title=..., version=...)`: an OpenAPI 3.1 document built
+  from the routes, typed parameters, models and docstrings.
+- `app.docs()`: serves the document at `/openapi.json` and Swagger UI at
+  `/docs`.
+- `HTTPException` moves to `korvex.errors`; `from korvex import
+  HTTPException` works as before.
+- Type checkers accept handlers that return a model, and exception
+  handlers whose exception is annotated with a narrower class.
+- `examples/taskboard/`: a complete todo list laid out like a real project
+  (lists, due dates, drag and drop, live updates; SQLite, layers, settings
+  and its own tests).
+
 ## 0.6.0
 
 - `@app.before_request` and `@app.after_request`: hooks around every
