@@ -13,6 +13,11 @@ More than one core per worker.
 - Wheels for free-threaded Python 3.14t (cp314t), built and tested by the
   Release workflow; CI runs the tests on 3.14t and fails if anything turns
   the GIL back on.
+- `app.local` (`LoopLocal`): attributes kept per event loop, for what
+  startup hooks open (a connection pool). With threads, each loop runs
+  the hooks, and a module-level global would hold one loop's pool for
+  all of them. Found by the security review of this version: not a
+  security issue, but requests failing.
 - `MemoryStore` is safe with several threads; a `RedisStore` made from a
   URL opens one client per event loop.
 - `compress()` leaves brotli out of its default encodings on

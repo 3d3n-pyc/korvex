@@ -180,6 +180,7 @@ def test_threads_each_start_and_serve():
     while len(names) < 2 and time.monotonic() < deadline:  # the first loop ready may take them all at first
         names.add(fetch(f"{base}/thread")[2])
     assert fetch(f"{base}/users/7")[2] == b'{"id": 7}'
+    assert all(fetch(f"{base}/local")[2] == b"true" for _ in range(30))  # each loop finds its own in app.local
     code, output = stop_and_collect(process)
     assert code == 0
     assert output.count("STARTED") == 3 and output.count("STOPPED") == 3  # each loop runs the hooks

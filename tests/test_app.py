@@ -983,3 +983,70 @@ def test_dependencies_read_host_parameters():
 
     assert on(app, "acme.example.com") == (200, b"Acme Corp")
     assert on(app, "nobody.example.com") == (404, b"no such tenant")
+
+
+def test_app_local_is_kept_per_event_loop():
+    import threading
+
+    app = App()
+    seen = {}
+
+    def on_its_own_loop(name):
+        async def run():
+            app.local.pool = f"pool of {name}"
+            await asyncio.sleep(0.01)  # the other loop sets its own meanwhile
+            seen[name] = app.local.pool
+
+        asyncio.run(run())
+
+    threads = [threading.Thread(target=on_its_own_loop, args=(name,)) for name in ("a", "b")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert seen == {"a": "pool of a", "b": "pool of b"}
+
+    async def fresh_loop():
+        with pytest.raises(AttributeError, match="startup hook"):
+            app.local.pool
+
+    asyncio.run(fresh_loop())
+
+
+def test_app_local_from_startup_hooks_to_handlers():
+    app = App()
+
+    @app.on_startup
+    async def connect():
+        app.local.greeting = "hello"
+
+    @app.get("/")
+    def home(request):
+        return Response.text(app.local.greeting)
+
+    async def serve():
+        messages = iter([{"type": "lifespan.startup"}])
+        sent = []
+
+        async def receive():
+            return next(messages, None) or await asyncio.sleep(3600)
+
+        async def send(message):
+            sent.append(message)
+
+        lifespan = asyncio.ensure_future(app({"type": "lifespan"}, receive, send))
+        await asyncio.sleep(0.01)
+        out = []
+
+        async def http_receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def http_send(message):
+            out.append(message)
+
+        await app(make_scope("GET", "/"), http_receive, http_send)
+        lifespan.cancel()
+        return out
+
+    sent = asyncio.run(serve())
+    assert response_from(sent)[2] == b"hello"

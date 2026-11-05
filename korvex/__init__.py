@@ -3,7 +3,7 @@
 from importlib.metadata import version
 
 from korvex._core import MethodNotAllowed
-from korvex.app import App, AppGroup, Request, UploadedFile, WebSocket, WebSocketDisconnect
+from korvex.app import App, AppGroup, LoopLocal, Request, UploadedFile, WebSocket, WebSocketDisconnect
 from korvex.errors import Abort, HTTPException, ValidationError
 from korvex.params import Cookie, Depends, Form, Header, Query
 from korvex.response import Headers, Response
@@ -19,6 +19,7 @@ __all__ = [
     "Header",
     "Headers",
     "HTTPException",
+    "LoopLocal",
     "MethodNotAllowed",
     "Query",
     "Request",

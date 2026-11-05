@@ -273,16 +273,18 @@ class RedisStore:
         # Event loop -> its script: a redis.asyncio client's connections
         # belong to the loop that opened them.
         self._scripts: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+        self._scripts_lock = threading.Lock()  # loops in several threads: threads=N
 
     def _script(self) -> Any:
         if self._url is None:
             return self._given
         loop = asyncio.get_running_loop()
-        script = self._scripts.get(loop)
-        if script is None:
-            import redis.asyncio
+        with self._scripts_lock:
+            script = self._scripts.get(loop)
+            if script is None:
+                import redis.asyncio
 
-            script = self._scripts[loop] = redis.asyncio.Redis.from_url(self._url).register_script(_REDIS_GCRA)
+                script = self._scripts[loop] = redis.asyncio.Redis.from_url(self._url).register_script(_REDIS_GCRA)
         return script
 
     async def hit(self, key: Hashable, requests: int, per: float) -> Decision:

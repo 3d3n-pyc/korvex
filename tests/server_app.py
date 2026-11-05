@@ -24,6 +24,7 @@ if os.environ.get("STATIC_DIR"):
 def startup():
     if os.environ.get("FAIL_STARTUP"):
         raise ConnectionError("database unreachable")
+    app.local.opened_on = asyncio.get_running_loop()  # like a connection pool, one per loop
     print("STARTED", flush=True)
 
 
@@ -78,6 +79,11 @@ async def slow(request):
 @app.get("/pid")
 def pid(request):
     return Response.text(str(os.getpid()))
+
+
+@app.get("/local")
+def local(request):
+    return Response.json(app.local.opened_on is asyncio.get_running_loop())
 
 
 @app.get("/thread")

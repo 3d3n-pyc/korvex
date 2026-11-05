@@ -380,7 +380,7 @@ or, from Python, `app.run(workers=3)`. The same options exist in both:
 | `--host`, `--port` | `127.0.0.1`, `8000` | Address to listen on. |
 | `--uds PATH` | | Listen on a Unix socket instead, for a proxy on the same machine. |
 | `--workers N` | `1` | Processes sharing the port. About 3 per 4 CPU cores works best. A worker that crashes is restarted. |
-| `--threads N` | `1` | Event loops per worker, each in its own thread. On free-threaded Python (3.14t) they run in parallel, sharing the process's memory; with the GIL they take turns on one core. Each runs the startup and shutdown hooks, like a worker. |
+| `--threads N` | `1` | Event loops per worker, each in its own thread. On free-threaded Python (3.14t) they run in parallel, sharing the process's memory; with the GIL they take turns on one core. Each runs the startup and shutdown hooks, like a worker: keep what they open in `app.local` (below). |
 | `--graceful-timeout S` | `30` | On Ctrl+C or SIGTERM, seconds requests in progress get to finish. |
 | `--max-body BYTES` | 1 MiB | Larger request bodies get a 413, larger WebSocket messages close the connection. A route can set its own: `@app.post("/upload", max_body=50_000_000)`. |
 | `--timeout S` | `30` | Seconds a client gets to send the headers, then the body (408 after that). |
@@ -388,6 +388,22 @@ or, from Python, `app.run(workers=3)`. The same options exist in both:
 | `--forwarded-host` | off | Also believe the host they forward for the `Host` header: `X-Forwarded-Host`, or `Forwarded`'s `host` when there's no `X-Forwarded-For` or `-Proto`. Only if the proxy sets the header it uses itself (nginx passes a client's `X-Forwarded-Host` on as is), and a proxy that uses `Forwarded` must also strip a client's `X-Forwarded-*`. |
 | `--access-log` | off | Log each request. |
 | `--ws-ping-interval S` | `20` | Seconds between pings on open WebSockets; a client silent until the next ping is closed (1011). `0` turns them off. |
+
+With threads, a module-level global set in a startup hook would hold one
+loop's connection pool for all of them, and asyncio objects only work on
+the loop that made them. `app.local` keeps attributes per event loop:
+
+```python
+@app.on_startup
+async def connect():
+    app.local.pool = await asyncpg.create_pool(DATABASE_URL)   # this loop's pool
+
+@app.get("/users/{id:int}")
+async def get_user(request, id):
+    row = await app.local.pool.fetchrow("SELECT ... WHERE id = $1", id)
+```
+
+With one loop, it's simply an attribute, under any server.
 
 How it works: a Rust thread per worker reads each request in full, without
 touching Python, then hands it to the asyncio loop, which runs your
