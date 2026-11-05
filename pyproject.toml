@@ -44,6 +44,7 @@ dev = [
     "granian>=2.5.7",
     "litestar>=2.25.0",
     "maturin>=1.14,<2.0",
+    "openapi-spec-validator>=0.7.2",
     "psutil>=7.2.2",
     "pytest>=8.4.2",
     "pytest-benchmark>=5.2.3",

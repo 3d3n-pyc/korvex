@@ -175,6 +175,10 @@ async def create(request, body: UserIn, notify: bool = False) -> UserOut:
   without them costs nothing extra, and one that can't be understood fails
   at import.
 
+`app.openapi(title=..., version=...)` describes the API as an OpenAPI 3.1
+document: paths, typed path and query parameters, request and response
+models, and each handler's docstring (its first line as the summary).
+
 ### WebSockets
 
 ```python

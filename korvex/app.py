@@ -415,6 +415,15 @@ class App(_RouteDecorators):
         run for WebSockets: check who connects in the handler."""
         return self._root.websocket(path)
 
+    def openapi(self, *, title: str = "API", version: str = "0.1.0", description: str | None = None) -> dict:
+        """An OpenAPI 3.1 description of the app's routes: paths, typed path
+        and query parameters, request and response models, and each
+        handler's docstring (first line as summary). Static files and
+        WebSockets aren't included."""
+        from korvex import openapi
+
+        return openapi.build(self, title=title, version=version, description=description)
+
     def handler(self, name: str) -> Callable[[Handler], Handler]:
         """Decorator: attaches a function to a handler name already
         registered on `app.router` (e.g. through a route group)."""

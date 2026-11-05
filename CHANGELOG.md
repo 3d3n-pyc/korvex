@@ -7,6 +7,8 @@
   from the path or the query string, a model return annotation becomes a
   JSON response. Invalid input gets a 422 listing the problems
   (`ValidationError`, customizable with `@app.exception_handler(422)`).
+- `app.openapi(title=..., version=...)`: an OpenAPI 3.1 document built
+  from the routes, typed parameters, models and docstrings.
 - `HTTPException` moves to `korvex.errors`; `from korvex import
   HTTPException` works as before.
 
