@@ -37,6 +37,11 @@ def powered_by(request, response):
     response.headers.set("X-Powered-By", "korvex")
 
 
+@app.exception_handler(413)
+def too_large(request, exc):
+    return Response.json({"error": "too large", "path": request.path}, status=413)
+
+
 @app.get("/users/{id:int}")
 def get_user(request, id):
     return Response.json({"id": id})

@@ -663,10 +663,11 @@ class App(_RouteDecorators):
         finally:
             await _finish(response, path)  # sent or not, what waited for it runs
 
-    async def _respond(self, scope: dict, receive: Callable) -> Response:
+    async def _respond(self, scope: dict, receive: Callable, error: int = 0) -> Response:
         """The response to one request: before hooks, then the route (its
         middleware and handler), then after hooks, with errors turned into
-        responses at each step."""
+        responses at each step. With `error`, the route is replaced by that
+        HTTP error."""
         request = Request(scope, receive, {})
         try:
             response = None
@@ -675,6 +676,8 @@ class App(_RouteDecorators):
                 if response is not None:
                     break
             if response is None:
+                if error:
+                    raise HTTPException(error)
                 response = await self._dispatch(request)
         except Exception as exc:
             response = await self._handle_error(request, exc)
@@ -927,10 +930,13 @@ class App(_RouteDecorators):
         client: tuple[str, int] | None,
         scheme: str,
         responder: Any,
+        error: int = 0,
     ) -> int:
         """Runs one request taken from the built-in server, through the same
         dispatch as under ASGI, hands the response back to Rust, and returns
-        its status."""
+        its status. `error` is a status the server already decided on (413,
+        408, 400): the request goes through the before hooks, then gets that
+        error's response, as if the route had raised `HTTPException`."""
         scope = {
             "type": "http",
             "method": method,
@@ -944,7 +950,7 @@ class App(_RouteDecorators):
         async def receive() -> dict:
             return {"type": "http.request", "body": body, "more_body": False}
 
-        response = await self._respond(scope, receive)
+        response = await self._respond(scope, receive, error)
         head = method == "HEAD"
         raw_headers = _raw_headers(response, head)
         if head:

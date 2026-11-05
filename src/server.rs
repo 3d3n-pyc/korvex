@@ -66,6 +66,9 @@ pub struct Pending {
     /// `(host, port)`, after `X-Forwarded-For` from a trusted proxy.
     client: Option<(String, u16)>,
     scheme: &'static str,
+    /// A status the server already decided on (413, 408, 400), for the
+    /// app to answer as an error, without the body; 0 otherwise.
+    error: u16,
     reply: oneshot::Sender<Reply>,
 }
 
@@ -220,7 +223,7 @@ impl Server {
 
     /// Every event waiting, as tuples whose first item says what it is:
     /// `("http", method, path, query_string, headers, body, client, scheme,
-    /// responder)`, `("ws", path, query_string, headers, client, scheme,
+    /// responder, error)` (`error`: a status to answer with, or 0), `("ws", path, query_string, headers, client, scheme,
     /// connection)`, `("ws_message", id, text_or_bytes)` or
     /// `("ws_closed", id, code)`.
     fn take<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
@@ -257,6 +260,7 @@ impl Server {
                         reply: Mutex::new(Some(request.reply)),
                         stream: Mutex::new(None),
                     },
+                    request.error,
                 ))?,
                 Event::WebSocket(opening) => items.append((
                     "ws",
@@ -522,24 +526,27 @@ async fn handle(
     let resolved = resolve(peer, &parts.headers, &shared.trusted);
     // Read the whole body before Python sees the request, within the size
     // limit and the timeout, so a slow or huge upload never holds a worker.
+    // A body over the limit, too slow or broken still goes to the app,
+    // without the body, so its error handlers, hooks and logs see it.
     let limit = shared.body_limit(parts.method.as_str(), parts.uri.path());
     let announced = parts
         .headers
         .get(CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok()?.parse::<u64>().ok());
-    if announced.is_some_and(|length| length > limit) {
-        return Ok(plain(StatusCode::PAYLOAD_TOO_LARGE, "Payload Too Large"));
-    }
-    #[allow(clippy::cast_possible_truncation)]
-    // limits beyond usize::MAX can't be held in memory anyway
-    let reading = Limited::new(body, limit as usize).collect();
-    let body = match tokio::time::timeout(shared.timeout, reading).await {
-        Err(_) => return Ok(plain(StatusCode::REQUEST_TIMEOUT, "Request Timeout")),
-        Ok(Err(error)) if error.downcast_ref::<LengthLimitError>().is_some() => {
-            return Ok(plain(StatusCode::PAYLOAD_TOO_LARGE, "Payload Too Large"));
+    let (body, error) = if announced.is_some_and(|length| length > limit) {
+        (Bytes::new(), StatusCode::PAYLOAD_TOO_LARGE)
+    } else {
+        #[allow(clippy::cast_possible_truncation)]
+        // limits beyond usize::MAX can't be held in memory anyway
+        let reading = Limited::new(body, limit as usize).collect();
+        match tokio::time::timeout(shared.timeout, reading).await {
+            Err(_) => (Bytes::new(), StatusCode::REQUEST_TIMEOUT),
+            Ok(Err(error)) if error.downcast_ref::<LengthLimitError>().is_some() => {
+                (Bytes::new(), StatusCode::PAYLOAD_TOO_LARGE)
+            }
+            Ok(Err(_)) => (Bytes::new(), StatusCode::BAD_REQUEST),
+            Ok(Ok(collected)) => (collected.to_bytes(), StatusCode::OK),
         }
-        Ok(Err(_)) => return Ok(plain(StatusCode::BAD_REQUEST, "Bad Request")),
-        Ok(Ok(collected)) => collected.to_bytes(),
     };
     let (reply, answer) = oneshot::channel();
     shared.push(Event::Request(Pending {
@@ -550,17 +557,30 @@ async fn handle(
         body,
         client: resolved.client,
         scheme: resolved.scheme,
+        error: if error == StatusCode::OK {
+            0
+        } else {
+            error.as_u16()
+        },
         reply,
     }));
     // An error means Python dropped the request without answering (it raised).
-    Ok(match answer.await {
+    let mut response = match answer.await {
         Ok(Reply {
             status,
             headers,
             body,
         }) => build(status, &headers, body),
         Err(_) => internal_error(),
-    })
+    };
+    if error != StatusCode::OK {
+        // The rest of the body wasn't read: the connection can't be reused.
+        response.headers_mut().insert(
+            hyper::header::CONNECTION,
+            hyper::header::HeaderValue::from_static("close"),
+        );
+    }
+    Ok(response)
 }
 
 /// The request's headers for Python. `host`, when a trusted proxy passed

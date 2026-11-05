@@ -158,9 +158,9 @@ def _logged(serve_one: Callable[..., Awaitable[int]]) -> Callable[..., Awaitable
     """Wraps App._serve_one to log each request: client, request line,
     status and duration."""
 
-    async def serve_logged(method: str, path: str, query: bytes, headers: list, body: bytes, client, scheme, responder) -> int:
+    async def serve_logged(method: str, path: str, query: bytes, headers: list, body: bytes, client, scheme, responder, error: int = 0) -> int:
         started = time.perf_counter()
-        status = await serve_one(method, path, query, headers, body, client, scheme, responder)
+        status = await serve_one(method, path, query, headers, body, client, scheme, responder, error)
         target = f"{path}?{query.decode('latin-1')}" if query else path
         host = client[0] if client else "-"
         duration = (time.perf_counter() - started) * 1000

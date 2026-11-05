@@ -274,6 +274,24 @@ def test_body_over_the_limit_is_rejected(strict_server):
     assert chunked_post(strict_server, "/echo", [b"x" * 600, b"x" * 600])[0] == 413  # no length announced
 
 
+def test_the_app_answers_the_errors_the_server_decides_on(strict_server):
+    # Its exception handler (413 as JSON) and after hooks (X-Powered-By) apply.
+    status, headers, body = fetch(f"http://127.0.0.1:{strict_server}/echo", method="POST", data=b"x" * 1001)
+    assert (status, json.loads(body)) == (413, {"error": "too large", "path": "/echo"})
+    headers = {k.lower(): v for k, v in headers.items()}
+    assert headers["x-powered-by"] == "korvex" and headers["connection"] == "close"
+    status, body = chunked_post(strict_server, "/echo", [b"x" * 600, b"x" * 600])
+    assert (status, json.loads(body)["error"]) == (413, "too large")
+
+
+def test_server_errors_are_in_the_access_log():
+    port = free_port()
+    process = start(port, MAX_BODY="10", ACCESS_LOG="1", REQUEST_ID="1")
+    fetch(f"http://127.0.0.1:{port}/echo", method="POST", data=b"x" * 11, headers={"X-Request-ID": "req-413"})
+    _, output = stop_and_collect(process)
+    assert '127.0.0.1 "POST /echo" 413' in output and "req-413" in output
+
+
 def test_a_route_can_raise_its_limit(strict_server):
     base = f"http://127.0.0.1:{strict_server}"
     assert fetch(f"{base}/upload", method="POST", data=b"x" * 50_000)[2] == b"50000"
@@ -294,7 +312,7 @@ def test_slow_body_gets_a_408(strict_server):
     with socket.create_connection(("127.0.0.1", strict_server), timeout=5) as client:
         client.sendall(b"POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n" + b"x" * 10)
         response = client.recv(1024)
-    assert response.startswith(b"HTTP/1.1 408")
+    assert response.startswith(b"HTTP/1.1 408") and b"x-powered-by: korvex" in response.lower()
 
 
 def test_trusted_proxy_headers_set_client_and_scheme(server):
