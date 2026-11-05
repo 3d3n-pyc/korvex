@@ -74,11 +74,16 @@ FormData = dict[str, list[Union[str, UploadedFile]]]
 class Request:
     """An incoming HTTP request."""
 
-    __slots__ = ("method", "path", "headers", "query_params", "path_params", "_receive", "_cookies")
+    __slots__ = ("method", "path", "headers", "query_params", "path_params", "client", "scheme", "_receive", "_cookies")
 
     def __init__(self, scope: dict, receive: Callable[[], Awaitable[dict]], path_params: Mapping[str, Any]) -> None:
         self.method: str = scope["method"]
         self.path: str = scope["path"]
+        client = scope.get("client")
+        self.client: tuple[str, int] | None = tuple(client) if client else None  # type: ignore[assignment]
+        """`(host, port)` of the client, behind a trusted proxy too; `None` if unknown."""
+        self.scheme: str = scope.get("scheme", "http")
+        """`"https"` or `"http"`, as the client used it."""
         self.headers = Headers((k.decode("latin-1"), v.decode("latin-1")) for k, v in scope["headers"])
         self.query_params: dict[str, list[str]] = parse_qs(scope.get("query_string", b"").decode("latin-1"))
         self.path_params = path_params
@@ -436,6 +441,9 @@ class App(_RouteDecorators):
         graceful_timeout: float = 30.0,
         max_body: int = 1024 * 1024,
         timeout: float = 30.0,
+        uds: str | None = None,
+        forwarded_allow_ips: Sequence[str] = ("127.0.0.1", "::1"),
+        access_log: bool = False,
     ) -> None:
         """Serves the app with Korvex's built-in server until Ctrl+C or
         SIGTERM. Linux and macOS only; on Windows, use an ASGI server.
@@ -446,17 +454,47 @@ class App(_RouteDecorators):
         - Request bodies over `max_body` bytes get a 413 (a route's own
           `max_body` overrides it); clients get `timeout` seconds to send
           the headers, then the body (408 after that).
+        - `uds` listens on a Unix socket at that path instead of host:port,
+          for a reverse proxy on the same machine.
+        - `X-Forwarded-For` and `X-Forwarded-Proto` set `request.client` and
+          `request.scheme` when they come from `forwarded_allow_ips` (`"*"`
+          for any) or a Unix socket.
+        - `access_log` logs each request to the `korvex.access` logger.
         """
         from korvex import serve
 
-        serve.run(self, host, port, workers=workers, graceful_timeout=graceful_timeout, max_body=max_body, timeout=timeout)
+        serve.run(
+            self,
+            host,
+            port,
+            workers=workers,
+            graceful_timeout=graceful_timeout,
+            config=serve.Config(max_body, timeout, list(self._body_limits), list(forwarded_allow_ips), uds, access_log),
+        )
 
     async def _serve_one(
-        self, method: str, path: str, query_string: bytes, headers: list, body: bytes, responder: Any
-    ) -> None:
+        self,
+        method: str,
+        path: str,
+        query_string: bytes,
+        headers: list,
+        body: bytes,
+        client: tuple[str, int] | None,
+        scheme: str,
+        responder: Any,
+    ) -> int:
         """Runs one request taken from the built-in server, through the same
-        dispatch as under ASGI, and hands the response back to Rust."""
-        scope = {"type": "http", "method": method, "path": unquote(path), "query_string": query_string, "headers": headers}
+        dispatch as under ASGI, hands the response back to Rust, and returns
+        its status."""
+        scope = {
+            "type": "http",
+            "method": method,
+            "path": unquote(path),
+            "query_string": query_string,
+            "headers": headers,
+            "client": client,
+            "scheme": scheme,
+        }
 
         async def receive() -> dict:
             return {"type": "http.request", "body": body, "more_body": False}
@@ -476,6 +514,7 @@ class App(_RouteDecorators):
                 responder.end_stream()
         else:
             responder.respond(response.status, raw_headers, response.body)
+        return response.status
 
     def __repr__(self) -> str:
         return f"App(router={self.router!r})"

@@ -12,6 +12,8 @@ use pyo3::types::{PyDict, PyMappingProxy, PyTuple, PyType};
 
 mod method;
 mod path;
+#[cfg(unix)]
+mod proxy;
 #[cfg(unix)] // the built-in server relies on Unix sockets; Windows uses an ASGI server
 mod server;
 mod tree;

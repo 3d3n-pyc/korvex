@@ -38,7 +38,11 @@ def start(port, **env):
         if process.poll() is not None:
             return process
         try:
-            socket.create_connection(("127.0.0.1", port), timeout=0.1).close()
+            if "UDS" in env:
+                with socket.socket(socket.AF_UNIX) as probe:
+                    probe.connect(env["UDS"])
+            else:
+                socket.create_connection(("127.0.0.1", port), timeout=0.1).close()
             return process
         except OSError:
             time.sleep(0.05)
@@ -280,3 +284,55 @@ def test_slow_body_gets_a_408(strict_server):
         client.sendall(b"POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n" + b"x" * 10)
         response = client.recv(1024)
     assert response.startswith(b"HTTP/1.1 408")
+
+
+def test_trusted_proxy_headers_set_client_and_scheme(server):
+    base, _ = server
+    headers = {"X-Forwarded-For": "6.6.6.6, 203.0.113.9", "X-Forwarded-Proto": "https"}
+    _, _, body = fetch(f"{base}/client", headers=headers)
+    # 127.0.0.1 is trusted by default; 6.6.6.6 was written by the client itself.
+    assert json.loads(body) == {"client": ["203.0.113.9", 0], "scheme": "https"}
+    _, _, body = fetch(f"{base}/client")
+    assert json.loads(body)["client"][0] == "127.0.0.1"
+
+
+def test_proxy_headers_from_untrusted_addresses_are_ignored():
+    port = free_port()
+    process = start(port, FORWARDED_ALLOW="10.9.9.9")
+    try:
+        headers = {"X-Forwarded-For": "203.0.113.9", "X-Forwarded-Proto": "https"}
+        _, _, body = fetch(f"http://127.0.0.1:{port}/client", headers=headers)
+        result = json.loads(body)
+        assert result["client"][0] == "127.0.0.1" and result["scheme"] == "http"
+    finally:
+        process.kill()
+
+
+def test_unix_socket(tmp_path):
+    import http.client
+
+    path = str(tmp_path / "korvex.sock")
+
+    class UnixConnection(http.client.HTTPConnection):
+        def connect(self):
+            self.sock = socket.socket(socket.AF_UNIX)
+            self.sock.connect(path)
+
+    process = start(0, UDS=path)
+    connection = UnixConnection("localhost", timeout=5)
+    connection.request("GET", "/client", headers={"X-Forwarded-For": "203.0.113.9"})
+    response = connection.getresponse()
+    # Over a Unix socket, the proxy is trusted: only a local process can connect.
+    assert (response.status, json.loads(response.read())) == (200, {"client": ["203.0.113.9", 0], "scheme": "http"})
+    connection.close()
+    code, _ = stop_and_collect(process)
+    assert code == 0
+    assert not os.path.exists(path)  # removed on stop
+
+
+def test_access_log():
+    port = free_port()
+    process = start(port, ACCESS_LOG="1")
+    fetch(f"http://127.0.0.1:{port}/users/1?verbose=1")
+    _, output = stop_and_collect(process)
+    assert '127.0.0.1 "GET /users/1?verbose=1" 200' in output

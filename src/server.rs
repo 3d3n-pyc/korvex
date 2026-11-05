@@ -14,9 +14,9 @@
 use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::io::{Read, Write};
-use std::net::TcpListener as StdTcpListener;
+use std::net::{SocketAddr, TcpListener as StdTcpListener};
 use std::os::fd::{AsRawFd, FromRawFd, RawFd};
-use std::os::unix::net::UnixStream;
+use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -32,14 +32,16 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
-use hyper_util::server::graceful::GracefulShutdown;
+use hyper_util::server::graceful::{GracefulShutdown, Watcher};
 use pyo3::exceptions::{PyOSError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
-use tokio::net::TcpListener;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::{TcpListener, UnixListener};
 use tokio::sync::{Notify, mpsc, oneshot};
 
 use crate::method::Method;
+use crate::proxy::{Trusted, resolve};
 use crate::tree::{Node, Outcome};
 
 type Headers = Vec<(Vec<u8>, Vec<u8>)>;
@@ -52,6 +54,9 @@ struct Pending {
     query: Vec<u8>,
     headers: Headers,
     body: Bytes,
+    /// `(host, port)`, after `X-Forwarded-For` from a trusted proxy.
+    client: Option<(String, u16)>,
+    scheme: &'static str,
     reply: oneshot::Sender<Reply>,
 }
 
@@ -79,6 +84,8 @@ struct Shared {
     body_limits: Node<u64>,
     /// How long a client gets to send the headers, then the body.
     timeout: Duration,
+    /// Proxies whose `X-Forwarded-*` headers are believed.
+    trusted: Trusted,
 }
 
 impl Shared {
@@ -121,18 +128,24 @@ pub struct Server {
 
 #[pymethods]
 impl Server {
-    /// `fd` is a listening TCP socket, opened by Python; the server takes
-    /// ownership of it. Opening it in Python lets several worker processes
-    /// share one socket. Request bodies are limited to `max_body` bytes,
-    /// unless `body_limits` (`(method, pattern, bytes)`) sets a route's own;
-    /// clients get `timeout` seconds to send the headers, then the body.
+    /// `fd` is a listening socket, TCP or Unix (`unix`), opened by Python;
+    /// the server takes ownership of it. Opening it in Python lets several
+    /// worker processes share one socket. Request bodies are limited to
+    /// `max_body` bytes, unless `body_limits` (`(method, pattern, bytes)`)
+    /// sets a route's own; clients get `timeout` seconds to send the
+    /// headers, then the body. `X-Forwarded-*` headers are believed from
+    /// the `trusted` proxy addresses (`"*"` for all) and Unix sockets.
     #[new]
+    #[allow(clippy::needless_pass_by_value)] // PyO3 hands over owned values
     fn new(
         fd: RawFd,
+        unix: bool,
         max_body: u64,
         timeout: f64,
         body_limits: Vec<(String, String, u64)>,
+        trusted: Vec<String>,
     ) -> PyResult<Self> {
+        let trusted = Trusted::parse(&trusted).map_err(PyValueError::new_err)?;
         let mut limits = Node::default();
         for (method, pattern, bytes) in body_limits {
             let parsed = Method::parse(&method)
@@ -148,8 +161,14 @@ impl Server {
         }
         // SAFETY: Python hands over a listening socket it no longer uses
         // (`socket.detach()`), so this listener is its only owner.
-        let listener = unsafe { StdTcpListener::from_raw_fd(fd) };
-        listener.set_nonblocking(true)?;
+        let listener = unsafe {
+            if unix {
+                StdListener::Unix(StdUnixListener::from_raw_fd(fd))
+            } else {
+                StdListener::Tcp(StdTcpListener::from_raw_fd(fd))
+            }
+        };
+        listener.set_nonblocking()?;
         let (wake_reader, wake_writer) = UnixStream::pair()?;
         wake_reader.set_nonblocking(true)?;
         wake_writer.set_nonblocking(true)?;
@@ -163,6 +182,7 @@ impl Server {
             max_body,
             body_limits: limits,
             timeout: Duration::from_secs_f64(timeout),
+            trusted,
         });
         let stop = Arc::new(Notify::new());
         let thread = {
@@ -217,6 +237,8 @@ impl Server {
                 PyBytes::new(py, &request.query),
                 headers,
                 PyBytes::new(py, &request.body),
+                request.client,
+                request.scheme,
                 Responder {
                     reply: Mutex::new(Some(request.reply)),
                     stream: Mutex::new(None),
@@ -335,37 +357,77 @@ impl Body for ChannelBody {
     }
 }
 
-fn accept_loop(
-    listener: StdTcpListener,
-    shared: &Arc<Shared>,
-    stop: &Notify,
-) -> std::io::Result<()> {
+/// The listening socket as handed over by Python, before tokio takes it.
+enum StdListener {
+    Tcp(StdTcpListener),
+    Unix(StdUnixListener),
+}
+
+impl StdListener {
+    fn set_nonblocking(&self) -> std::io::Result<()> {
+        match self {
+            Self::Tcp(listener) => listener.set_nonblocking(true),
+            Self::Unix(listener) => listener.set_nonblocking(true),
+        }
+    }
+}
+
+enum Listener {
+    Tcp(TcpListener),
+    Unix(UnixListener),
+}
+
+impl Listener {
+    /// Accepts one connection and serves it in its own task.
+    async fn serve_next(&self, shared: &Arc<Shared>, watcher: Watcher) {
+        // An accept error (e.g. too many open files) skips this connection only.
+        match self {
+            Self::Tcp(listener) => {
+                if let Ok((stream, peer)) = listener.accept().await {
+                    let _ = stream.set_nodelay(true);
+                    serve_connection(stream, Some(peer), shared, watcher);
+                }
+            }
+            Self::Unix(listener) => {
+                if let Ok((stream, _)) = listener.accept().await {
+                    serve_connection(stream, None, shared, watcher);
+                }
+            }
+        }
+    }
+}
+
+fn serve_connection<S>(stream: S, peer: Option<SocketAddr>, shared: &Arc<Shared>, watcher: Watcher)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let shared = Arc::clone(shared);
+    let timeout = shared.timeout;
+    tokio::spawn(async move {
+        let service = service_fn(move |request| handle(request, peer, Arc::clone(&shared)));
+        // Covers slow headers and idle keep-alive connections alike.
+        let connection = http1::Builder::new()
+            .timer(TokioTimer::new())
+            .header_read_timeout(timeout)
+            .serve_connection(TokioIo::new(stream), service);
+        // A client closing its connection early isn't an error worth reporting.
+        let _ = watcher.watch(connection).await;
+    });
+}
+
+fn accept_loop(listener: StdListener, shared: &Arc<Shared>, stop: &Notify) -> std::io::Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
     let result = runtime.block_on(async {
-        let listener = TcpListener::from_std(listener)?;
+        let listener = match listener {
+            StdListener::Tcp(listener) => Listener::Tcp(TcpListener::from_std(listener)?),
+            StdListener::Unix(listener) => Listener::Unix(UnixListener::from_std(listener)?),
+        };
         let graceful = GracefulShutdown::new();
-        let timeout = shared.timeout;
         loop {
             tokio::select! {
-                accepted = listener.accept() => {
-                    // e.g. too many open files: skip this one and keep accepting.
-                    let Ok((stream, _)) = accepted else { continue };
-                    let _ = stream.set_nodelay(true);
-                    let shared = Arc::clone(shared);
-                    let watcher = graceful.watcher();
-                    tokio::spawn(async move {
-                        let service = service_fn(move |request| handle(request, Arc::clone(&shared)));
-                        // Covers slow headers and idle keep-alive connections alike.
-                        let connection = http1::Builder::new()
-                            .timer(TokioTimer::new())
-                            .header_read_timeout(timeout)
-                            .serve_connection(TokioIo::new(stream), service);
-                        // A client closing its connection early isn't an error worth reporting.
-                        let _ = watcher.watch(connection).await;
-                    });
-                }
+                () = listener.serve_next(shared, graceful.watcher()) => {}
                 () = stop.notified() => break,
             }
         }
@@ -385,9 +447,11 @@ fn accept_loop(
 
 async fn handle(
     request: Request<Incoming>,
+    peer: Option<SocketAddr>,
     shared: Arc<Shared>,
 ) -> Result<Response<ResponseBody>, Infallible> {
     let (parts, body) = request.into_parts();
+    let (client, scheme) = resolve(peer, &parts.headers, &shared.trusted);
     // Read the whole body before Python sees the request, within the size
     // limit and the timeout, so a slow or huge upload never holds a worker.
     let limit = shared.body_limit(parts.method.as_str(), parts.uri.path());
@@ -420,6 +484,8 @@ async fn handle(
             .map(|(name, value)| (name.as_str().as_bytes().to_vec(), value.as_bytes().to_vec()))
             .collect(),
         body,
+        client,
+        scheme,
         reply,
     });
     // An error means Python dropped the request without answering (it raised).

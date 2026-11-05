@@ -14,9 +14,11 @@ import logging
 import os
 import signal
 import socket
+import stat
 import sys
 import time
 import traceback
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, NamedTuple
 
 from korvex import _core
@@ -25,35 +27,69 @@ if TYPE_CHECKING:
     from korvex.app import App
 
 logger = logging.getLogger("korvex")
+access_logger = logging.getLogger("korvex.access")
 
 # A worker that exits with an error this soon after starting failed to
 # start: restarting it would only fail again.
 STARTUP_WINDOW = 5.0
 
 
-def run(app: App, host: str, port: int, *, workers: int, graceful_timeout: float, max_body: int, timeout: float) -> None:
-    if not hasattr(_core, "Server"):
-        raise NotImplementedError("the built-in server needs Linux or macOS; use uvicorn on Windows")
-    if workers < 1:
-        raise ValueError("workers must be at least 1")
-    limits = Limits(max_body, timeout, list(app._body_limits))
-    family = socket.AF_INET6 if ":" in host else socket.AF_INET
-    listener = socket.create_server((host, port), family=family, backlog=2048)
-    if workers == 1:
-        asyncio.run(serve(app, listener.detach(), graceful_timeout, limits))
-    else:
-        supervise(app, listener, workers, graceful_timeout, limits)
-
-
-class Limits(NamedTuple):
-    """What the Rust server enforces before Python sees a request."""
+class Config(NamedTuple):
+    """How the server treats requests, set by App.run()."""
 
     max_body: int
     timeout: float
     body_limits: list[tuple[str, str, int]]  # (method, path, bytes)
+    trusted_proxies: list[str]
+    uds: str | None
+    access_log: bool
 
 
-async def serve(app: App, fd: int, graceful_timeout: float, limits: Limits) -> None:
+def run(app: App, host: str, port: int, *, workers: int, graceful_timeout: float, config: Config) -> None:
+    if not hasattr(_core, "Server"):
+        raise NotImplementedError("the built-in server needs Linux or macOS; use uvicorn on Windows")
+    if workers < 1:
+        raise ValueError("workers must be at least 1")
+    if config.access_log:
+        _enable_access_log()
+    listener = _listen_unix(config.uds) if config.uds else _listen_tcp(host, port)
+    try:
+        if workers == 1:
+            asyncio.run(serve(app, listener.detach(), graceful_timeout, config))
+        else:
+            supervise(app, listener, workers, graceful_timeout, config)
+    finally:
+        if config.uds:
+            os.unlink(config.uds)
+
+
+def _listen_tcp(host: str, port: int) -> socket.socket:
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    return socket.create_server((host, port), family=family, backlog=2048)
+
+
+def _listen_unix(path: str) -> socket.socket:
+    # A socket file left by a server that was killed would block the bind.
+    # Only ever remove a socket, never a regular file someone put there.
+    if os.path.exists(path) and stat.S_ISSOCK(os.stat(path).st_mode):
+        os.unlink(path)
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(path)
+    listener.listen(2048)
+    return listener
+
+
+def _enable_access_log() -> None:
+    """Shows access logs even when logging isn't configured; respects the
+    configuration when it is."""
+    access_logger.setLevel(logging.INFO)
+    if not access_logger.hasHandlers():
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        access_logger.addHandler(handler)
+
+
+async def serve(app: App, fd: int, graceful_timeout: float, config: Config) -> None:
     """Serves on the listening socket `fd` until SIGINT or SIGTERM, then
     lets requests in progress finish for up to `graceful_timeout` seconds."""
     from korvex.app import _call, _start_task
@@ -65,7 +101,10 @@ async def serve(app: App, fd: int, graceful_timeout: float, limits: Limits) -> N
         os.close(fd)
         raise
     loop = asyncio.get_running_loop()
-    server = _core.Server(fd, limits.max_body, limits.timeout, limits.body_limits)
+    server = _core.Server(
+        fd, config.uds is not None, config.max_body, config.timeout, config.body_limits, config.trusted_proxies
+    )
+    handle = _logged(app._serve_one) if config.access_log else app._serve_one
     stopping = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stopping.set)
@@ -73,7 +112,7 @@ async def serve(app: App, fd: int, graceful_timeout: float, limits: Limits) -> N
 
     def take_requests() -> None:
         for request in server.take():
-            task = _start_task(loop, app._serve_one(*request))
+            task = _start_task(loop, handle(*request))
             if not task.done():  # the loop only keeps weak references to tasks
                 tasks.add(task)
                 task.add_done_callback(tasks.discard)
@@ -94,7 +133,22 @@ async def serve(app: App, fd: int, graceful_timeout: float, limits: Limits) -> N
             await _call(hook)
 
 
-def supervise(app: App, listener: socket.socket, workers: int, graceful_timeout: float, limits: Limits) -> None:
+def _logged(serve_one: Callable[..., Awaitable[int]]) -> Callable[..., Awaitable[int]]:
+    """Wraps App._serve_one to log each request: client, request line,
+    status and duration."""
+
+    async def serve_logged(method: str, path: str, query: bytes, headers: list, body: bytes, client, scheme, responder) -> int:
+        started = time.perf_counter()
+        status = await serve_one(method, path, query, headers, body, client, scheme, responder)
+        target = f"{path}?{query.decode('latin-1')}" if query else path
+        host = client[0] if client else "-"
+        access_logger.info('%s "%s %s" %d %.1fms', host, method, target, status, (time.perf_counter() - started) * 1000)
+        return status
+
+    return serve_logged
+
+
+def supervise(app: App, listener: socket.socket, workers: int, graceful_timeout: float, config: Config) -> None:
     """Forks `workers` processes serving on `listener` and keeps them
     running until SIGINT or SIGTERM, which is passed on to them."""
     children: dict[int, float] = {}  # pid -> start time
@@ -108,7 +162,7 @@ def supervise(app: App, listener: socket.socket, workers: int, graceful_timeout:
             try:
                 signal.signal(signal.SIGINT, signal.SIG_DFL)
                 signal.signal(signal.SIGTERM, signal.SIG_DFL)
-                asyncio.run(serve(app, listener.detach(), graceful_timeout, limits))
+                asyncio.run(serve(app, listener.detach(), graceful_timeout, config))
                 code = 0
             except BaseException:
                 traceback.print_exc()
