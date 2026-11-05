@@ -17,7 +17,7 @@ import socket
 import sys
 import time
 import traceback
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from korvex import _core
 
@@ -31,20 +31,29 @@ logger = logging.getLogger("korvex")
 STARTUP_WINDOW = 5.0
 
 
-def run(app: App, host: str, port: int, workers: int, graceful_timeout: float) -> None:
+def run(app: App, host: str, port: int, *, workers: int, graceful_timeout: float, max_body: int, timeout: float) -> None:
     if not hasattr(_core, "Server"):
         raise NotImplementedError("the built-in server needs Linux or macOS; use uvicorn on Windows")
     if workers < 1:
         raise ValueError("workers must be at least 1")
+    limits = Limits(max_body, timeout, list(app._body_limits))
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
     listener = socket.create_server((host, port), family=family, backlog=2048)
     if workers == 1:
-        asyncio.run(serve(app, listener.detach(), graceful_timeout))
+        asyncio.run(serve(app, listener.detach(), graceful_timeout, limits))
     else:
-        supervise(app, listener, workers, graceful_timeout)
+        supervise(app, listener, workers, graceful_timeout, limits)
 
 
-async def serve(app: App, fd: int, graceful_timeout: float) -> None:
+class Limits(NamedTuple):
+    """What the Rust server enforces before Python sees a request."""
+
+    max_body: int
+    timeout: float
+    body_limits: list[tuple[str, str, int]]  # (method, path, bytes)
+
+
+async def serve(app: App, fd: int, graceful_timeout: float, limits: Limits) -> None:
     """Serves on the listening socket `fd` until SIGINT or SIGTERM, then
     lets requests in progress finish for up to `graceful_timeout` seconds."""
     from korvex.app import _call, _start_task
@@ -56,7 +65,7 @@ async def serve(app: App, fd: int, graceful_timeout: float) -> None:
         os.close(fd)
         raise
     loop = asyncio.get_running_loop()
-    server = _core.Server(fd)
+    server = _core.Server(fd, limits.max_body, limits.timeout, limits.body_limits)
     stopping = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stopping.set)
@@ -85,7 +94,7 @@ async def serve(app: App, fd: int, graceful_timeout: float) -> None:
             await _call(hook)
 
 
-def supervise(app: App, listener: socket.socket, workers: int, graceful_timeout: float) -> None:
+def supervise(app: App, listener: socket.socket, workers: int, graceful_timeout: float, limits: Limits) -> None:
     """Forks `workers` processes serving on `listener` and keeps them
     running until SIGINT or SIGTERM, which is passed on to them."""
     children: dict[int, float] = {}  # pid -> start time
@@ -99,7 +108,7 @@ def supervise(app: App, listener: socket.socket, workers: int, graceful_timeout:
             try:
                 signal.signal(signal.SIGINT, signal.SIG_DFL)
                 signal.signal(signal.SIGTERM, signal.SIG_DFL)
-                asyncio.run(serve(app, listener.detach(), graceful_timeout))
+                asyncio.run(serve(app, listener.detach(), graceful_timeout, limits))
                 code = 0
             except BaseException:
                 traceback.print_exc()

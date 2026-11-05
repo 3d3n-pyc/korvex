@@ -25,18 +25,22 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Either, Full};
+use http_body_util::{BodyExt, Either, Full, LengthLimitError, Limited};
 use hyper::body::{Body, Frame, Incoming};
+use hyper::header::CONTENT_LENGTH;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::server::graceful::GracefulShutdown;
-use pyo3::exceptions::{PyOSError, PyRuntimeError};
+use pyo3::exceptions::{PyOSError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
 use tokio::net::TcpListener;
 use tokio::sync::{Notify, mpsc, oneshot};
+
+use crate::method::Method;
+use crate::tree::{Node, Outcome};
 
 type Headers = Vec<(Vec<u8>, Vec<u8>)>;
 type ResponseBody = Either<Full<Bytes>, ChannelBody>;
@@ -69,6 +73,25 @@ struct Shared {
     grace_ms: AtomicU64,
     /// Set once the server has stopped and every connection is closed.
     finished: AtomicBool,
+    /// Largest request body accepted, in bytes, unless a route sets its own.
+    max_body: u64,
+    /// Per-route body limits, matched like routes: `(method, pattern) -> bytes`.
+    body_limits: Node<u64>,
+    /// How long a client gets to send the headers, then the body.
+    timeout: Duration,
+}
+
+impl Shared {
+    /// The body size limit for a request: its route's, or the default.
+    fn body_limit(&self, method: &str, path: &str) -> u64 {
+        let Some(method) = Method::parse(method) else {
+            return self.max_body;
+        };
+        match self.body_limits.find(path, method, &mut Vec::new()) {
+            Outcome::Matched(limit) => *limit,
+            _ => self.max_body,
+        }
+    }
 }
 
 impl Shared {
@@ -100,9 +123,29 @@ pub struct Server {
 impl Server {
     /// `fd` is a listening TCP socket, opened by Python; the server takes
     /// ownership of it. Opening it in Python lets several worker processes
-    /// share one socket.
+    /// share one socket. Request bodies are limited to `max_body` bytes,
+    /// unless `body_limits` (`(method, pattern, bytes)`) sets a route's own;
+    /// clients get `timeout` seconds to send the headers, then the body.
     #[new]
-    fn new(fd: RawFd) -> PyResult<Self> {
+    fn new(
+        fd: RawFd,
+        max_body: u64,
+        timeout: f64,
+        body_limits: Vec<(String, String, u64)>,
+    ) -> PyResult<Self> {
+        let mut limits = Node::default();
+        for (method, pattern, bytes) in body_limits {
+            let parsed = Method::parse(&method)
+                .ok_or_else(|| PyValueError::new_err(format!("unknown HTTP method: {method:?}")))?;
+            limits
+                .insert(&pattern, parsed, bytes)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        }
+        if !(timeout.is_finite() && timeout > 0.0) {
+            return Err(PyValueError::new_err(
+                "timeout must be a positive number of seconds",
+            ));
+        }
         // SAFETY: Python hands over a listening socket it no longer uses
         // (`socket.detach()`), so this listener is its only owner.
         let listener = unsafe { StdTcpListener::from_raw_fd(fd) };
@@ -117,6 +160,9 @@ impl Server {
             wake_writer,
             grace_ms: AtomicU64::new(0),
             finished: AtomicBool::new(false),
+            max_body,
+            body_limits: limits,
+            timeout: Duration::from_secs_f64(timeout),
         });
         let stop = Arc::new(Notify::new());
         let thread = {
@@ -300,6 +346,7 @@ fn accept_loop(
     let result = runtime.block_on(async {
         let listener = TcpListener::from_std(listener)?;
         let graceful = GracefulShutdown::new();
+        let timeout = shared.timeout;
         loop {
             tokio::select! {
                 accepted = listener.accept() => {
@@ -310,7 +357,11 @@ fn accept_loop(
                     let watcher = graceful.watcher();
                     tokio::spawn(async move {
                         let service = service_fn(move |request| handle(request, Arc::clone(&shared)));
-                        let connection = http1::Builder::new().serve_connection(TokioIo::new(stream), service);
+                        // Covers slow headers and idle keep-alive connections alike.
+                        let connection = http1::Builder::new()
+                            .timer(TokioTimer::new())
+                            .header_read_timeout(timeout)
+                            .serve_connection(TokioIo::new(stream), service);
                         // A client closing its connection early isn't an error worth reporting.
                         let _ = watcher.watch(connection).await;
                     });
@@ -337,11 +388,27 @@ async fn handle(
     shared: Arc<Shared>,
 ) -> Result<Response<ResponseBody>, Infallible> {
     let (parts, body) = request.into_parts();
-    let body = body
-        .collect()
-        .await
-        .map(http_body_util::Collected::to_bytes)
-        .unwrap_or_default();
+    // Read the whole body before Python sees the request, within the size
+    // limit and the timeout, so a slow or huge upload never holds a worker.
+    let limit = shared.body_limit(parts.method.as_str(), parts.uri.path());
+    let announced = parts
+        .headers
+        .get(CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok()?.parse::<u64>().ok());
+    if announced.is_some_and(|length| length > limit) {
+        return Ok(plain(StatusCode::PAYLOAD_TOO_LARGE, "Payload Too Large"));
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    // limits beyond usize::MAX can't be held in memory anyway
+    let reading = Limited::new(body, limit as usize).collect();
+    let body = match tokio::time::timeout(shared.timeout, reading).await {
+        Err(_) => return Ok(plain(StatusCode::REQUEST_TIMEOUT, "Request Timeout")),
+        Ok(Err(error)) if error.downcast_ref::<LengthLimitError>().is_some() => {
+            return Ok(plain(StatusCode::PAYLOAD_TOO_LARGE, "Payload Too Large"));
+        }
+        Ok(Err(_)) => return Ok(plain(StatusCode::BAD_REQUEST, "Bad Request")),
+        Ok(Ok(collected)) => collected.to_bytes(),
+    };
     let (reply, answer) = oneshot::channel();
     shared.push(Pending {
         method: parts.method.as_str().to_owned(),
@@ -380,9 +447,16 @@ fn build(
 }
 
 fn internal_error() -> Response<ResponseBody> {
-    let mut response = Response::new(Either::Left(Full::new(Bytes::from_static(
-        b"Internal Server Error",
-    ))));
-    *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+    plain(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
+}
+
+/// An error answered by Rust itself, before Python sees the request.
+fn plain(status: StatusCode, text: &'static str) -> Response<ResponseBody> {
+    let mut response = Response::new(Either::Left(Full::new(Bytes::from_static(text.as_bytes()))));
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        hyper::header::CONTENT_TYPE,
+        hyper::header::HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
     response
 }

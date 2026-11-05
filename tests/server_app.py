@@ -70,6 +70,16 @@ def crash(request):
     os._exit(1)  # a worker dying abruptly, as if it segfaulted
 
 
+@app.post("/upload", max_body=5_000_000)
+async def upload(request):
+    return Response.text(str(len(await request.body())))
+
+
+@app.group("/api").post("/import", max_body=5_000_000)
+async def import_data(request):
+    return Response.text(str(len(await request.body())))
+
+
 @app.get("/fail")
 def fail(request):
     raise RuntimeError("boom")
@@ -89,4 +99,6 @@ if __name__ == "__main__":
         port=int(sys.argv[1]),
         workers=int(os.environ.get("WORKERS", "1")),
         graceful_timeout=float(os.environ.get("GRACE", "30")),
+        max_body=int(os.environ.get("MAX_BODY", str(1024 * 1024))),
+        timeout=float(os.environ.get("TIMEOUT", "30")),
     )

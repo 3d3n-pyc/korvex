@@ -40,7 +40,7 @@ type RouteInfo<'py> = (String, &'static str, String, Bound<'py, PyTuple>);
 /// `get`/`post`/... shortcuts and `group()`.
 #[pyclass(subclass, module = "korvex._core")]
 struct Router {
-    root: Node,
+    root: Node<Route>,
 }
 
 #[pymethods]

@@ -97,11 +97,15 @@ class RouteGroup(_Shortcuts):
     def route(self, path: str, handler: str, *, method: str = "GET", middleware: Sequence[str] | None = None) -> None:
         """Registers a route. Its own `middleware` runs after the group's."""
         self.router.route(
-            f"{self.prefix}/{path.lstrip('/')}",
+            self.full_path(path),
             handler,
             method=method,
             middleware=[*self.middleware, *(middleware or [])],
         )
+
+    def full_path(self, path: str) -> str:
+        """`path` with this group's prefix: `/api` + `users` -> `/api/users`."""
+        return f"{self.prefix}/{path.lstrip('/')}"
 
     def group(self, prefix: str = "", *, middleware: Sequence[str] | None = None) -> RouteGroup:
         """Returns a nested group. Its `middleware` runs after this group's."""

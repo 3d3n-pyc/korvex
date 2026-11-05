@@ -23,16 +23,16 @@ pub type Params<'a> = Vec<(&'a str, Constraint, &'a str)>;
 
 /// The result of looking up a path for one method.
 #[derive(Debug)]
-pub enum Outcome<'a> {
+pub enum Outcome<'a, T> {
     /// No route at this path.
     NotFound,
     /// Routes exist at this path, but none for this method (HTTP 405).
     /// Holds the routes that do exist, to report the allowed methods.
-    MethodNotAllowed(&'a [(Method, Route)]),
-    Matched(&'a Route),
+    MethodNotAllowed(&'a [(Method, T)]),
+    Matched(&'a T),
 }
 
-impl Outcome<'_> {
+impl<T> Outcome<'_, T> {
     /// Combines the results of two failed branches: a 405 beats a 404, and
     /// the first 405 found wins.
     fn or(self, other: Self) -> Self {
@@ -45,11 +45,17 @@ impl Outcome<'_> {
 
 /// The routes registered at one node, one per method. A `Vec` because a
 /// node rarely has more than two methods, where a linear scan beats hashing.
-#[derive(Debug, Default)]
-struct Methods(Vec<(Method, Route)>);
+#[derive(Debug)]
+struct Methods<T>(Vec<(Method, T)>);
 
-impl Methods {
-    fn insert(&mut self, method: Method, route: Route) {
+impl<T> Default for Methods<T> {
+    fn default() -> Self {
+        Self(Vec::new())
+    }
+}
+
+impl<T> Methods<T> {
+    fn insert(&mut self, method: Method, route: T) {
         match self.0.iter_mut().find(|(m, _)| *m == method) {
             Some(entry) => entry.1 = route,
             None => self.0.push((method, route)),
@@ -62,7 +68,7 @@ impl Methods {
         self.0.len() != before
     }
 
-    fn lookup(&self, method: Method) -> Outcome<'_> {
+    fn lookup(&self, method: Method) -> Outcome<'_, T> {
         if self.0.is_empty() {
             return Outcome::NotFound;
         }
@@ -74,39 +80,47 @@ impl Methods {
 }
 
 #[derive(Debug)]
-struct Param {
+struct Param<T> {
     name: String,
     constraint: Constraint,
-    node: Node,
+    node: Node<T>,
 }
 
 /// A wildcard has no children: it always consumes the rest of the path.
 #[derive(Debug)]
-struct Wildcard {
+struct Wildcard<T> {
     name: String,
-    methods: Methods,
+    methods: Methods<T>,
 }
 
-#[derive(Debug, Default)]
-pub struct Node {
+#[derive(Debug)]
+pub struct Node<T> {
     /// Routes that end exactly here.
-    methods: Methods,
-    literals: FxHashMap<String, Node>,
+    methods: Methods<T>,
+    literals: FxHashMap<String, Node<T>>,
     /// At most one per constraint, in matching order: constrained first,
     /// `Constraint::Any` last.
-    params: Vec<Param>,
-    wildcard: Option<Wildcard>,
+    params: Vec<Param<T>>,
+    wildcard: Option<Wildcard<T>>,
 }
 
-impl Node {
+impl<T> Default for Node<T> {
+    fn default() -> Self {
+        Self {
+            methods: Methods::default(),
+            literals: FxHashMap::default(),
+            params: Vec::new(),
+            wildcard: None,
+        }
+    }
+}
+
+/// `T` is what a route resolves to: a `Route` for the router, a body size
+/// limit for the server.
+impl<T: Clone> Node<T> {
     /// Registers `route` for `pattern` (e.g. `/users/{id:int}`) and
     /// `method`, replacing any route already there.
-    pub fn insert(
-        &mut self,
-        pattern: &str,
-        method: Method,
-        route: Route,
-    ) -> Result<(), PatternError> {
+    pub fn insert(&mut self, pattern: &str, method: Method, route: T) -> Result<(), PatternError> {
         let segments: Vec<&str> = Segments::new(pattern).collect();
         self.insert_at(&segments, method, route)
     }
@@ -115,7 +129,7 @@ impl Node {
         &mut self,
         segments: &[&str],
         method: Method,
-        route: Route,
+        route: T,
     ) -> Result<(), PatternError> {
         let Some((first, rest)) = segments.split_first() else {
             self.methods.insert(method, route);
@@ -208,7 +222,7 @@ impl Node {
         path: &'a str,
         method: Method,
         params: &mut Params<'a>,
-    ) -> Outcome<'a> {
+    ) -> Outcome<'a, T> {
         self.find_from(Segments::new(path), method, params)
     }
 
@@ -217,7 +231,7 @@ impl Node {
         mut segments: Segments<'a>,
         method: Method,
         params: &mut Params<'a>,
-    ) -> Outcome<'a> {
+    ) -> Outcome<'a, T> {
         let rest_of_path = segments.remainder();
         let Some(segment) = segments.next() else {
             return self.methods.lookup(method);
@@ -259,13 +273,13 @@ impl Node {
 
     /// Every registered route as `(pattern, method, route)`, in no
     /// particular order. For introspection, not used when matching.
-    pub fn routes(&self) -> Vec<(String, Method, Route)> {
+    pub fn routes(&self) -> Vec<(String, Method, T)> {
         let mut out = Vec::new();
         self.collect_routes("", &mut out);
         out
     }
 
-    fn collect_routes(&self, prefix: &str, out: &mut Vec<(String, Method, Route)>) {
+    fn collect_routes(&self, prefix: &str, out: &mut Vec<(String, Method, T)>) {
         let here = if prefix.is_empty() { "/" } else { prefix };
         for (method, route) in &self.methods.0 {
             out.push((here.to_string(), *method, route.clone()));
@@ -307,7 +321,7 @@ mod tests {
         }
     }
 
-    fn tree(routes: &[(&str, Method, &str)]) -> Node {
+    fn tree(routes: &[(&str, Method, &str)]) -> Node<Route> {
         let mut root = Node::default();
         for (pattern, method, handler) in routes {
             root.insert(pattern, *method, route(handler)).unwrap();
@@ -318,7 +332,7 @@ mod tests {
     /// Summarizes a lookup as `"handler"`, `"404"` or `"405 GET,POST"`,
     /// plus the captured params.
     fn lookup<'a>(
-        root: &'a Node,
+        root: &'a Node<Route>,
         method: Method,
         path: &'a str,
     ) -> (String, Vec<(&'a str, &'a str)>) {
@@ -338,7 +352,7 @@ mod tests {
         (summary, params)
     }
 
-    fn handler(root: &Node, method: Method, path: &str) -> String {
+    fn handler(root: &Node<Route>, method: Method, path: &str) -> String {
         lookup(root, method, path).0
     }
 

@@ -137,35 +137,56 @@ class Request:
 
 
 class _RouteDecorators:
-    """`@get(path)` and friends, for any class with a `route()` decorator."""
+    """`@get(path)` and friends, for any class with a `route()` decorator.
+    `max_body` (bytes) raises or lowers the built-in server's body size
+    limit for that route; ASGI servers ignore it."""
 
     __slots__ = ()
 
     def route(
-        self, path: str, *, method: str = "GET", middleware: Sequence[str] | None = None
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        middleware: Sequence[str] | None = None,
+        max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
         raise NotImplementedError
 
-    def get(self, path: str, *, middleware: Sequence[str] | None = None) -> Callable[[Handler], Handler]:
-        return self.route(path, method="GET", middleware=middleware)
+    def get(
+        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+    ) -> Callable[[Handler], Handler]:
+        return self.route(path, method="GET", middleware=middleware, max_body=max_body)
 
-    def post(self, path: str, *, middleware: Sequence[str] | None = None) -> Callable[[Handler], Handler]:
-        return self.route(path, method="POST", middleware=middleware)
+    def post(
+        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+    ) -> Callable[[Handler], Handler]:
+        return self.route(path, method="POST", middleware=middleware, max_body=max_body)
 
-    def put(self, path: str, *, middleware: Sequence[str] | None = None) -> Callable[[Handler], Handler]:
-        return self.route(path, method="PUT", middleware=middleware)
+    def put(
+        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+    ) -> Callable[[Handler], Handler]:
+        return self.route(path, method="PUT", middleware=middleware, max_body=max_body)
 
-    def patch(self, path: str, *, middleware: Sequence[str] | None = None) -> Callable[[Handler], Handler]:
-        return self.route(path, method="PATCH", middleware=middleware)
+    def patch(
+        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+    ) -> Callable[[Handler], Handler]:
+        return self.route(path, method="PATCH", middleware=middleware, max_body=max_body)
 
-    def delete(self, path: str, *, middleware: Sequence[str] | None = None) -> Callable[[Handler], Handler]:
-        return self.route(path, method="DELETE", middleware=middleware)
+    def delete(
+        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+    ) -> Callable[[Handler], Handler]:
+        return self.route(path, method="DELETE", middleware=middleware, max_body=max_body)
 
-    def head(self, path: str, *, middleware: Sequence[str] | None = None) -> Callable[[Handler], Handler]:
-        return self.route(path, method="HEAD", middleware=middleware)
+    def head(
+        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+    ) -> Callable[[Handler], Handler]:
+        return self.route(path, method="HEAD", middleware=middleware, max_body=max_body)
 
-    def options(self, path: str, *, middleware: Sequence[str] | None = None) -> Callable[[Handler], Handler]:
-        return self.route(path, method="OPTIONS", middleware=middleware)
+    def options(
+        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+    ) -> Callable[[Handler], Handler]:
+        return self.route(path, method="OPTIONS", middleware=middleware, max_body=max_body)
 
 
 class AppGroup(_RouteDecorators):
@@ -184,7 +205,12 @@ class AppGroup(_RouteDecorators):
         self._routes = routes
 
     def route(
-        self, path: str, *, method: str = "GET", middleware: Sequence[str] | None = None
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        middleware: Sequence[str] | None = None,
+        max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
         """Decorator: registers the function as the handler for `path`, under
         this group's prefix. Its own `middleware` runs after the group's."""
@@ -193,6 +219,8 @@ class AppGroup(_RouteDecorators):
             name = f"{func.__module__}.{func.__qualname__}"
             self._routes.route(path, name, method=method, middleware=middleware)
             self._app._handlers[name] = func
+            if max_body is not None:
+                self._app._body_limits.append((method, self._routes.full_path(path), max_body))
             return func
 
         return register
@@ -225,12 +253,18 @@ class App(_RouteDecorators):
         self._on_startup: list[Hook] = []
         self._on_shutdown: list[Hook] = []
         self._exception_handlers: dict[int | type[Exception], ExceptionHandler] = {}
+        self._body_limits: list[tuple[str, str, int]] = []  # (method, path, bytes), for the built-in server
 
     def route(
-        self, path: str, *, method: str = "GET", middleware: Sequence[str] | None = None
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        middleware: Sequence[str] | None = None,
+        max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
         """Decorator: registers the function as the handler for `path`."""
-        return self._root.route(path, method=method, middleware=middleware)
+        return self._root.route(path, method=method, middleware=middleware, max_body=max_body)
 
     def group(self, prefix: str = "", *, middleware: Sequence[str] | None = None) -> AppGroup:
         """Returns an `AppGroup` that registers handlers under `prefix`."""
@@ -394,16 +428,28 @@ class App(_RouteDecorators):
                 return
 
     def run(
-        self, host: str = "127.0.0.1", port: int = 8000, *, workers: int = 1, graceful_timeout: float = 30.0
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8000,
+        *,
+        workers: int = 1,
+        graceful_timeout: float = 30.0,
+        max_body: int = 1024 * 1024,
+        timeout: float = 30.0,
     ) -> None:
         """Serves the app with Korvex's built-in server until Ctrl+C or
-        SIGTERM. `workers` processes share the port, each running the
-        startup and shutdown hooks. On stop, requests in progress get up to
-        `graceful_timeout` seconds to finish. Linux and macOS only; on
-        Windows, use an ASGI server such as uvicorn."""
+        SIGTERM. Linux and macOS only; on Windows, use an ASGI server.
+
+        - `workers` processes share the port, each running the startup and
+          shutdown hooks. About 3 per 4 CPU cores works best.
+        - On stop, requests in progress get up to `graceful_timeout` seconds.
+        - Request bodies over `max_body` bytes get a 413 (a route's own
+          `max_body` overrides it); clients get `timeout` seconds to send
+          the headers, then the body (408 after that).
+        """
         from korvex import serve
 
-        serve.run(self, host, port, workers, graceful_timeout)
+        serve.run(self, host, port, workers=workers, graceful_timeout=graceful_timeout, max_body=max_body, timeout=timeout)
 
     async def _serve_one(
         self, method: str, path: str, query_string: bytes, headers: list, body: bytes, responder: Any
