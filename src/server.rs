@@ -54,6 +54,80 @@ pub enum Event {
     WebSocket(Opening),
     /// A message on an open WebSocket, or the news that it closed.
     WebSocketMessage(u64, Incoming),
+    /// A streamed response or WebSocket that was asked to wait can take
+    /// more: its client caught up (or left).
+    Writable(u64),
+}
+
+/// How many bytes of a streamed response, or of a WebSocket's outgoing
+/// messages, may wait for a slow client before Python is asked to wait.
+pub const HIGH_WATER: u64 = 1024 * 1024;
+/// Once a waiting backlog is down to this, Python is told to go on.
+pub const LOW_WATER: u64 = HIGH_WATER / 4;
+
+/// What Python sends and the client hasn't taken yet, for one streamed
+/// response or WebSocket. Python adds to it; the Rust side takes from it
+/// as the client reads. Past `HIGH_WATER`, Python waits for a `Writable`
+/// event, sent once the backlog is down to `LOW_WATER`: a slow client no
+/// longer lets a stream pile up in memory.
+pub struct Backlog {
+    id: u64,
+    bytes: AtomicU64,
+    /// Python was told to wait and hasn't been woken yet.
+    waiting: AtomicBool,
+    shared: Arc<Shared>,
+}
+
+/// `send_chunk()` and friends: what Python should do next.
+pub const GONE: u8 = 0;
+pub const SENT: u8 = 1;
+pub const WAIT: u8 = 2;
+
+impl Backlog {
+    pub fn new(id: u64, shared: Arc<Shared>) -> Self {
+        Self {
+            id,
+            bytes: AtomicU64::new(0),
+            waiting: AtomicBool::new(false),
+            shared,
+        }
+    }
+
+    /// Python queued `n` more bytes: `SENT`, or `WAIT` for a `Writable`.
+    pub fn add(&self, n: usize) -> u8 {
+        let now = self.bytes.fetch_add(n as u64, Ordering::SeqCst) + n as u64;
+        if now <= HIGH_WATER {
+            return SENT;
+        }
+        self.waiting.store(true, Ordering::SeqCst);
+        // The client may have caught up in between without seeing `waiting`:
+        // then whoever clears the flag decides, so exactly one wake-up (or
+        // none at all) happens.
+        if self.bytes.load(Ordering::SeqCst) <= LOW_WATER
+            && self.waiting.swap(false, Ordering::SeqCst)
+        {
+            return SENT;
+        }
+        WAIT
+    }
+
+    /// The client took `n` bytes.
+    pub fn taken(&self, n: usize) {
+        let now = self
+            .bytes
+            .fetch_sub(n as u64, Ordering::SeqCst)
+            .saturating_sub(n as u64);
+        if now <= LOW_WATER {
+            self.wake();
+        }
+    }
+
+    /// Wakes Python if it waits: the client caught up, or left.
+    pub fn wake(&self) {
+        if self.waiting.swap(false, Ordering::SeqCst) {
+            self.shared.push(Event::Writable(self.id));
+        }
+    }
 }
 
 /// A request read by the Rust thread, waiting for Python.
@@ -97,10 +171,12 @@ pub struct Shared {
     body_limits: Node<u64>,
     /// How long a client gets to send the headers, then the body.
     timeout: Duration,
+    /// How often open WebSocket connections get a ping; `None` for never.
+    pub ws_ping_interval: Option<Duration>,
     /// Proxies whose `X-Forwarded-*` headers are believed.
     pub trusted: Trusted,
-    /// The next WebSocket connection's ID.
-    pub next_websocket: AtomicU64,
+    /// The next ID for a WebSocket or a streamed response.
+    pub next_id: AtomicU64,
 }
 
 impl Shared {
@@ -149,7 +225,9 @@ impl Server {
     /// `max_body` bytes, unless `body_limits` (`(method, pattern, bytes)`)
     /// sets a route's own; clients get `timeout` seconds to send the
     /// headers, then the body. `X-Forwarded-*` headers are believed from
-    /// the `trusted` proxy addresses (`"*"` for all) and Unix sockets.
+    /// the `trusted` proxy addresses (`"*"` for all) and Unix sockets. Open
+    /// WebSocket connections get a ping every `ws_ping_interval` seconds (0: never),
+    /// and are closed if the client stays silent until the next one.
     #[new]
     #[allow(clippy::needless_pass_by_value)] // PyO3 hands over owned values
     fn new(
@@ -159,6 +237,7 @@ impl Server {
         timeout: f64,
         body_limits: Vec<(String, String, u64)>,
         trusted: Vec<String>,
+        ws_ping_interval: f64,
     ) -> PyResult<Self> {
         let trusted = Trusted::parse(&trusted).map_err(PyValueError::new_err)?;
         let mut limits = Node::default();
@@ -172,6 +251,11 @@ impl Server {
         if !(timeout.is_finite() && timeout > 0.0) {
             return Err(PyValueError::new_err(
                 "timeout must be a positive number of seconds",
+            ));
+        }
+        if !(ws_ping_interval.is_finite() && ws_ping_interval >= 0.0) {
+            return Err(PyValueError::new_err(
+                "ws_ping_interval must be a number of seconds, or 0 for no pings",
             ));
         }
         // SAFETY: Python hands over a listening socket it no longer uses
@@ -197,8 +281,10 @@ impl Server {
             max_body,
             body_limits: limits,
             timeout: Duration::from_secs_f64(timeout),
+            ws_ping_interval: (ws_ping_interval > 0.0)
+                .then(|| Duration::from_secs_f64(ws_ping_interval)),
             trusted,
-            next_websocket: AtomicU64::new(0),
+            next_id: AtomicU64::new(0),
         });
         let stop = Arc::new(Notify::new());
         let thread = {
@@ -225,7 +311,7 @@ impl Server {
     /// `("http", method, path, query_string, headers, body, client, scheme,
     /// responder, error)` (`error`: a status to answer with, or 0), `("ws", path, query_string, headers, client, scheme,
     /// connection)`, `("ws_message", id, text_or_bytes)` or
-    /// `("ws_closed", id, code)`.
+    /// `("ws_closed", id, code)` or `("writable", id)`.
     fn take<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         // Order matters, or a wake-up gets lost: empty the socket, then clear
         // the flag, then drain the queue. An event queued after the flag is
@@ -257,6 +343,8 @@ impl Server {
                     request.client,
                     request.scheme,
                     Responder {
+                        id: self.shared.next_id.fetch_add(1, Ordering::Relaxed),
+                        shared: Arc::clone(&self.shared),
                         reply: Mutex::new(Some(request.reply)),
                         stream: Mutex::new(None),
                     },
@@ -280,6 +368,7 @@ impl Server {
                 Event::WebSocketMessage(id, Incoming::Closed(code)) => {
                     items.append(("ws_closed", id, code))?;
                 }
+                Event::Writable(id) => items.append(("writable", id))?,
             }
         }
         Ok(items)
@@ -318,8 +407,12 @@ impl Server {
 /// If Python drops it without answering, the client gets a 500.
 #[pyclass(frozen, module = "korvex._core")]
 pub struct Responder {
+    /// For the `("writable", id)` event a waiting stream gets.
+    #[pyo3(get)]
+    id: u64,
+    shared: Arc<Shared>,
     reply: Mutex<Option<oneshot::Sender<Reply>>>,
-    stream: Mutex<Option<mpsc::UnboundedSender<Bytes>>>,
+    stream: Mutex<Option<(mpsc::UnboundedSender<Bytes>, Arc<Backlog>)>>,
 }
 
 impl Responder {
@@ -352,18 +445,30 @@ impl Responder {
 
     fn start_stream(&self, status: u16, headers: Headers) {
         let (sender, receiver) = mpsc::unbounded_channel();
-        *self.stream.lock().unwrap_or_else(PoisonError::into_inner) = Some(sender);
-        self.send(status, headers, Either::Right(ChannelBody { receiver }));
+        let backlog = Arc::new(Backlog::new(self.id, Arc::clone(&self.shared)));
+        *self.stream.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some((sender, Arc::clone(&backlog)));
+        self.send(
+            status,
+            headers,
+            Either::Right(ChannelBody { receiver, backlog }),
+        );
     }
 
-    /// Sends one piece of a streamed body. Returns `False` once the client
-    /// has gone, so Python can stop producing.
-    fn send_chunk(&self, chunk: &[u8]) -> bool {
-        self.stream
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-            .is_some_and(|sender| sender.send(Bytes::copy_from_slice(chunk)).is_ok())
+    /// Sends one piece of a streamed body. Returns 1 (sent), 2 (sent, but
+    /// the client is behind: wait for `("writable", id)` before the next
+    /// one) or 0 once the client has gone, so Python can stop producing.
+    fn send_chunk(&self, chunk: &[u8]) -> u8 {
+        let stream = self.stream.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some((sender, backlog)) = stream.as_ref() else {
+            return GONE;
+        };
+        // Counted before it's queued: the body can't take it out first.
+        let next = backlog.add(chunk.len());
+        if sender.send(Bytes::copy_from_slice(chunk)).is_err() {
+            return GONE;
+        }
+        next
     }
 
     fn end_stream(&self) {
@@ -378,6 +483,7 @@ impl Responder {
 /// its sender (`end_stream()`).
 pub struct ChannelBody {
     receiver: mpsc::UnboundedReceiver<Bytes>,
+    backlog: Arc<Backlog>,
 }
 
 impl Body for ChannelBody {
@@ -388,9 +494,19 @@ impl Body for ChannelBody {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
-        self.receiver
-            .poll_recv(cx)
-            .map(|chunk| chunk.map(|bytes| Ok(Frame::data(bytes))))
+        // hyper asks for the next piece once it has written the last one.
+        let polled = self.receiver.poll_recv(cx);
+        if let Poll::Ready(Some(bytes)) = &polled {
+            self.backlog.taken(bytes.len());
+        }
+        polled.map(|chunk| chunk.map(|bytes| Ok(Frame::data(bytes))))
+    }
+}
+
+impl Drop for ChannelBody {
+    fn drop(&mut self) {
+        // The client left: a waiting Python learns it from its next send_chunk().
+        self.backlog.wake();
     }
 }
 

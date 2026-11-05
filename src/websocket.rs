@@ -8,6 +8,7 @@
 
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
@@ -29,7 +30,9 @@ use tokio_tungstenite::tungstenite::protocol::frame::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::{Role, WebSocketConfig};
 
 use crate::proxy::resolve;
-use crate::server::{Event, Headers, ResponseBody, Shared, internal_error, plain, request_headers};
+use crate::server::{
+    Backlog, Event, GONE, Headers, ResponseBody, Shared, internal_error, plain, request_headers,
+};
 
 /// What the client sent on an open WebSocket, for Python.
 pub enum Incoming {
@@ -72,6 +75,8 @@ pub struct WsConnection {
     id: u64,
     decision: Mutex<Option<oneshot::Sender<Decision>>>,
     outgoing: Mutex<Option<mpsc::UnboundedSender<Outgoing>>>,
+    /// Outgoing messages the client hasn't taken yet.
+    backlog: Arc<Backlog>,
 }
 
 impl WsConnection {
@@ -94,6 +99,13 @@ impl WsConnection {
             .as_ref()
             .is_some_and(|sender| sender.send(message).is_ok())
     }
+
+    /// Queues a message, counted in the backlog first (the relay can't take
+    /// it out before): 1 sent, 2 sent but the client is behind, 0 gone.
+    fn send_data(&self, message: Outgoing, size: usize) -> u8 {
+        let next = self.backlog.add(size);
+        if self.send(message) { next } else { GONE }
+    }
 }
 
 #[pymethods]
@@ -106,14 +118,17 @@ impl WsConnection {
         });
     }
 
-    /// Returns `False` once the connection is gone.
-    fn send_text(&self, text: String) -> bool {
-        self.send(Outgoing::Text(text))
+    /// Returns 1 (sent), 2 (sent, but the client is behind: wait for
+    /// `("writable", id)` before sending more) or 0 once the connection is
+    /// gone.
+    fn send_text(&self, text: String) -> u8 {
+        let size = text.len();
+        self.send_data(Outgoing::Text(text), size)
     }
 
-    /// Returns `False` once the connection is gone.
-    fn send_bytes(&self, data: &[u8]) -> bool {
-        self.send(Outgoing::Binary(Bytes::copy_from_slice(data)))
+    /// Like `send_text()`.
+    fn send_bytes(&self, data: &[u8]) -> u8 {
+        self.send_data(Outgoing::Binary(Bytes::copy_from_slice(data)), data.len())
     }
 
     /// Closes the connection, or refuses it if it wasn't accepted yet.
@@ -173,9 +188,10 @@ pub async fn handshake(
     let on_upgrade = hyper::upgrade::on(&mut request);
     let (parts, _) = request.into_parts();
     let resolved = resolve(peer, &parts.headers, &shared.trusted);
-    let id = shared.next_websocket.fetch_add(1, Ordering::Relaxed);
+    let id = shared.next_id.fetch_add(1, Ordering::Relaxed);
     let (decision, decided) = oneshot::channel();
     let (outgoing, to_send) = mpsc::unbounded_channel();
+    let backlog = Arc::new(Backlog::new(id, Arc::clone(&shared)));
     shared.push(Event::WebSocket(Opening {
         path: parts.uri.path().to_owned(),
         query: parts.uri.query().unwrap_or("").as_bytes().to_vec(),
@@ -190,6 +206,7 @@ pub async fn handshake(
             id,
             decision: Mutex::new(Some(decision)),
             outgoing: Mutex::new(Some(outgoing)),
+            backlog: Arc::clone(&backlog),
         },
     }));
 
@@ -213,7 +230,8 @@ pub async fn handshake(
         let socket =
             WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, Some(config))
                 .await;
-        relay(id, socket, to_send, &shared, shutdown).await;
+        relay(id, socket, to_send, &shared, shutdown, &backlog).await;
+        backlog.wake(); // a Python waiting to send learns the connection is gone
     });
 
     let mut builder = Response::builder()
@@ -234,12 +252,15 @@ pub async fn handshake(
 
 /// Relays messages between the client and Python until either side closes
 /// or the server shuts down, then tells Python the connection is over.
+/// Every `ping_interval`, the client gets a ping; one that sent nothing
+/// since the last one (not even the pong) is gone, and gets closed.
 async fn relay<S>(
     id: u64,
     socket: WebSocketStream<S>,
     mut to_send: mpsc::UnboundedReceiver<Outgoing>,
     shared: &Shared,
     mut shutdown: watch::Receiver<bool>,
+    backlog: &Backlog,
 ) where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -250,26 +271,36 @@ async fn relay<S>(
         }))
     };
     let (mut sink, mut stream) = socket.split();
+    let interval = shared.ws_ping_interval.unwrap_or(Duration::from_secs(3600));
+    let mut pings = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
+    let mut heard = true; // from the client since the last ping
     let code = loop {
         tokio::select! {
-            incoming = stream.next() => match incoming {
-                Some(Ok(Message::Text(text))) => {
-                    shared.push(Event::WebSocketMessage(id, Incoming::Text(text.as_str().to_owned())));
+            incoming = stream.next() => {
+                heard = true;
+                match incoming {
+                    Some(Ok(Message::Text(text))) => {
+                        shared.push(Event::WebSocketMessage(id, Incoming::Text(text.as_str().to_owned())));
+                    }
+                    Some(Ok(Message::Binary(data))) => shared.push(Event::WebSocketMessage(id, Incoming::Binary(data))),
+                    // tungstenite queues the answer to a ping: flushing sends it.
+                    Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => {
+                        let _ = sink.flush().await;
+                    }
+                    Some(Ok(Message::Close(frame))) => break frame.map_or(1005, |frame| u16::from(frame.code)),
+                    Some(Err(_)) | None => break 1006, // closed without a close frame
                 }
-                Some(Ok(Message::Binary(data))) => shared.push(Event::WebSocketMessage(id, Incoming::Binary(data))),
-                // tungstenite queues the answer to a ping: flushing sends it.
-                Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => {
-                    let _ = sink.flush().await;
-                }
-                Some(Ok(Message::Close(frame))) => break frame.map_or(1005, |frame| u16::from(frame.code)),
-                Some(Err(_)) | None => break 1006, // closed without a close frame
             },
             outgoing = to_send.recv() => match outgoing {
                 Some(Outgoing::Text(text)) => {
+                    let size = text.len();
                     if sink.send(Message::text(text)).await.is_err() { break 1006; }
+                    backlog.taken(size);
                 }
                 Some(Outgoing::Binary(data)) => {
+                    let size = data.len();
                     if sink.send(Message::binary(data)).await.is_err() { break 1006; }
+                    backlog.taken(size);
                 }
                 Some(Outgoing::Close(code, reason)) => {
                     let _ = sink.send(close(code, &reason)).await;
@@ -279,6 +310,14 @@ async fn relay<S>(
                     let _ = sink.send(close(1000, "")).await; // Python is done with it
                     break 1000;
                 }
+            },
+            _ = pings.tick(), if shared.ws_ping_interval.is_some() => {
+                if !heard {
+                    let _ = sink.send(close(1011, "keepalive ping timeout")).await;
+                    break 1011;
+                }
+                heard = false;
+                if sink.send(Message::Ping(Bytes::new())).await.is_err() { break 1006; }
             },
             _ = shutdown.changed() => {
                 let _ = sink.send(close(1001, "server shutting down")).await;

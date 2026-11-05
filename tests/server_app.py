@@ -114,6 +114,38 @@ async def ws_echo(ws, room):
     print("WS CLOSED", flush=True)
 
 
+# Backpressure: how much a stream or a WebSocket produced so far, for a
+# client that stopped reading.
+PRODUCED = {"stream": 0, "ws": 0}
+FIREHOSE = 100 * 1024 * 1024
+PIECE = 64 * 1024
+
+
+@app.get("/firehose")
+async def firehose(request):
+    async def chunks():
+        piece = b"x" * PIECE
+        for _ in range(FIREHOSE // PIECE):
+            PRODUCED["stream"] += PIECE
+            yield piece
+
+    return Response.stream(chunks())
+
+
+@app.get("/produced")
+def produced(request):
+    return Response.json(PRODUCED)
+
+
+@app.websocket("/ws-firehose")
+async def ws_firehose(ws):
+    await ws.accept()
+    message = b"x" * (8 * PIECE)
+    for _ in range(FIREHOSE // len(message)):
+        PRODUCED["ws"] += len(message)
+        await ws.send_bytes(message)
+
+
 @app.get("/fail")
 def fail(request):
     raise RuntimeError("boom")
@@ -138,4 +170,5 @@ if __name__ == "__main__":
         uds=os.environ.get("UDS"),
         forwarded_allow_ips=os.environ.get("FORWARDED_ALLOW", "127.0.0.1,::1").split(","),
         access_log=bool(os.environ.get("ACCESS_LOG")),
+        ws_ping_interval=float(os.environ.get("WS_PING", "20")),
     )

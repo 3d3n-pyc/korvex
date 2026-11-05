@@ -543,3 +543,67 @@ def test_sigterm_closes_websockets_with_1001():
     output, _ = process.communicate(timeout=10)
     assert process.returncode == 0
     assert "WS CLOSED" in output and "STOPPED" in output  # the handler saw the disconnect
+
+
+def test_a_client_that_stops_reading_holds_back_a_stream(server):
+    import http.client
+
+    base, _ = server
+    port = int(base.rsplit(":", 1)[1])
+    sock = socket.socket()
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 64 * 1024)  # before connecting: a small window
+    sock.connect(("127.0.0.1", port))
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    connection.sock = sock
+    connection.request("GET", "/firehose")
+    response = connection.getresponse()
+    response.read(1024)
+    time.sleep(1)  # the client stops reading; without backpressure, the whole 100 MiB would be made by now
+    made = json.loads(fetch(f"{base}/produced")[2])["stream"]
+    assert made < 16 * 1024 * 1024
+    assert len(response.read()) + 1024 == 100 * 1024 * 1024  # then it all arrives, intact
+    connection.close()
+
+
+def test_a_websocket_client_that_stops_reading_holds_back_the_handler(server):
+    base, _ = server
+    port = int(base.rsplit(":", 1)[1])
+    client = WebSocketClient(port, "/ws-firehose")
+    assert client.status == 101
+    time.sleep(1)
+    made = json.loads(fetch(f"{base}/produced")[2])["ws"]
+    assert made < 32 * 1024 * 1024
+    received = 0
+    while received < 100 * 1024 * 1024:
+        opcode, payload = client.recv()
+        assert opcode == 2
+        received += len(payload)
+    client.close()
+
+
+def test_websocket_pings_close_clients_that_went_silent():
+    port = free_port()
+    process = start(port, WS_PING="0.3")
+    try:
+        # One that answers each ping stays connected.
+        alive = WebSocketClient(port, "/ws/lobby?token=secret")
+        deadline = time.monotonic() + 1.2
+        while time.monotonic() < deadline:
+            opcode, payload = alive.recv()
+            assert opcode == 9  # a ping
+            alive.send(10, payload)  # the pong
+        alive.send_text("still here")
+        while (frame := alive.recv())[0] == 9:
+            alive.send(10, frame[1])
+        assert frame == (1, b"lobby: still here")
+        alive.close()
+
+        # One that never answers is closed with 1011 after a ping goes unanswered.
+        silent = WebSocketClient(port, "/ws/lobby?token=secret")
+        started = time.monotonic()
+        while (frame := silent.recv())[0] == 9:
+            pass  # pings, left unanswered
+        assert frame[0] == 8 and int.from_bytes(frame[1][:2], "big") == 1011
+        assert time.monotonic() - started < 2
+    finally:
+        process.kill()
