@@ -82,15 +82,19 @@ def build(app: App, *, title: str, version: str, description: str | None = None,
                 "required": body.required,
                 "content": {"application/json": {"schema": Model(body.type).schema(components)}},
             }
-        elif form:
+        elif form or any(p.source == "form_model" for p in everything):
+            models = [p for p in everything if p.source == "form_model"]
             files = any(_unwrap(p.type)[0] is UploadedFile for p in form)
-            properties = {p.key: _with_default(_form_schema(p.type), p) for p in form}
-            schema: dict[str, Any] = {"type": "object", "properties": properties}
-            required = [p.key for p in form if p.required]
-            if required:
-                schema["required"] = required
+            schemas = [Model(p.type).schema(components) for p in models]
+            if form:
+                fields: dict[str, Any] = {"type": "object", "properties": {p.key: _with_default(_form_schema(p.type), p) for p in form}}
+                if [p.key for p in form if p.required]:
+                    fields["required"] = [p.key for p in form if p.required]
+                schemas.append(fields)
+            schema = schemas[0] if len(schemas) == 1 else {"allOf": schemas}
+            required = any(p.required for p in (*form, *models))
             kind = "multipart/form-data" if files else "application/x-www-form-urlencoded"
-            operation["requestBody"] = {"required": bool(required), "content": {kind: {"schema": schema}}}
+            operation["requestBody"] = {"required": required, "content": {kind: {"schema": schema}}}
         success: dict[str, Any] = {"description": "Successful response"}
         if plan.response is not None:
             success["content"] = {"application/json": {"schema": plan.response.schema(components)}}

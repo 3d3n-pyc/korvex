@@ -227,6 +227,10 @@ async def upload(
   matter. `alias=` gives the exact name.
 - Their errors say where: `["header", "x-client"]`, `["form", "title"]`.
 - An empty form field counts as missing, except for `str`.
+- A model can come from a form too, field by field: `body: Signup = Form()`.
+  A list field takes every value, a checkbox's `on` is true, and text
+  converts to numbers and dates as the model says. Files stay separate
+  `Form()` parameters.
 
 ### Dependencies
 

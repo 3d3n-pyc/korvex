@@ -32,6 +32,10 @@ Breaking changes are listed with how to update.
   take it, like a path parameter. Routes declared without a host answer on every host.
   `app.openapi(host=...)`, and `/docs` documents the host it's served
   from.
+- A model filled from a form: `body: Signup = Form()`, with msgspec or
+  pydantic, each model field from the form field of the same name. Its
+  errors are at `["form", ...]`, and OpenAPI shows it as the form's
+  schema.
 - `Abort(response)`: raised in a dependency, a handler or a before hook,
   sends that response as is, past the exception handlers. In a
   WebSocket's dependencies, it refuses the connection.

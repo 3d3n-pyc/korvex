@@ -185,3 +185,106 @@ def test_parameters_without_annotations_are_text():
         return echo(client=x_client)
 
     assert call(app, headers=[("X-Client", "42")]) == (200, {"client": "42"})
+
+
+def form_models(library):
+    """A sign-up form's model, the same with msgspec or pydantic."""
+    if library == "msgspec":
+        msgspec = pytest.importorskip("msgspec")
+
+        class Signup(msgspec.Struct):
+            name: str
+            age: int
+            tags: list[str] = []
+            newsletter: bool = False
+            birthday: Optional[date] = None
+            nickname: str = ""
+
+        return Signup
+    pydantic = pytest.importorskip("pydantic")
+
+    class Signup(pydantic.BaseModel):
+        name: str
+        age: int
+        tags: list[str] = []
+        newsletter: bool = False
+        birthday: Optional[date] = None
+        nickname: str = ""
+
+    return Signup
+
+
+@pytest.mark.parametrize("library", ["msgspec", "pydantic"])
+def test_a_model_filled_from_a_form(library):
+    Signup = form_models(library)
+    app = App()
+
+    @app.post("/signup")
+    def signup(request, body: Signup = Form()):
+        return echo(**{k: getattr(body, k) for k in ("name", "age", "tags", "newsletter", "birthday", "nickname")})
+
+    form = [("Content-Type", "application/x-www-form-urlencoded")]
+    sent = b"name=Ada&age=36&tags=a&tags=b&newsletter=on&birthday=1815-12-10&nickname="
+    status, body = call(app, "/signup", method="POST", headers=form, body=sent)
+    assert (status, body) == (200, {"name": "Ada", "age": 36, "tags": ["a", "b"], "newsletter": True, "birthday": "1815-12-10", "nickname": ""})
+
+    status, body = call(app, "/signup", method="POST", headers=form, body=b"name=Ada&age=&birthday=")  # empty: not given
+    assert status == 422
+    assert [e["loc"] for e in body["detail"]] == [["form", "age"]]
+
+    status, body = call(app, "/signup", method="POST", headers=form, body=b"name=Ada&age=old")
+    assert status == 422 and body["detail"][0]["loc"][:2] == ["form", "age"]
+
+
+def test_a_form_model_next_to_a_file_and_left_out():
+    msgspec = pytest.importorskip("msgspec")
+
+    class Photo(msgspec.Struct):
+        title: str
+        public: bool = False
+
+    app = App()
+
+    @app.post("/photos")
+    def upload(request, info: Photo = Form(), file: UploadedFile = Form()):
+        return echo(title=info.title, public=info.public, size=len(file.data))
+
+    @app.post("/maybe")
+    def maybe(request, info: Optional[Photo] = Form(None)):
+        return echo(info=None if info is None else info.title)
+
+    boundary = "XyZ"
+    parts = (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="title"\r\n\r\nHoliday\r\n'
+        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="a.txt"\r\n\r\nhello\r\n'
+        f"--{boundary}--\r\n"
+    ).encode()
+    headers = [("Content-Type", f"multipart/form-data; boundary={boundary}")]
+    assert call(app, "/photos", method="POST", headers=headers, body=parts) == (200, {"title": "Holiday", "public": False, "size": 5})
+    assert call(app, "/maybe", method="POST") == (200, {"info": None})
+
+
+def test_form_models_in_openapi_and_refused_where_they_cant_be():
+    msgspec = pytest.importorskip("msgspec")
+    validator = pytest.importorskip("openapi_spec_validator")
+
+    class Login(msgspec.Struct):
+        user: str
+        password: str
+
+    app = App()
+
+    @app.post("/login")
+    def login(request, body: Login = Form()):
+        pass
+
+    doc = app.openapi()
+    validator.validate(doc)
+    content = doc["paths"]["/login"]["post"]["requestBody"]["content"]
+    assert content == {"application/x-www-form-urlencoded": {"schema": {"$ref": "#/components/schemas/Login"}}}
+
+    with pytest.raises(TypeError, match="both a model and a form"):
+
+        @app.post("/mixed")
+        def mixed(request, a: Login, b: Login = Form()):
+            pass

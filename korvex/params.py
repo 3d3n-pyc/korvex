@@ -83,7 +83,8 @@ def Cookie(default: Any = REQUIRED, *, alias: str | None = None) -> Any:
 def Form(default: Any = REQUIRED, *, alias: str | None = None) -> Any:
     """From a form field, urlencoded or multipart. Annotated `UploadedFile`
     (or `list[UploadedFile]`), it's a file. An empty field counts as
-    missing, except for `str`."""
+    missing, except for `str`. Annotated with a msgspec or pydantic model,
+    it's the model, each of its fields from the form field of that name."""
     return Source("form", default, alias)
 
 
