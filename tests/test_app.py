@@ -846,3 +846,139 @@ def test_custom_route_constraints_and_annotations():
     assert response_from(run_app(app, make_scope("GET", "/days/2026-11-05")))[::2] == (200, b"Thursday")
     assert response_from(run_app(app, make_scope("GET", "/days/tomorrow")))[0] == 404  # doesn't fit
     assert response_from(run_app(app, make_scope("GET", "/days/2026-13-45")))[0] == 422  # fits, isn't a date
+
+
+def host_app():
+    from korvex import Depends
+
+    app = App()
+    calls = []
+    api = app.host("api.example.com", dependencies=[Depends(lambda: calls.append("api"))])
+    tenants = app.host("{tenant}.example.com")
+
+    @api.get("/users")
+    def api_users(request):
+        return Response.text("api users")
+
+    @tenants.get("/")
+    def tenant_home(request, tenant: str):
+        return Response.text(f"home of {tenant}")
+
+    @tenants.group("/admin").post("/purge")
+    def purge(request, tenant):
+        return Response.text(f"purged {tenant}")
+
+    @app.get("/health")
+    def health(request):
+        return Response.text("ok")
+
+    @app.get("/")
+    def main_home(request):
+        return Response.text("main home")
+
+    return app, calls
+
+
+def on(app, host, path="/", method="GET"):
+    status, _, body = response_from(run_app(app, make_scope(method, path, headers=[("Host", host)])))
+    return status, body
+
+
+def test_host_routes_answer_for_their_host_only():
+    app, calls = host_app()
+    assert on(app, "api.example.com", "/users") == (200, b"api users")
+    assert calls == ["api"]  # the host group's dependencies ran
+    assert on(app, "API.Example.com:8443", "/users") == (200, b"api users")  # case and port don't matter
+    assert on(app, "example.com", "/users")[0] == 404  # not on another host
+    assert on(app, "acme.example.com") == (200, b"home of acme")
+    assert on(app, "acme.example.com", "/admin/purge", "POST") == (200, b"purged acme")
+    assert on(app, "acme.example.com", "/admin/purge")[0] == 405  # the host has the path, not for GET
+    assert on(app, "a.b.example.com")[1] == b"main home"  # {tenant} takes one label: no match there
+    assert on(app, "api.example.com", "/admin/purge", "POST")[0] == 404  # api isn't a tenant: its host owns it
+
+
+def test_routes_without_a_host_answer_on_every_host():
+    app, _ = host_app()
+    assert on(app, "api.example.com", "/health") == (200, b"ok")
+    assert on(app, "acme.example.com", "/health") == (200, b"ok")
+    assert on(app, "example.com") == (200, b"main home")
+    assert on(app, "acme.example.com") == (200, b"home of acme")  # the host's own route comes first
+
+
+def test_literal_hosts_come_before_patterns():
+    app = App()
+    any_tenant = app.host("{tenant}.example.com")
+    www = app.host("www.example.com")  # declared after, tried first
+
+    @any_tenant.get("/")
+    def tenant(request, tenant):
+        return Response.text(tenant)
+
+    @www.get("/")
+    def site(request):
+        return Response.text("site")
+
+    assert on(app, "www.example.com") == (200, b"site")
+    assert on(app, "acme.example.com") == (200, b"acme")
+    assert app.host("WWW.example.com.") is not None  # the same host, normalized: no duplicate
+    assert len(app._hosts) == 2
+
+
+def test_bad_hosts_and_clashing_names_are_refused():
+    app = App()
+    with pytest.raises(ValueError, match="not a host pattern"):
+        app.host("api.example.com/x")
+    tenants = app.host("{tenant}.example.com")
+    with pytest.raises(ValueError, match="both in the host"):
+
+        @tenants.get("/{tenant}")
+        def clash(request, tenant):
+            pass
+
+
+def test_websockets_per_host():
+    from test_websocket import run_ws, ws_scope
+
+    app = App()
+    chat = app.host("{room}.chat.example.com")
+
+    @chat.websocket("/ws")
+    async def room(ws, room):
+        await ws.accept()
+        await ws.send_text(room)
+
+    sent = run_ws(app, ws_scope("/ws", headers=[("Host", "lobby.chat.example.com")]))
+    assert sent[1] == {"type": "websocket.send", "text": "lobby"}
+    assert run_ws(app, ws_scope("/ws", headers=[("Host", "example.com")]))[0]["type"] == "websocket.close"
+
+
+def test_each_host_gets_its_own_api_document():
+    app, _ = host_app()
+    assert sorted(app.openapi()["paths"]) == ["/", "/health"]
+    assert sorted(app.openapi(host="api.example.com")["paths"]) == ["/", "/health", "/users"]  # not the tenants' routes
+    acme = app.openapi(host="acme.example.com")["paths"]
+    assert sorted(acme) == ["/", "/admin/purge", "/health"] and acme["/"]["get"]["operationId"] == "tenant_home"
+    app.docs()
+    status, body = on(app, "api.example.com", "/openapi.json")
+    assert status == 200 and "/users" in json.loads(body)["paths"]
+
+
+def test_dependencies_read_host_parameters():
+    from korvex import Depends, HTTPException
+
+    TENANTS = {"acme": "Acme Corp"}
+
+    def current_tenant(tenant: str) -> str:  # {tenant} from the host, like a path parameter
+        if tenant not in TENANTS:
+            raise HTTPException(404, "no such tenant")
+        return TENANTS[tenant]
+
+    app = App()
+    tenants = app.host("{tenant}.example.com")
+
+    @tenants.get("/")
+    def home(request, name: str = Depends(current_tenant)):
+        return Response.text(name)
+
+    assert on(app, "acme.example.com") == (200, b"Acme Corp")
+    assert on(app, "nobody.example.com") == (404, b"no such tenant")

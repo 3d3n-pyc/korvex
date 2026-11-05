@@ -26,6 +26,12 @@ Breaking changes are listed with how to update.
   registered** (before plain ones, as before). They were tried most
   recent first, which only mattered for `int` and `uuid` together, which
   never match the same value.
+- Host-based routing: `app.host("api.example.com")` and
+  `app.host("{tenant}.example.com")` give groups whose routes answer for
+  that host; a host parameter reaches the dependencies and handlers that
+  take it, like a path parameter. Routes declared without a host answer on every host.
+  `app.openapi(host=...)`, and `/docs` documents the host it's served
+  from.
 - `Abort(response)`: raised in a dependency, a handler or a before hook,
   sends that response as is, past the exception handlers. In a
   WebSocket's dependencies, it refuses the connection.

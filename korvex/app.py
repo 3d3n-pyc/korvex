@@ -8,6 +8,7 @@ handler and sends its `Response`.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -21,7 +22,7 @@ from urllib.parse import parse_qs, unquote
 from korvex._core import MethodNotAllowed
 from korvex.errors import Abort, HTTPException, ValidationError
 from korvex.response import Headers, JSONValue, Response, StreamingResponse
-from korvex.schema import Plan, Run, needs_plan, plan_for
+from korvex.schema import Plan, Run, needs_plan, path_params, plan_for
 from korvex.router import RouteGroup, Router
 
 # `Union`/`Optional` rather than `|`: these lines run at import time, and
@@ -358,12 +359,24 @@ class AppGroup(_RouteDecorators):
         def list_users(request): ...
     """
 
-    __slots__ = ("_app", "_routes", "_dependencies")
+    __slots__ = ("_app", "_routes", "_dependencies", "_host")
 
-    def __init__(self, app: App, routes: RouteGroup, dependencies: Sequence[Any] = ()) -> None:
+    def __init__(self, app: App, routes: RouteGroup, dependencies: Sequence[Any] = (), host: _Host | None = None) -> None:
         self._app = app
         self._routes = routes
         self._dependencies = tuple(dependencies)
+        self._host = host  # for `app.host()` groups: the host their routes answer on
+
+    def _plan_pattern(self, full_path: str) -> str:
+        """What a handler's plan is read against: the path, after the host
+        pattern for a host's routes, so `{tenant}` in the host is a
+        parameter like those of the path."""
+        if self._host is None:
+            return full_path
+        clash = set(self._host.params) & set(path_params(full_path))
+        if clash:
+            raise ValueError(f"{full_path!r}: {sorted(clash)} is both in the host {self._host.pattern!r} and the path")
+        return self._host.pattern + full_path
 
     def route(
         self,
@@ -380,10 +393,12 @@ class AppGroup(_RouteDecorators):
             name = _route_name(func, self._app._handlers)
             full_path = self._routes.full_path(path)
             # Bad annotations fail here, at import.
-            plan = self._app._plan(func, full_path, (*self._dependencies, *dependencies))
+            plan = self._app._plan(func, self._plan_pattern(full_path), (*self._dependencies, *dependencies))
             self._routes.route(path, name, method=method)
             self._app._handlers[name] = func
             self._app._plans[name] = plan
+            if self._host is not None:
+                self._app._host_args[name] = _takes(func, self._host.params)
             if max_body is not None:
                 self._app._body_limits.append((method, full_path, max_body))
             return func
@@ -400,10 +415,12 @@ class AppGroup(_RouteDecorators):
         def register(func: WebSocketHandler) -> WebSocketHandler:
             name = _route_name(func, self._app._ws_handlers)
             full_path = self._routes.full_path(path)
-            plan = self._app._plan(func, full_path, (*self._dependencies, *dependencies), websocket=True)
-            self._app._ws_router.route(full_path, name)
+            plan = self._app._plan(func, self._plan_pattern(full_path), (*self._dependencies, *dependencies), websocket=True)
+            (self._host.ws_router if self._host else self._app._ws_router).route(full_path, name)
             self._app._ws_handlers[name] = func
             self._app._ws_plans[name] = plan
+            if self._host is not None:
+                self._app._host_args[name] = _takes(func, self._host.params)
             return func
 
         return register
@@ -412,10 +429,56 @@ class AppGroup(_RouteDecorators):
         self, prefix: str = "", *, dependencies: Sequence[Any] = ()
     ) -> AppGroup:
         """Returns a nested group. Its `dependencies` run after this group's."""
-        return AppGroup(self._app, self._routes.group(prefix), (*self._dependencies, *dependencies))
+        return AppGroup(self._app, self._routes.group(prefix), (*self._dependencies, *dependencies), self._host)
 
     def __repr__(self) -> str:
-        return f"AppGroup(prefix={self._routes.prefix!r}, dependencies={list(self._dependencies)!r})"
+        host = f", host={self._host.pattern!r}" if self._host else ""
+        return f"AppGroup(prefix={self._routes.prefix!r}{host}, dependencies={list(self._dependencies)!r})"
+
+
+class _Host:
+    """The routes of one host pattern, `api.example.com` or
+    `{tenant}.example.com`: a router for HTTP and one for WebSockets."""
+
+    __slots__ = ("pattern", "params", "_labels", "router", "ws_router")
+
+    def __init__(self, pattern: str, constraints: Iterable[tuple[str, str]]) -> None:
+        self.pattern = pattern.lower().rstrip(".")
+        self._labels: list[tuple[bool, str]] = []  # (is a parameter, name or literal)
+        for label in self.pattern.split("."):
+            if label.startswith("{") and label.endswith("}") and label[1:-1].isidentifier():
+                self._labels.append((True, label[1:-1]))
+            elif label and label.isascii() and all(c.isalnum() or c in "-_" for c in label):
+                self._labels.append((False, label))
+            else:
+                raise ValueError(f"not a host pattern: {pattern!r} (labels are names, or {{param}} for any one)")
+        self.params = [name for is_param, name in self._labels if is_param]
+        self.router, self.ws_router = Router(), Router()
+        for name, regex in constraints:
+            self.router.constraint(name, regex)
+            self.ws_router.constraint(name, regex)
+
+    def match(self, labels: list[str]) -> dict[str, str] | None:
+        """The host's parameters if `labels` (`["acme", "example", "com"]`)
+        fit the pattern, else None. A parameter takes one whole label."""
+        if len(labels) != len(self._labels):
+            return None
+        params = {}
+        for (is_param, expected), label in zip(self._labels, labels):
+            if is_param:
+                params[expected] = label
+            elif label != expected:
+                return None
+        return params
+
+
+def _host_labels(request: Request) -> list[str]:
+    """The labels of the host the request is for, from its `Host` header,
+    without the port: `"Acme.example.com:8000"` -> `["acme", "example", "com"]`."""
+    host = (request.headers.get("host") or "").lower()
+    if host.startswith("["):  # an IPv6 address
+        return [host[: host.find("]") + 1]]
+    return host.rsplit(":", 1)[0].rstrip(".").split(".")
 
 
 class App(_RouteDecorators):
@@ -436,6 +499,10 @@ class App(_RouteDecorators):
         self._ws_handlers: dict[str, WebSocketHandler] = {}
         self._plans: dict[str, Plan] = {}  # what each handler's annotations ask for
         self._ws_plans: dict[str, Plan] = {}
+        self._hosts: list[_Host] = []  # app.host() patterns, the ones without parameters first
+        # Handler name -> the host parameters its function takes (None: all,
+        # it has **kwargs). Dependencies get them all, handlers what they ask.
+        self._host_args: dict[str, frozenset[str] | None] = {}
         self._dependency_plans: dict[tuple, Plan] = {}  # (function, pattern, websocket) -> its plan
         self.dependency_overrides: dict[Callable[..., Any], Callable[..., Any]] = {}
         """`{dependency: replacement}`: the replacement is called instead,
@@ -468,6 +535,33 @@ class App(_RouteDecorators):
         `dependencies` for all of them."""
         return self._root.group(prefix, dependencies=dependencies)
 
+    def host(self, pattern: str, *, dependencies: Sequence[Any] = ()) -> AppGroup:
+        """Returns a group whose routes only answer for requests to that
+        host (its `Host` header, without the port):
+
+            api = app.host("api.example.com")
+            @api.get("/users")                      # https://api.example.com/users
+
+            tenants = app.host("{tenant}.example.com")
+            @tenants.get("/")                       # acme.example.com: tenant="acme"
+            def home(request, tenant): ...
+
+        A `{param}` takes one whole label of the host name, and reaches
+        the dependencies and handlers that take it, like a path parameter
+        (and `request.path_params`). The first pattern
+        that fits owns the request (those without parameters are tried
+        first, then in the order declared): its routes answer, and routes
+        declared without a host when it doesn't have the path; another
+        pattern's never do. Calling `host()` again with the same pattern
+        adds to the same routes."""
+        normalized = pattern.lower().rstrip(".")
+        found = next((h for h in self._hosts if h.pattern == normalized), None)
+        if found is None:
+            found = _Host(pattern, self.router.constraints())
+            self._hosts.append(found)
+            self._hosts.sort(key=lambda h: bool(h.params))  # stable: literal hosts first, in order
+        return AppGroup(self, found.router.group(), dependencies, found)
+
     def websocket(self, path: str, *, dependencies: Sequence[Any] = ()) -> Callable[[WebSocketHandler], WebSocketHandler]:
         """Decorator: registers the function as the WebSocket handler for
         `path`; it gets a `WebSocket`, the path params, and parameters and
@@ -488,14 +582,40 @@ class App(_RouteDecorators):
             self._dependency_plans[key] = plan
         return plan
 
-    def openapi(self, *, title: str = "API", version: str = "0.1.0", description: str | None = None) -> dict:
+    def openapi(
+        self, *, title: str = "API", version: str = "0.1.0", description: str | None = None, host: str | None = None
+    ) -> dict:
         """An OpenAPI 3.1 description of the app's routes: paths, typed path
         and query parameters, request and response models, and each
         handler's docstring (first line as summary). Static files and
-        WebSockets aren't included."""
+        WebSockets aren't included. With `host`, the routes that answer on
+        that host: its own (`app.host()`), then those without a host;
+        without, only those without a host."""
         from korvex import openapi
 
-        return openapi.build(self, title=title, version=version, description=description)
+        return openapi.build(self, title=title, version=version, description=description, host=host)
+
+    def _host_for(self, labels: list[str]) -> tuple[_Host, dict[str, str]] | None:
+        """The first host pattern the request's host fits, and its
+        parameters. It owns the request: only its routes, then those
+        without a host, can answer, never another host pattern's, so a
+        literal `api.example.com` isn't served `{tenant}.example.com`'s
+        routes as tenant "api"."""
+        for host in self._hosts:
+            params = host.match(labels)
+            if params is not None:
+                return host, params
+        return None
+
+    def _routes_for(self, host: str | None) -> list[tuple[str, str, str, tuple[str, ...]]]:
+        """`(pattern, method, handler, middleware)` for every route that
+        answers on `host`, in the order they'd be tried."""
+        routes = []
+        found = self._host_for(host.lower().rsplit(":", 1)[0].rstrip(".").split(".")) if host is not None else None
+        if found is not None:
+            routes += found[0].router.routes()
+        seen = {(pattern, method) for pattern, method, _, _ in routes}
+        return routes + [route for route in self.router.routes() if (route[0], route[1]) not in seen]
 
     def docs(
         self,
@@ -512,7 +632,9 @@ class App(_RouteDecorators):
         from korvex import openapi
 
         def serve_openapi(request: Request) -> Response:
-            return Response.json(self.openapi(title=title, version=version, description=description))
+            # Each host gets its own API: the routes that answer there.
+            host = request.headers.get("host") if self._hosts else None
+            return Response.json(self.openapi(title=title, version=version, description=description, host=host))
 
         self.router.route(openapi_path, "korvex.openapi")
         self._handlers["korvex.openapi"] = serve_openapi
@@ -540,6 +662,9 @@ class App(_RouteDecorators):
         annotation converts it further. Define a constraint before the
         routes that use it; it can't be redefined differently."""
         self.router.constraint(name, pattern)
+        for host in self._hosts:
+            host.router.constraint(name, pattern)
+            host.ws_router.constraint(name, pattern)
 
     def handler(self, name: str) -> Callable[[Handler], Handler]:
         """Decorator: attaches a function to a handler name already
@@ -695,18 +820,22 @@ class App(_RouteDecorators):
 
     async def _dispatch(self, request: Request) -> Response:
         """Routes the request and runs its dependencies and handler."""
-        try:
-            found = self.router.match(request.path, method=request.method)
-        except MethodNotAllowed as exc:
-            if request.method == "HEAD" and "GET" in exc.allowed:
-                found = self.router.match(request.path, method="GET")  # HEAD is GET without the body
-            else:
-                raise HTTPException(405, headers=[("Allow", ", ".join(exc.allowed))]) from None
+        found, host_params = None, None
+        host = self._host_for(_host_labels(request)) if self._hosts else None
+        if host is not None:
+            found = _match(host[0].router, request)
+            host_params = host[1] if found is not None else None  # only for the host's own routes
+        if found is None:
+            found = _match(self.router, request)
         if found is None:
             raise HTTPException(404)
 
         handler_name, path_params, middleware_names = found
-        request.path_params = path_params
+        values = path_params  # what dependencies can read: the host's parameters too
+        if host_params:
+            values = {**host_params, **path_params}
+            path_params = {**self._host_params_for(handler_name, host_params), **path_params}
+        request.path_params = values
         if middleware_names:
             # Middleware names given to app.router directly: the App runs
             # dependencies, not middleware. Refuse rather than serve the
@@ -723,11 +852,11 @@ class App(_RouteDecorators):
         if not needs_plan(plan):  # no annotations to act on: called as before, at no cost
             return await _call(handler, request, **path_params)
         if not plan.dependencies:
-            arguments = {**path_params, **await plan.bind(request, path_params, None)}
+            arguments = {**path_params, **await plan.bind(request, values, None)}
             return plan.respond(await _call(handler, request, **arguments))
         run = Run(self.dependency_overrides, self._dependency_plan)
         try:
-            arguments = {**path_params, **await plan.bind(request, path_params, run)}
+            arguments = {**path_params, **await plan.bind(request, values, run)}
             response = plan.respond(await _call(handler, request, **arguments))
         except BaseException as exc:
             await run.close(exc)  # raised at the yields; still answered as usual
@@ -738,6 +867,11 @@ class App(_RouteDecorators):
             else:
                 await run.close()
         return response
+
+    def _host_params_for(self, name: str, host_params: dict[str, str]) -> dict[str, str]:
+        """The host parameters a handler takes: those it names, or all."""
+        taken = self._host_args.get(name)
+        return host_params if taken is None else {k: v for k, v in host_params.items() if k in taken}
 
     def _plan_of(self, handler_name: str) -> Plan:
         """The handler's plan. Handlers attached with @app.handler get theirs
@@ -804,8 +938,17 @@ class App(_RouteDecorators):
         """Runs a WebSocket connection: its handler, or a refusal (403) for
         an unknown path, a before hook answering, or a dependency raising
         HTTPException. Whatever the handler leaves open gets closed."""
-        found = self._ws_router.match(scope["path"])
-        websocket = WebSocket(scope, receive, send, found[1] if found else {})
+        found, host_params = None, None
+        host = self._host_for(_host_labels(Request(scope, receive, {}))) if self._hosts else None
+        if host is not None:
+            found = host[0].ws_router.match(scope["path"])
+            host_params = host[1] if found is not None else None
+        if found is None:
+            found = self._ws_router.match(scope["path"])
+        values = found[1] if found else {}
+        if found is not None and host_params:
+            values = {**host_params, **found[1]}
+        websocket = WebSocket(scope, receive, send, values)
         if self._before_request and not await self._websocket_hooks_allow(websocket):
             await websocket.close()  # before accept: the client gets a 403
             return
@@ -813,6 +956,8 @@ class App(_RouteDecorators):
             await websocket.close()
             return
         name, path_params = found[0], found[1]
+        if host_params:
+            path_params = {**self._host_params_for(name, host_params), **path_params}
         handler = self._ws_handlers[name]
         plan = self._ws_plans.get(name)
         run = Run(self.dependency_overrides, self._dependency_plan) if plan is not None and plan.dependencies else None
@@ -820,7 +965,7 @@ class App(_RouteDecorators):
             arguments: dict[str, Any] = dict(path_params)
             if plan is not None and needs_plan(plan):
                 try:
-                    arguments.update(await plan.bind(websocket, path_params, run))
+                    arguments.update(await plan.bind(websocket, values, run))
                 except (HTTPException, Abort) as exc:  # a 422 too
                     status = exc.response.status if isinstance(exc, Abort) else exc.status
                     logger.info("WebSocket %s refused: %s", websocket.path, status)
@@ -1071,6 +1216,27 @@ def _start_task(loop: asyncio.AbstractEventLoop, coroutine: Any) -> asyncio.Task
     if _eager_task_factory is not None:
         return _eager_task_factory(loop, coroutine)
     return loop.create_task(coroutine)
+
+
+def _takes(func: Callable[..., Any], names: Iterable[str]) -> frozenset[str] | None:
+    """Which of `names` `func` takes as keyword arguments; None if it takes
+    any (`**kwargs`)."""
+    parameters = inspect.signature(func).parameters
+    if any(p.kind is p.VAR_KEYWORD for p in parameters.values()):
+        return None
+    return frozenset(name for name in names if name in parameters)
+
+
+def _match(router: Router, request: Request) -> Any:
+    """`router.match()` for the request: `None` if no route has the path; a
+    405 if routes have it, but not for this method. HEAD is GET without the
+    body."""
+    try:
+        return router.match(request.path, method=request.method)
+    except MethodNotAllowed as exc:
+        if request.method == "HEAD" and "GET" in exc.allowed:
+            return router.match(request.path, method="GET")
+        raise HTTPException(405, headers=[("Allow", ", ".join(exc.allowed))]) from None
 
 
 def _route_name(func: Callable[..., Any], taken: Mapping[str, Any]) -> str:

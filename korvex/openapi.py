@@ -44,12 +44,12 @@ def openapi_path(pattern: str) -> str:
     return _PARAM.sub(lambda m: "{" + (m.group(1) or m.group(2)) + "}", pattern)
 
 
-def build(app: App, *, title: str, version: str, description: str | None = None) -> dict[str, Any]:
+def build(app: App, *, title: str, version: str, description: str | None = None, host: str | None = None) -> dict[str, Any]:
     components: dict[str, Any] = {}
     paths: dict[str, dict[str, Any]] = {}
     used_ids: set[str] = set()
     custom = dict(app.router.constraints())  # name -> regex
-    for pattern, method, name, _ in app.router.routes():
+    for pattern, method, name, _ in app._routes_for(host):
         if name.startswith("korvex.") or name not in app._handlers:
             continue  # static files and the docs themselves; names without a handler can't be described
         func = app._handlers[name]

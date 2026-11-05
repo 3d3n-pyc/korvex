@@ -150,6 +150,14 @@ uvicorn mymodule:app
 - `app.group(prefix, dependencies=[...])` works like `router.group()`,
   with decorators: `api = app.group("/api")`, then `@api.get("/users")`.
   Groups nest; a group's dependencies run before its routes' own.
+- `app.host("api.example.com")` gives a group whose routes only answer
+  for that host (its `Host` header, port aside); `app.host("{tenant}.example.com")`
+  passes `tenant` to the dependencies and handlers that take it, like a
+  path parameter. The
+  first host pattern that fits owns the request (those without parameters
+  first): its routes answer, then the routes declared without a host,
+  which answer on every host. `/docs` documents the routes of the host
+  it's served from, and `app.openapi(host=...)` those of any host.
 - Routes registered on `app.router` directly are linked to a function
   with `@app.handler("name")`. The App doesn't run the router's middleware
   names: a route that has some answers a 500, rather than run without
