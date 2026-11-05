@@ -645,19 +645,23 @@ class App(_RouteDecorators):
 
         response = await self._respond(scope, receive)
         head = scope["method"] == "HEAD"
+        if isinstance(response, StreamingResponse):
+            await self._send_stream(response, send, head, scope["path"])
+            return
+        await send({"type": "http.response.start", "status": response.status, "headers": _raw_headers(response, head)})
+        # HEAD: same headers as GET, no body.
+        await send({"type": "http.response.body", "body": b"" if head else response.body})
+
+    @staticmethod
+    async def _send_stream(response: StreamingResponse, send: Callable, head: bool, path: str) -> None:
         try:
             await send({"type": "http.response.start", "status": response.status, "headers": _raw_headers(response, head)})
-            if head:  # same headers as GET, no body
-                await send({"type": "http.response.body", "body": b""})
-            elif isinstance(response, StreamingResponse):
+            if not head:
                 async for chunk in response:
                     await send({"type": "http.response.body", "body": chunk, "more_body": True})
-                await send({"type": "http.response.body", "body": b""})
-            else:
-                await send({"type": "http.response.body", "body": response.body})
+            await send({"type": "http.response.body", "body": b""})
         finally:
-            if isinstance(response, StreamingResponse):
-                await _finish(response, scope["path"])
+            await _finish(response, path)  # sent or not, what waited for it runs
 
     async def _respond(self, scope: dict, receive: Callable) -> Response:
         """The response to one request: before hooks, then the route (its

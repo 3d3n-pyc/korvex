@@ -372,3 +372,28 @@ def test_a_websocket_has_no_body():
         @app.websocket("/ws")
         async def ws(ws: WebSocket, body: Body):
             pass
+
+
+def test_a_dependency_must_yield_exactly_once(caplog):
+    app = App()
+
+    def twice():
+        yield 1
+        yield 2
+
+    async def never():
+        if False:
+            yield
+
+    @app.get("/twice")
+    def a(request, _: int = Depends(twice)):
+        return Response.text("ok")
+
+    @app.get("/never")
+    def b(request, _: None = Depends(never)):
+        return Response.text("ok")
+
+    assert call(app, "/twice")[0] == 500
+    assert "yielded more than once" in caplog.text
+    assert call(app, "/never")[0] == 500
+    assert "didn't yield" in caplog.text

@@ -17,7 +17,6 @@ optional: Korvex depends on neither, and uses whichever a model comes from.
 
 from __future__ import annotations
 
-import contextlib
 import datetime
 import inspect
 import re
@@ -200,6 +199,13 @@ class Param(NamedTuple):
     required: bool
     default: Any = None
     key: str = ""  # its name in the request: path or query parameter, header, cookie, form field
+    inner: Any = None  # the type of each value: `int` for `Optional[int]` or `list[int]`
+    many: bool = False  # a list
+
+
+def _param(name: str, source: str, tp: Any, required: bool, default: Any = None, key: str = "") -> Param:
+    inner, many, _ = _unwrap(tp) if tp is not None else (None, False, False)
+    return Param(name, source, tp, required, default, key, inner, many)
 
 
 class Dep(NamedTuple):
@@ -249,13 +255,14 @@ class Plan:
         self.response = response
         self.summary = summary
         self.description = description
-        # How a dependency gives its value: returned, or yielded by a generator.
-        self.context: Callable | None = None
+        # How a dependency gives its value: returned (awaited for a coroutine
+        # function), or yielded by a generator.
         self.generator: str | None = None
-        if _is_generator(func, inspect.isasyncgenfunction):
-            self.generator, self.context = "async", contextlib.asynccontextmanager(func)
-        elif _is_generator(func, inspect.isgeneratorfunction):
-            self.generator, self.context = "sync", contextlib.contextmanager(func)
+        if _is_kind(func, inspect.isasyncgenfunction):
+            self.generator = "async"
+        elif _is_kind(func, inspect.isgeneratorfunction):
+            self.generator = "sync"
+        self.coroutine = _is_kind(func, inspect.iscoroutinefunction)
 
     @property
     def validates(self) -> bool:
@@ -264,7 +271,7 @@ class Plan:
 
         def can_fail(p: Param) -> bool:
             if p.source == "path":
-                return _unwrap(p.type)[0] not in (str, given.get(p.key))
+                return p.inner not in (str, given.get(p.key))
             return p.source != "request"
 
         return any(map(can_fail, self.params)) or any(dep.plan.validates for dep in self.dependencies)
@@ -289,35 +296,40 @@ class Plan:
         problem."""
         kwargs: dict[str, Any] = {}
         errors: list[dict] = []
-        for dep in self.dependencies:
+        # Each source checked before looping: most plans use one or two, and
+        # this runs on every request.
+        if self.dependencies:
             assert run is not None  # a plan with dependencies always gets one
-            try:
-                value = await run.resolve(dep, request, path_values)
-            except ValidationError as error:  # its own parameters didn't validate
-                errors.extend(error.errors)
-                continue
-            if dep.name is not None:
-                kwargs[dep.name] = value
-        for param in self.path:
-            value = path_values[param.name]
-            inner, _, _ = _unwrap(param.type)
-            try:
-                kwargs[param.name] = value if isinstance(value, inner) else _convert(str(value), inner)
-            except (ValueError, TypeError):
-                errors.append(_invalid(param, inner))
-        for param in self.query:
-            _take(param, request.query_params.get(param.key), kwargs, errors)
-        for param in self.headers:
-            _take(param, request.headers.get_all(param.key), kwargs, errors, first=True)
-        for param in self.cookies:
-            cookie = request.cookies.get(param.key)
-            _take(param, None if cookie is None else [cookie], kwargs, errors)
+            for dep in self.dependencies:
+                try:
+                    value = await run.resolve(dep, request, path_values)
+                except ValidationError as error:  # its own parameters didn't validate
+                    errors.extend(error.errors)
+                    continue
+                if dep.name is not None:
+                    kwargs[dep.name] = value
+        if self.path:
+            for param in self.path:
+                value = path_values[param.name]
+                try:
+                    kwargs[param.name] = value if isinstance(value, param.inner) else _convert(str(value), param.inner)
+                except (ValueError, TypeError):
+                    errors.append(_invalid(param))
+        if self.query:
+            for param in self.query:
+                _take(param, request.query_params.get(param.key), kwargs, errors)
+        if self.headers:
+            for param in self.headers:
+                _take(param, request.headers.get_all(param.key), kwargs, errors, first=True)
+        if self.cookies:
+            for param in self.cookies:
+                cookie = request.cookies.get(param.key)
+                _take(param, None if cookie is None else [cookie], kwargs, errors)
         if self.form:
             form = await _read_form(request)
             for param in self.form:
-                inner, _, _ = _unwrap(param.type)
                 values = form.get(param.key) or []
-                if inner is not str and inner is not _UPLOADED_FILE:
+                if param.inner is not str and param.inner is not _UPLOADED_FILE:
                     values = [v for v in values if v != ""]  # an empty field: not given
                 _take(param, values, kwargs, errors)
         if self.body is not None and self.body_model is not None:
@@ -329,8 +341,9 @@ class Plan:
                     kwargs[self.body.name] = self.body_model.decode(raw)
                 except ValidationError as error:
                     errors.extend(error.errors)
-        for name in self.request:
-            kwargs[name] = request
+        if self.request:
+            for name in self.request:
+                kwargs[name] = request
         if errors:
             raise ValidationError(_unique(errors))
         return kwargs
@@ -346,31 +359,30 @@ class Run:
     """One request's dependencies: their values, called once each unless
     `cache=False`, and the teardown of those that yield."""
 
-    __slots__ = ("overrides", "plans", "values", "stack")
+    __slots__ = ("overrides", "plans", "values", "teardowns")
 
     def __init__(self, overrides: Mapping[Callable, Callable], plans: Callable[[Callable, str, bool], Plan]) -> None:
         self.overrides = overrides
         self.plans = plans  # the plan of an override, worked out on first use
         self.values: dict[Callable, Any] = {}
-        self.stack: contextlib.AsyncExitStack | None = None
+        self.teardowns: list[tuple[Any, bool]] = []  # (generator, is async), in the order they started
 
     async def resolve(self, dep: Dep, request: Any, path_values: Mapping[str, Any]) -> Any:
         func = self.overrides.get(dep.func, dep.func) if self.overrides else dep.func
         if dep.cache and func in self.values:
             return self.values[func]
         plan = dep.plan if func is dep.func else self.plans(func, dep.plan.pattern, dep.plan.websocket)
-        kwargs = await plan.bind(request, path_values, self)
-        if plan.context is None:
-            value = func(**kwargs)
-            if inspect.isawaitable(value):
-                value = await value
+        kwargs = await plan.bind(request, path_values, self) if plan.params or plan.dependencies else {}
+        if plan.generator is None:
+            value = await func(**kwargs) if plan.coroutine else func(**kwargs)
         else:
-            if self.stack is None:
-                self.stack = contextlib.AsyncExitStack()
-            if plan.generator == "async":
-                value = await self.stack.enter_async_context(plan.context(**kwargs))
-            else:
-                value = self.stack.enter_context(plan.context(**kwargs))
+            generator = func(**kwargs)
+            is_async = plan.generator == "async"
+            try:
+                value = await generator.__anext__() if is_async else next(generator)
+            except (StopIteration, StopAsyncIteration):
+                raise RuntimeError(f"dependency {getattr(func, '__qualname__', func)!r} didn't yield") from None
+            self.teardowns.append((generator, is_async))
         if dep.cache:
             self.values[func] = value
         return value
@@ -378,19 +390,34 @@ class Run:
     @property
     def open(self) -> bool:
         """Whether some dependencies wait for their teardown."""
-        return self.stack is not None
+        return bool(self.teardowns)
 
     async def close(self, error: BaseException | None = None) -> None:
         """Tears down the dependencies that yielded, last first. `error`, if
-        given, is raised at their `yield`; it isn't swallowed even if they
-        catch it. An error raised by a teardown itself propagates."""
-        stack, self.stack = self.stack, None
-        if stack is None:
-            return
-        if error is None:
-            await stack.aclose()
-        else:
-            await stack.__aexit__(type(error), error, error.__traceback__)
+        given, is raised at their `yield`, and isn't swallowed even if they
+        catch it: the caller raises it on. An error raised by a teardown
+        itself is raised from here, after the other teardowns ran."""
+        teardowns, self.teardowns = self.teardowns, []
+        raised = error
+        for generator, is_async in reversed(teardowns):
+            try:
+                if raised is None:
+                    await generator.__anext__() if is_async else next(generator)
+                else:
+                    await generator.athrow(raised) if is_async else generator.throw(raised)
+            except (StopIteration, StopAsyncIteration):
+                continue  # done
+            except BaseException as new:
+                if new is not raised:
+                    if new.__context__ is None and raised is not None:
+                        new.__context__ = raised
+                    raised = new
+                continue
+            name = getattr(generator, "__qualname__", generator)
+            await generator.aclose() if is_async else generator.close()
+            raised = RuntimeError(f"dependency {name!r} yielded more than once")
+        if raised is not None and raised is not error:
+            raise raised
 
 
 _UPLOADED_FILE: Any = None  # korvex.app.UploadedFile, set by plan_for (app.py imports this module)
@@ -404,14 +431,13 @@ def _take(param: Param, values: list | None, kwargs: dict, errors: list, first: 
         else:
             kwargs[param.name] = param.default
         return
-    inner, is_list, _ = _unwrap(param.type)
     try:
-        if is_list:
-            kwargs[param.name] = [_convert_field(v, inner) for v in values]
+        if param.many:
+            kwargs[param.name] = [_convert_field(v, param.inner) for v in values]
         else:
-            kwargs[param.name] = _convert_field(values[0] if first else values[-1], inner)
+            kwargs[param.name] = _convert_field(values[0] if first else values[-1], param.inner)
     except (ValueError, TypeError):
-        errors.append(_invalid(param, inner))
+        errors.append(_invalid(param))
 
 
 def _convert_field(value: Any, tp: Any) -> Any:
@@ -425,8 +451,8 @@ def _convert_field(value: Any, tp: Any) -> Any:
     return _convert(value, tp)
 
 
-def _invalid(param: Param, inner: Any) -> dict:
-    name = "file" if inner is _UPLOADED_FILE else _TYPE_NAMES.get(inner, inner)
+def _invalid(param: Param) -> dict:
+    name = "file" if param.inner is _UPLOADED_FILE else _TYPE_NAMES.get(param.inner, param.inner)
     return _error([param.source, param.key], f"Input should be a valid {name}", "type_error")
 
 
@@ -450,7 +476,7 @@ def _unique(errors: list[dict]) -> list[dict]:
     return unique
 
 
-def _is_generator(func: Callable, test: Callable[[Any], bool]) -> bool:
+def _is_kind(func: Callable, test: Callable[[Any], bool]) -> bool:
     return test(func) or (not inspect.isfunction(func) and test(getattr(func, "__call__", None)))
 
 
@@ -554,27 +580,27 @@ def plan_for(
             if marker.kind == "form" and websocket:
                 raise TypeError(f"{where}: parameter {name!r}: a WebSocket has no form")
             key = marker.alias or (name.replace("_", "-") if marker.kind == "header" else name)
-            params.append(Param(name, marker.kind, tp, required, default, key))
+            params.append(_param(name, marker.kind, tp, required, default, key))
         elif inspect.isclass(inner) and issubclass(inner, Request):
             if issubclass(inner, WebSocket) and not websocket:
                 raise TypeError(f"{where}: parameter {name!r} asks for a WebSocket in an HTTP route")
-            params.append(Param(name, "request", tp, True, key=name))
+            params.append(_param(name, "request", tp, True, key=name))
         elif tp is None and name == "request" and not handler and not has_default:
-            params.append(Param(name, "request", None, True, key=name))
+            params.append(_param(name, "request", None, True, key=name))
         elif name in route_params:
             if tp is not None and inner not in SCALARS:
                 raise TypeError(f"{where}: path parameter {name!r} can't be {tp!r}; use one of {_names(SCALARS)}")
             given = route_params[name]
             # A handler gets the path values anyway; it only needs the ones to convert.
             if not handler or (tp is not None and inner is not given and inner is not str):
-                params.append(Param(name, "path", tp if tp is not None else given, True, key=name))
+                params.append(_param(name, "path", tp if tp is not None else given, True, key=name))
         elif tp is not None and (_library(tp) is not None or (optional and _library(inner))):
             if websocket:
                 raise TypeError(f"{where}: parameter {name!r}: a WebSocket has no request body")
             body_type = tp if _library(tp) else inner
-            params.append(Param(name, "body", body_type, required, default, key="body"))
+            params.append(_param(name, "body", body_type, required, default, key="body"))
         elif tp is not None and inner in SCALARS:
-            params.append(Param(name, "query", tp, required, default, key=name))
+            params.append(_param(name, "query", tp, required, default, key=name))
         elif tp is not None or not has_default:
             # An annotated parameter is refused even with a default: silently
             # ignored, it would always get that default.
