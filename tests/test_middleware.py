@@ -4,6 +4,8 @@ import asyncio
 import logging
 import re
 
+import pytest
+
 from test_app import make_scope, response_from, run_app
 
 from korvex import App, HTTPException, Response
@@ -256,3 +258,153 @@ def test_rate_limit_rejects_nonsense_settings():
 def test_requests_with_an_unknown_address_share_one_limit_instead_of_escaping_it():
     app = limited_app(Clock())  # the test requests carry no client address
     assert [call(app, "GET", "/")[0] for _ in range(4)][-1] == 429
+
+
+# --- compress() ---
+
+
+def compress_app(**options):
+    from korvex.middleware import compress
+
+    app = App()
+    compress(app, **options)
+
+    @app.get("/big")
+    def big(request):
+        return Response.text("hello " * 200)
+
+    @app.get("/small")
+    def small(request):
+        return Response.text("hi")
+
+    @app.get("/png")
+    def png(request):
+        return Response(b"\x89PNG" + b"x" * 2000, headers=[("Content-Type", "image/png")])
+
+    @app.get("/stream")
+    def stream(request):
+        return Response.stream((f"line {n}\n" for n in range(100)), headers=[("Content-Type", "text/plain")])
+
+    @app.get("/already")
+    def already(request):
+        return Response(b"x" * 2000, headers=[("Content-Type", "text/plain"), ("Content-Encoding", "gzip")])
+
+    @app.get("/no-transform")
+    def no_transform(request):
+        return Response.text("hello " * 200, headers=[("Cache-Control", "no-transform")])
+
+    return app
+
+
+def get_with(app, path, accept=None):
+    headers = [("Accept-Encoding", accept)] if accept is not None else []
+    status, headers, body = response_from(run_app(app, make_scope("GET", path, headers=headers)))
+    return status, {k.lower(): v for k, v in headers}, body
+
+
+def test_compress_picks_the_best_encoding_the_client_takes():
+    import gzip
+    import zlib
+
+    app = compress_app()
+    _, headers, body = get_with(app, "/big", "gzip, deflate")
+    assert headers["content-encoding"] == "gzip" and headers["vary"] == "Accept-Encoding"
+    assert gzip.decompress(body) == b"hello " * 200 and len(body) < 100
+    brotli = pytest.importorskip("brotli")
+    _, headers, body = get_with(app, "/big", "gzip;q=0.5, br")
+    assert headers["content-encoding"] == "br" and brotli.decompress(body) == b"hello " * 200
+    _, headers, _ = get_with(app, "/big", "br;q=0, gzip")  # refused explicitly
+    assert headers["content-encoding"] == "gzip"
+    _, headers, body = get_with(app, "/big", "*")
+    assert headers["content-encoding"] in ("zstd", "br")
+    assert zlib  # gzip itself is checked above
+
+
+def test_compress_leaves_some_responses_alone():
+    app = compress_app()
+    assert "content-encoding" not in get_with(app, "/big")[1]  # no Accept-Encoding
+    assert "content-encoding" not in get_with(app, "/big", "identity")[1]
+    assert get_with(app, "/big", "gzip;q=0")[2] == b"hello " * 200
+    assert "content-encoding" not in get_with(app, "/small", "gzip")[1]  # too small
+    assert "content-encoding" not in get_with(app, "/png", "gzip")[1]  # compressed already
+    assert get_with(app, "/already", "br")[1]["content-encoding"] == "gzip"  # left as the handler set it
+    assert "content-encoding" not in get_with(app, "/no-transform", "gzip")[1]
+    assert "vary" not in get_with(app, "/small", "gzip")[1]  # never compressed: doesn't depend on it
+    assert get_with(app, "/big")[1]["vary"] == "Accept-Encoding"  # not compressed for this client, still depends on it
+
+
+def test_compress_streams_piece_by_piece():
+    import zlib
+
+    app = compress_app()
+    sent = run_app(app, make_scope("GET", "/stream", headers=[("Accept-Encoding", "gzip")]))
+    pieces = [m["body"] for m in sent if m["type"] == "http.response.body" and m["body"]]
+    assert len(pieces) > 50  # each line flushed on its own, not held back
+    decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    first = decompressor.decompress(pieces[0])
+    assert first == b"line 0\n"  # readable as soon as it arrives
+    rest = b"".join(decompressor.decompress(p) for p in pieces[1:]) + decompressor.flush()
+    assert first + rest == b"".join(f"line {n}\n".encode() for n in range(100))
+
+
+def test_compress_zstd_on_python_3_14():
+    zstd = pytest.importorskip("compression.zstd")
+    app = compress_app(encodings=["zstd"])
+    _, headers, body = get_with(app, "/big", "zstd")
+    assert headers["content-encoding"] == "zstd" and zstd.decompress(body) == b"hello " * 200
+
+
+def test_compress_rejects_unknown_encodings():
+    from korvex.middleware import compress
+
+    with pytest.raises(ValueError, match="unknown encodings"):
+        compress(App(), encodings=["deflate"])
+
+
+# --- security_headers() ---
+
+
+def test_security_headers_defaults_and_overrides():
+    from korvex.middleware import security_headers
+
+    app = App()
+    security_headers(app, content_security_policy="default-src 'self'")
+
+    @app.get("/")
+    def home(request):
+        return Response.text("home")
+
+    @app.get("/embeddable")
+    def embeddable(request):
+        return Response.text("widget", headers=[("X-Frame-Options", "SAMEORIGIN")])
+
+    def headers_of(path, scheme="http"):
+        scope = {**make_scope("GET", path), "scheme": scheme}
+        return {k.lower(): v for k, v in response_from(run_app(app, scope))[1]}
+
+    plain = headers_of("/")
+    assert plain["x-frame-options"] == "DENY" and plain["x-content-type-options"] == "nosniff"
+    assert plain["referrer-policy"] == "strict-origin-when-cross-origin"
+    assert plain["cross-origin-opener-policy"] == "same-origin"
+    assert plain["content-security-policy"] == "default-src 'self'"
+    assert "strict-transport-security" not in plain  # not over HTTP: browsers ignore it there
+    assert headers_of("/", "https")["strict-transport-security"] == "max-age=31536000"
+    assert headers_of("/embeddable")["x-frame-options"] == "SAMEORIGIN"  # the response's own wins
+    assert headers_of("/missing")["x-frame-options"] == "DENY"  # errors too
+
+
+def test_security_headers_can_be_left_out():
+    from korvex.middleware import security_headers
+
+    app = App()
+    security_headers(app, hsts=600, hsts_subdomains=True, hsts_preload=True, frame_options=None, referrer_policy=None)
+
+    @app.get("/")
+    def home(request):
+        return Response.text("home")
+
+    headers = {k.lower(): v for k, v in response_from(run_app(app, {**make_scope("GET", "/"), "scheme": "https"}))[1]}
+    assert headers["strict-transport-security"] == "max-age=600; includeSubDomains; preload"
+    assert "x-frame-options" not in headers and "referrer-policy" not in headers
+    with pytest.raises(ValueError):
+        security_headers(App(), hsts=-1)

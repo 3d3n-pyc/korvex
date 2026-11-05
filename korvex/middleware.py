@@ -13,7 +13,7 @@ import math
 import re
 import time
 import uuid
-from collections.abc import Callable, Hashable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Hashable, Sequence
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, NamedTuple, Optional, Protocol
 
@@ -256,3 +256,246 @@ def rate_limit(
                 response.headers.set("RateLimit-Limit", str(requests))
                 response.headers.set("RateLimit-Remaining", str(decision.remaining))
                 response.headers.set("RateLimit-Reset", str(math.ceil(decision.reset)))
+
+
+# --- compression ---
+
+# Text-like content worth compressing; images, video, archives and fonts
+# (woff2) are compressed already.
+COMPRESSIBLE = (
+    "text/",
+    "application/json",
+    "application/javascript",
+    "application/xml",
+    "application/x-ndjson",
+    "application/wasm",
+    "image/svg+xml",
+    "+json",
+    "+xml",
+)
+
+
+class _Encoder:
+    """One content encoding: whole bodies at once, or a stream piece by
+    piece (each piece flushed, so a streamed response isn't held back)."""
+
+    def __init__(self, name: str, whole: Callable[[bytes], bytes], stream: Callable[[], tuple[Callable, Callable]]) -> None:
+        self.name = name
+        self.whole = whole
+        self.stream = stream  # -> (compress_and_flush(piece), finish())
+
+
+def _gzip(level: int) -> _Encoder:
+    import zlib
+
+    def whole(data: bytes) -> bytes:
+        compressor = zlib.compressobj(level, zlib.DEFLATED, 16 + zlib.MAX_WBITS)  # 16+: a gzip header
+        return compressor.compress(data) + compressor.flush()
+
+    def stream() -> tuple[Callable, Callable]:
+        compressor = zlib.compressobj(level, zlib.DEFLATED, 16 + zlib.MAX_WBITS)
+        return (lambda piece: compressor.compress(piece) + compressor.flush(zlib.Z_SYNC_FLUSH)), compressor.flush
+
+    return _Encoder("gzip", whole, stream)
+
+
+def _brotli(level: int) -> _Encoder | None:
+    try:
+        import brotli  # type: ignore[import-not-found]
+    except ImportError:
+        return None
+
+    def stream() -> tuple[Callable, Callable]:
+        compressor = brotli.Compressor(quality=level)
+        return (lambda piece: compressor.process(piece) + compressor.flush()), compressor.finish
+
+    return _Encoder("br", lambda data: brotli.compress(data, quality=level), stream)
+
+
+def _zstd(level: int) -> _Encoder | None:
+    try:
+        from compression import zstd  # type: ignore[import-not-found]  # Python 3.14+
+    except ImportError:
+        return None
+
+    def stream() -> tuple[Callable, Callable]:
+        compressor = zstd.ZstdCompressor(level=level)
+        return (
+            lambda piece: compressor.compress(piece, zstd.ZstdCompressor.FLUSH_BLOCK),
+            lambda: compressor.flush(zstd.ZstdCompressor.FLUSH_FRAME),
+        )
+
+    return _Encoder("zstd", lambda data: zstd.compress(data, level=level), stream)
+
+
+def _accepted(header: str) -> dict[str, float]:
+    """`Accept-Encoding: gzip, br;q=0.8, *;q=0` -> `{"gzip": 1.0, "br": 0.8, "*": 0.0}`."""
+    accepted: dict[str, float] = {}
+    for item in header.split(","):
+        name, _, params = item.strip().partition(";")
+        if not name:
+            continue
+        q = 1.0
+        key, _, value = params.strip().partition("=")
+        if key.strip().lower() == "q":
+            try:
+                q = float(value)
+            except ValueError:
+                q = 0.0
+        accepted[name.strip().lower()] = q
+    return accepted
+
+
+def compress(
+    app: App,
+    *,
+    minimum_size: int = 500,
+    encodings: Sequence[str] = ("zstd", "br", "gzip"),
+    levels: dict[str, int] | None = None,
+    content_types: Sequence[str] = COMPRESSIBLE,
+) -> None:
+    """Compresses responses for clients that accept it, for deployments
+    without a proxy to do it.
+
+    - `encodings`: in order of preference, among those the client accepts
+      (`Accept-Encoding`). `gzip` always works; `br` needs the `brotli`
+      package (`pip install korvex[brotli]`), `zstd` Python 3.14 or later.
+      Those not available are skipped.
+    - `minimum_size`: smaller bodies are sent as they are (compressing them
+      gains little). Streamed responses are compressed whatever their size,
+      each piece flushed as it goes, so a live stream isn't held back.
+    - `levels`: per encoding (`{"gzip": 9}`); the defaults trade a little
+      size for speed: gzip 6, brotli 4, zstd 3.
+    - `content_types`: what's worth compressing: prefixes like `text/`, or
+      suffixes like `+json`.
+
+    Responses that already have a `Content-Encoding`, ask for no change
+    (`Cache-Control: no-transform`), or carry no body (204, 304) are left
+    alone. Compressed responses get `Vary: Accept-Encoding`.
+
+    Call it before the other hooks: after hooks run last-declared first,
+    so it then sees each response once the others have changed it.
+
+    Mind BREACH: compressing a response that contains both a secret (a
+    CSRF token) and something the client sent lets an attacker guess the
+    secret, over HTTPS too. Don't compress such pages, or change the
+    secret on every response.
+    """
+    chosen = {**{"gzip": 6, "br": 4, "zstd": 3}, **(levels or {})}
+    makers = {"gzip": _gzip, "br": _brotli, "zstd": _zstd}
+    unknown = [name for name in encodings if name not in makers]
+    if unknown:
+        raise ValueError(f"unknown encodings {unknown}: use zstd, br or gzip")
+    available = [encoder for name in encodings if (encoder := makers[name](chosen[name])) is not None]
+    prefixes = tuple(t for t in content_types if not t.startswith("+"))
+    suffixes = tuple(t for t in content_types if t.startswith("+"))
+
+    def pick(request: Request) -> _Encoder | None:
+        accepted = _accepted(request.headers.get("accept-encoding") or "")
+        anything = accepted.get("*", 0.0) > 0
+        best, best_q = None, 0.0
+        for encoder in available:  # in our order of preference, at the client's best q
+            q = accepted.get(encoder.name, accepted.get("*", 0.0) if anything else 0.0)
+            if q > best_q:
+                best, best_q = encoder, q
+        return best
+
+    @app.after_request
+    def compress_response(request: Request, response: Response) -> None:
+        from korvex.response import StreamingResponse
+
+        if response.status in (204, 304) or response.status < 200 or "Content-Encoding" in response.headers:
+            return
+        if "no-transform" in (response.headers.get("cache-control") or "").lower():
+            return
+        content_type = (response.headers.get("content-type") or "").split(";")[0].strip().lower()
+        if not (content_type.startswith(prefixes) or content_type.endswith(suffixes)):
+            return
+        streamed = isinstance(response, StreamingResponse)
+        if not streamed and len(response.body) < minimum_size:
+            return
+        encoder = pick(request)
+        # The answer depends on Accept-Encoding even when it's not compressed.
+        if "accept-encoding" not in (", ".join(response.headers.get_all("vary"))).lower():
+            response.headers.add("Vary", "Accept-Encoding")
+        if encoder is None:
+            return
+        response.headers.set("Content-Encoding", encoder.name)
+        response.headers.remove("Content-Length")  # the length changes
+        if isinstance(response, StreamingResponse):
+            response.chunks = _compressed(StreamingResponse(response.chunks), encoder)
+        else:
+            response.body = encoder.whole(response.body)
+
+
+async def _compressed(source: AsyncIterable[bytes], encoder: _Encoder) -> AsyncIterator[bytes]:
+    """`source`'s chunks, compressed piece by piece."""
+    piece, finish = encoder.stream()
+    async for chunk in source:
+        out = piece(chunk)
+        if out:
+            yield out
+    yield finish()
+
+
+# --- security headers ---
+
+
+def security_headers(
+    app: App,
+    *,
+    hsts: int | None = 31_536_000,
+    hsts_subdomains: bool = False,
+    hsts_preload: bool = False,
+    content_security_policy: str | None = None,
+    frame_options: str | None = "DENY",
+    content_type_options: bool = True,
+    referrer_policy: str | None = "strict-origin-when-cross-origin",
+    cross_origin_opener_policy: str | None = "same-origin",
+    permissions_policy: str | None = None,
+) -> None:
+    """Adds the usual security headers to every response, for deployments
+    without a proxy to do it. A response that sets one itself keeps its own.
+
+    - `hsts`: `Strict-Transport-Security` with this `max-age` (one year by
+      default), so browsers stick to HTTPS. Only on HTTPS requests
+      (`request.scheme`, which a trusted proxy sets): browsers ignore it
+      over HTTP. `hsts_subdomains` and `hsts_preload` add those directives;
+      only use them once every subdomain serves HTTPS.
+    - `content_security_policy`: off by default, since the right policy
+      depends on the pages: `"default-src 'self'"` is a strict start.
+      `/docs` (Swagger UI) loads its script and style from
+      cdn.jsdelivr.net, which a strict policy blocks.
+    - `frame_options`: `X-Frame-Options`, `DENY` so other sites can't put
+      the pages in a frame (clickjacking); `SAMEORIGIN` to allow your own.
+    - `content_type_options`: `X-Content-Type-Options: nosniff`, so
+      browsers trust `Content-Type` instead of guessing.
+    - `referrer_policy`, `cross_origin_opener_policy`, `permissions_policy`:
+      those headers, `None` to leave one out.
+    """
+    always = []
+    if frame_options:
+        always.append(("X-Frame-Options", frame_options))
+    if content_type_options:
+        always.append(("X-Content-Type-Options", "nosniff"))
+    if referrer_policy:
+        always.append(("Referrer-Policy", referrer_policy))
+    if cross_origin_opener_policy:
+        always.append(("Cross-Origin-Opener-Policy", cross_origin_opener_policy))
+    if content_security_policy:
+        always.append(("Content-Security-Policy", content_security_policy))
+    if permissions_policy:
+        always.append(("Permissions-Policy", permissions_policy))
+    transport = None
+    if hsts is not None:
+        if hsts < 0:
+            raise ValueError("hsts is a max-age in seconds, or None")
+        transport = f"max-age={hsts}" + ("; includeSubDomains" if hsts_subdomains else "") + ("; preload" if hsts_preload else "")
+
+    @app.after_request
+    def add_security_headers(request: Request, response: Response) -> None:
+        for name, value in always:
+            if name not in response.headers:
+                response.headers.set(name, value)
+        if transport is not None and request.scheme == "https" and "Strict-Transport-Security" not in response.headers:
+            response.headers.set("Strict-Transport-Security", transport)

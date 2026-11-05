@@ -44,6 +44,11 @@ class Headers:
         self._items = [(n, v) for n, v in self._items if n.lower() != key]
         self._items.append((name, value))
 
+    def remove(self, name: str) -> None:
+        """Removes every value for `name`."""
+        key = name.lower()
+        self._items = [(n, v) for n, v in self._items if n.lower() != key]
+
     def add(self, name: str, value: str) -> None:
         """Adds a value for `name`, keeping existing ones."""
         self._items.append((name, value))
