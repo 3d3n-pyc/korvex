@@ -40,6 +40,7 @@ use tokio::net::{TcpListener, UnixListener};
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::method::Method;
+use crate::path::Constraints;
 use crate::proxy::{Trusted, resolve};
 use crate::tree::{Node, Outcome};
 use crate::websocket::{self, Incoming, Opening};
@@ -226,7 +227,8 @@ impl Server {
     /// sets a route's own; clients get `timeout` seconds to send the
     /// headers, then the body. Forwarding headers are believed from the
     /// `trusted` proxy addresses (`"*"` for all) and Unix sockets, the
-    /// forwarded host only with `forwarded_host`. Open WebSocket
+    /// forwarded host only with `forwarded_host`. `constraints` are the
+    /// app's own, as `(name, pattern)`, for the patterns of `body_limits`. Open WebSocket
     /// connections get a ping every `ws_ping_interval` seconds (0: never),
     /// and are closed if the client stays silent until the next one.
     #[new]
@@ -241,14 +243,21 @@ impl Server {
         trusted: Vec<String>,
         ws_ping_interval: f64,
         forwarded_host: bool,
+        constraints: Vec<(String, String)>,
     ) -> PyResult<Self> {
+        let mut defined = Constraints::default();
+        for (name, pattern) in &constraints {
+            defined
+                .define(name, pattern)
+                .map_err(PyValueError::new_err)?;
+        }
         let trusted = Trusted::parse(&trusted, forwarded_host).map_err(PyValueError::new_err)?;
         let mut limits = Node::default();
         for (method, pattern, bytes) in body_limits {
             let parsed = Method::parse(&method)
                 .ok_or_else(|| PyValueError::new_err(format!("unknown HTTP method: {method:?}")))?;
             limits
-                .insert(&pattern, parsed, bytes)
+                .insert_with(&pattern, parsed, bytes, &defined)
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
         }
         if !(timeout.is_finite() && timeout > 0.0) {

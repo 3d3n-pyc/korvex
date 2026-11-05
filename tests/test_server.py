@@ -297,6 +297,7 @@ def test_a_route_can_raise_its_limit(strict_server):
     assert fetch(f"{base}/upload", method="POST", data=b"x" * 50_000)[2] == b"50000"
     assert fetch(f"{base}/api/import", method="POST", data=b"x" * 50_000)[2] == b"50000"  # in a group
     assert chunked_post(strict_server, "/upload", [b"x" * 30_000] * 2) == (200, b"60000")
+    assert fetch(f"{base}/notes/hello", method="POST", data=b"x" * 50_000)[2] == b"hello: 50000"  # custom constraint
 
 
 def test_slow_headers_get_the_connection_closed(strict_server):

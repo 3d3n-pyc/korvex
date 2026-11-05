@@ -2,10 +2,13 @@
 //!
 //! A pattern is a path whose segments may be:
 //! - a literal: `users`
-//! - a parameter: `{id}`, optionally constrained: `{id:int}`, `{id:uuid}`
+//! - a parameter: `{id}`, optionally constrained: `{id:int}`, `{id:uuid}`,
+//!   or by a constraint the app defined: `{post:slug}`
 //! - a wildcard, as the last segment only: `*filepath`
 
 use std::fmt;
+
+use regex::Regex;
 
 /// Iterates over the non-empty segments of a path:
 /// `"/users//42/"` yields `"users"`, then `"42"`.
@@ -52,6 +55,9 @@ pub enum Constraint {
     Int,
     /// A UUID, `8-4-4-4-12` hex digits: `{id:uuid}`.
     Uuid,
+    /// One the app defined (`Constraints::define`), by its index there.
+    /// Matching it takes its regex, kept in the tree next to the parameter.
+    Custom(u16),
 }
 
 impl Constraint {
@@ -64,21 +70,103 @@ impl Constraint {
         }
     }
 
+    /// Whether `value` fits a built-in constraint. A custom one is matched
+    /// with its regex instead (see `Constraints::regex`).
     pub fn matches(self, value: &str) -> bool {
         match self {
             Self::Any => true,
             Self::Int => value.parse::<i64>().is_ok(),
             Self::Uuid => is_uuid(value),
+            Self::Custom(_) => false,
         }
     }
 
     /// Renders a parameter back to pattern syntax, e.g. `{id:int}`.
-    pub fn format(self, name: &str) -> String {
+    pub fn format(self, name: &str, constraints: &Constraints) -> String {
         match self {
             Self::Any => format!("{{{name}}}"),
             Self::Int => format!("{{{name}:int}}"),
             Self::Uuid => format!("{{{name}:uuid}}"),
+            Self::Custom(index) => {
+                format!("{{{name}:{}}}", constraints.custom[usize::from(index)].name)
+            }
         }
+    }
+}
+
+/// A constraint defined by the app: a name and the regex a value must
+/// match entirely.
+#[derive(Debug, Clone)]
+struct Custom {
+    name: String,
+    pattern: String,
+    regex: Regex,
+}
+
+/// The constraints an app defined, beyond `int`, `uuid` and `str`. They
+/// are defined before the routes that use them, and can't be redefined
+/// differently: that would change routes already registered.
+#[derive(Debug, Clone, Default)]
+pub struct Constraints {
+    custom: Vec<Custom>,
+}
+
+impl Constraints {
+    /// Defines `name` as values matching `pattern` entirely (a regex, as
+    /// the `regex` crate reads it: no look-around or backreferences, so
+    /// matching takes linear time).
+    pub fn define(&mut self, name: &str, pattern: &str) -> Result<(), String> {
+        if Constraint::parse(name).is_some() {
+            return Err(format!("{name:?} is a built-in constraint"));
+        }
+        if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+            return Err(format!(
+                "a constraint name is letters, digits and _, not {name:?}"
+            ));
+        }
+        if let Some(existing) = self.custom.iter().find(|c| c.name == name) {
+            if existing.pattern == pattern {
+                return Ok(());
+            }
+            return Err(format!(
+                "constraint {name:?} is already defined as {:?}",
+                existing.pattern
+            ));
+        }
+        let regex = Regex::new(&format!("^(?:{pattern})$"))
+            .map_err(|e| format!("constraint {name:?}: {e}"))?;
+        if self.custom.len() >= usize::from(u16::MAX) {
+            return Err("too many constraints".into());
+        }
+        self.custom.push(Custom {
+            name: name.to_string(),
+            pattern: pattern.to_string(),
+            regex,
+        });
+        Ok(())
+    }
+
+    fn lookup(&self, name: &str) -> Option<Constraint> {
+        Constraint::parse(name).or_else(|| {
+            let index = self.custom.iter().position(|c| c.name == name)?;
+            u16::try_from(index).ok().map(Constraint::Custom)
+        })
+    }
+
+    /// The regex of a custom constraint.
+    pub fn regex(&self, constraint: Constraint) -> Option<&Regex> {
+        match constraint {
+            Constraint::Custom(index) => self.custom.get(usize::from(index)).map(|c| &c.regex),
+            _ => None,
+        }
+    }
+
+    /// Every custom constraint, as `(name, pattern)`.
+    pub fn list(&self) -> Vec<(String, String)> {
+        self.custom
+            .iter()
+            .map(|c| (c.name.clone(), c.pattern.clone()))
+            .collect()
     }
 }
 
@@ -103,7 +191,13 @@ pub enum Segment<'a> {
 }
 
 impl<'a> Segment<'a> {
+    #[cfg(test)]
     pub fn parse(raw: &'a str) -> Result<Self, PatternError> {
+        Self::parse_with(raw, &Constraints::default())
+    }
+
+    /// Parses a segment; a constraint is a built-in one or one of `constraints`.
+    pub fn parse_with(raw: &'a str, constraints: &Constraints) -> Result<Self, PatternError> {
         if let Some(name) = raw.strip_prefix('*') {
             if name.is_empty() {
                 return Err(PatternError::UnnamedWildcard);
@@ -117,7 +211,9 @@ impl<'a> Segment<'a> {
             None => (inner, Constraint::Any),
             Some((name, c)) => (
                 name,
-                Constraint::parse(c).ok_or_else(|| PatternError::UnknownConstraint(c.into()))?,
+                constraints
+                    .lookup(c)
+                    .ok_or_else(|| PatternError::UnknownConstraint(c.into()))?,
             ),
         };
         Ok(Self::Param { name, constraint })
@@ -127,7 +223,7 @@ impl<'a> Segment<'a> {
 /// Why a route pattern was rejected.
 #[derive(Debug, PartialEq, Eq)]
 pub enum PatternError {
-    /// `{id:float}`: not `int`, `uuid` or `str`.
+    /// `{id:float}`: not `int`, `uuid`, `str` or one the app defined.
     UnknownConstraint(String),
     /// `/users/{id}` and `/users/{slug}` both registered: a match could
     /// not tell which name to report.
@@ -142,7 +238,10 @@ impl fmt::Display for PatternError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnknownConstraint(c) => {
-                write!(f, "unknown constraint {c:?} (expected int, uuid or str)")
+                write!(
+                    f,
+                    "unknown constraint {c:?} (expected int, uuid, str, or one defined with constraint())"
+                )
             }
             Self::ConflictingNames { existing, new } => write!(
                 f,
@@ -212,7 +311,7 @@ mod tests {
     #[test]
     fn format_round_trips_through_parse() {
         for constraint in [Constraint::Any, Constraint::Int, Constraint::Uuid] {
-            let pattern = constraint.format("id");
+            let pattern = constraint.format("id", &Constraints::default());
             assert_eq!(
                 Segment::parse(&pattern),
                 Ok(Segment::Param {
@@ -221,5 +320,58 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn custom_constraints() {
+        let mut constraints = Constraints::default();
+        constraints
+            .define("slug", "[a-z0-9]+(?:-[a-z0-9]+)*")
+            .unwrap();
+        let Ok(Segment::Param { constraint, .. }) =
+            Segment::parse_with("{post:slug}", &constraints)
+        else {
+            panic!("not a parameter");
+        };
+        assert_eq!(constraint, Constraint::Custom(0));
+        let regex = constraints.regex(constraint).unwrap();
+        assert!(regex.is_match("hello-world") && !regex.is_match("Hello") && !regex.is_match("a-"));
+        assert!(
+            !regex.is_match("x hello-world"),
+            "the whole value must match"
+        );
+        assert_eq!(constraint.format("post", &constraints), "{post:slug}");
+        assert_eq!(
+            constraints.list(),
+            [("slug".to_string(), "[a-z0-9]+(?:-[a-z0-9]+)*".to_string())]
+        );
+    }
+
+    #[test]
+    fn defining_constraints() {
+        let mut constraints = Constraints::default();
+        assert!(constraints.define("hex", "[0-9a-f]+").is_ok());
+        assert!(
+            constraints.define("hex", "[0-9a-f]+").is_ok(),
+            "the same again is fine"
+        );
+        assert!(
+            constraints
+                .define("hex", "[0-9A-F]+")
+                .unwrap_err()
+                .contains("already defined")
+        );
+        assert!(
+            constraints
+                .define("int", "x")
+                .unwrap_err()
+                .contains("built-in")
+        );
+        assert!(constraints.define("no way", "x").is_err());
+        assert!(constraints.define("bad", "(").is_err());
+        assert_eq!(
+            Segment::parse_with("{id:nope}", &constraints),
+            Err(PatternError::UnknownConstraint("nope".into()))
+        );
     }
 }

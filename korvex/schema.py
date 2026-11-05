@@ -88,6 +88,46 @@ class Model:
                 [_error(["body", *e["loc"]], e["msg"], e["type"]) for e in error.errors()]
             ) from None
 
+    def from_form(self, form: Mapping[str, list]) -> Any:
+        """The model, from a form's fields: each model field from the form
+        field of the same name (its alias or rename); all the values for a
+        list, else the last one. An empty value counts as missing, except
+        for text, and a checkbox's `on` is true. Raises ValidationError,
+        with `["form", ...]` locations."""
+        data: dict[str, Any] = {}
+        for key, tp in self._fields():
+            inner, many, _ = _unwrap(tp)
+            values = list(form.get(key) or [])
+            if inner is not str:
+                values = [v for v in values if v != ""]
+            if inner is bool:
+                values = [_lenient_bool(v) for v in values]
+            if values:
+                data[key] = values if many else values[-1]
+        if self.library == "msgspec":
+            import msgspec
+
+            try:
+                return msgspec.convert(data, type=self.type, strict=False)  # text to numbers, dates...
+            except msgspec.ValidationError as error:
+                raise ValidationError([_msgspec_error(error, "form")]) from None
+        import pydantic
+
+        try:
+            return self._adapter.validate_python(data)
+        except pydantic.ValidationError as error:
+            raise ValidationError(
+                [_error(["form", *e["loc"]], e["msg"], e["type"]) for e in error.errors()]
+            ) from None
+
+    def _fields(self) -> list[tuple[str, Any]]:
+        """`(name in the request, annotation)` of each field of the model."""
+        if self.library == "msgspec":
+            import msgspec
+
+            return [(field.encode_name, field.type) for field in msgspec.structs.fields(self.type)]
+        return [(info.alias or name, info.annotation) for name, info in self.type.model_fields.items()]
+
     def encode(self, value: Any) -> bytes:
         if self.library == "msgspec":
             import msgspec
@@ -112,13 +152,13 @@ class Model:
         return schema
 
 
-def _msgspec_error(error: Exception) -> dict:
+def _msgspec_error(error: Exception, root: str = "body") -> dict:
     """msgspec reports one error as text ("Expected `int`, got `str` - at
     `$.age`"): turn it into the common format."""
     message = str(error)
     if type(error).__name__ == "DecodeError":
-        return _error(["body"], message, "json_invalid")
-    loc: list = ["body"]
+        return _error([root], message, "json_invalid")
+    loc: list = [root]
     where = re.search(r" - at `\$(.*)`$", message)
     if where:
         message = message[: where.start()]
@@ -127,6 +167,18 @@ def _msgspec_error(error: Exception) -> dict:
     if missing:
         loc.append(missing.group(1))
     return _error(loc, message, "missing" if missing else "validation")
+
+
+def _lenient_bool(value: Any) -> Any:
+    """`on`, `yes`, `1`... as True, their opposites as False, anything else
+    as it was (for the model's validation to refuse)."""
+    if isinstance(value, str):
+        lowered = value.lower()
+        if lowered in _TRUE:
+            return True
+        if lowered in _FALSE:
+            return False
+    return value
 
 
 # --- scalars (path and query parameters) ---
@@ -249,6 +301,7 @@ class Plan:
         self.headers = [p for p in params if p.source == "header"]
         self.cookies = [p for p in params if p.source == "cookie"]
         self.form = [p for p in params if p.source == "form"]
+        self.form_models = [(p, Model(p.type)) for p in params if p.source == "form_model"]
         self.request = [p.name for p in params if p.source == "request"]
         self.body = next((p for p in params if p.source == "body"), None)
         self.body_model = Model(self.body.type) if self.body else None
@@ -325,8 +378,16 @@ class Plan:
             for param in self.cookies:
                 cookie = request.cookies.get(param.key)
                 _take(param, None if cookie is None else [cookie], kwargs, errors)
-        if self.form:
+        if self.form or self.form_models:
             form = await _read_form(request)
+            for param, model in self.form_models:
+                if not param.required and not any(form.get(key) for key, _ in model._fields()):
+                    kwargs[param.name] = param.default  # none of its fields sent
+                    continue
+                try:
+                    kwargs[param.name] = model.from_form(form)
+                except ValidationError as error:
+                    errors.extend(error.errors)
             for param in self.form:
                 values = form.get(param.key) or []
                 if param.inner is not str and param.inner is not _UPLOADED_FILE:
@@ -569,7 +630,12 @@ def plan_for(
 
         inner, is_list, optional = _unwrap(tp) if tp is not None else (None, False, False)
         required = not (has_default or optional)
-        if isinstance(marker, Source):
+        if isinstance(marker, Source) and marker.kind == "form" and tp is not None and not is_list and _library(inner):
+            # A model filled from the form's fields: `body: Signup = Form()`.
+            if websocket:
+                raise TypeError(f"{where}: parameter {name!r}: a WebSocket has no form")
+            params.append(_param(name, "form_model", inner, required, default, key=name))
+        elif isinstance(marker, Source):
             if tp is None:
                 tp, inner = str, str
             allowed = SCALARS + ((UploadedFile,) if marker.kind == "form" else ())
@@ -633,7 +699,7 @@ def _check_body(plan: Plan, where: str) -> None:
         for dep in p.dependencies:
             walk(dep.plan)
         bodies.update(repr(param.type) for param in p.params if param.source == "body")
-        form = form or bool(p.form)
+        form = form or bool(p.form) or bool(p.form_models)
 
     walk(plan)
     if len(bodies) > 1:

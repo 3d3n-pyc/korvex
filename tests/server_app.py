@@ -85,6 +85,14 @@ def crash(request):
     os._exit(1)  # a worker dying abruptly, as if it segfaulted
 
 
+app.constraint("slug", r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+
+@app.post("/notes/{key:slug}", max_body=5_000_000)  # a body limit on a route with a custom constraint
+async def note(request, key):
+    return Response.text(f"{key}: {len(await request.body())}")
+
+
 @app.post("/upload", max_body=5_000_000)
 async def upload(request):
     return Response.text(str(len(await request.body())))

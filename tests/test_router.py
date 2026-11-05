@@ -209,3 +209,29 @@ def test_group_without_prefix_only_adds_middleware():
 
     assert router.match("/") == ("home", {}, ("auth",))
     assert repr(group) == "RouteGroup(prefix='', middleware=['auth'])"
+
+
+def test_custom_constraints():
+    router = Router()
+    router.constraint("slug", r"[a-z0-9]+(?:-[a-z0-9]+)*")
+    router.constraint("slug", r"[a-z0-9]+(?:-[a-z0-9]+)*")  # the same again: fine
+    router.get("/posts/{post:slug}", "by_slug")
+    router.get("/posts/{other}", "anything")
+    assert router.match("/posts/hello-world") == ("by_slug", {"post": "hello-world"}, ())
+    assert router.match("/posts/Hello")[0] == "anything"  # doesn't fit: the plain route
+    assert ("/posts/{post:slug}", "GET", "by_slug", ()) in router.routes()
+    assert router.constraints() == [("slug", r"[a-z0-9]+(?:-[a-z0-9]+)*")]
+    assert router.remove("/posts/{post:slug}") is True
+
+
+def test_custom_constraints_are_checked():
+    router = Router()
+    router.constraint("hex", "[0-9a-f]+")
+    with pytest.raises(ValueError, match="already defined"):
+        router.constraint("hex", "[0-9A-F]+")  # would change routes already there
+    with pytest.raises(ValueError, match="built-in"):
+        router.constraint("int", "[0-9]+")
+    with pytest.raises(ValueError):
+        router.constraint("bad", "(")
+    with pytest.raises(ValueError, match="unknown constraint"):
+        router.get("/x/{id:nope}", "x")

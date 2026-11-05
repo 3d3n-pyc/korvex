@@ -8,7 +8,9 @@
 use rustc_hash::FxHashMap;
 
 use crate::method::Method;
-use crate::path::{Constraint, PatternError, Segment, Segments};
+use regex::Regex;
+
+use crate::path::{Constraint, Constraints, PatternError, Segment, Segments};
 
 /// What a route resolves to. Both are opaque names chosen by the caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,7 +85,29 @@ impl<T> Methods<T> {
 struct Param<T> {
     name: String,
     constraint: Constraint,
+    /// A custom constraint's regex and name, kept here so that matching
+    /// needs nothing else. Boxed: most parameters have none, and a smaller
+    /// `Param` keeps the tree tighter in memory (measured: unboxed, lookups
+    /// were 4 to 8% slower).
+    custom: Option<Box<(Regex, String)>>,
     node: Node<T>,
+}
+
+impl<T> Param<T> {
+    #[inline]
+    fn matches(&self, value: &str) -> bool {
+        match &self.custom {
+            Some(custom) => custom.0.is_match(value),
+            None => self.constraint.matches(value),
+        }
+    }
+
+    fn format(&self) -> String {
+        match &self.custom {
+            Some(custom) => format!("{{{}:{}}}", self.name, custom.1),
+            None => self.constraint.format(&self.name, &Constraints::default()),
+        }
+    }
 }
 
 /// A wildcard has no children: it always consumes the rest of the path.
@@ -98,8 +122,8 @@ pub struct Node<T> {
     /// Routes that end exactly here.
     methods: Methods<T>,
     literals: FxHashMap<String, Node<T>>,
-    /// At most one per constraint, in matching order: constrained first,
-    /// `Constraint::Any` last.
+    /// At most one per constraint, in matching order: constrained ones
+    /// first, in the order they were registered, then `Constraint::Any`.
     params: Vec<Param<T>>,
     wildcard: Option<Wildcard<T>>,
 }
@@ -120,9 +144,21 @@ impl<T> Default for Node<T> {
 impl<T: Clone> Node<T> {
     /// Registers `route` for `pattern` (e.g. `/users/{id:int}`) and
     /// `method`, replacing any route already there.
+    #[cfg(test)]
     pub fn insert(&mut self, pattern: &str, method: Method, route: T) -> Result<(), PatternError> {
+        self.insert_with(pattern, method, route, &Constraints::default())
+    }
+
+    /// Like `insert`, with the app's own `constraints` allowed in `pattern`.
+    pub fn insert_with(
+        &mut self,
+        pattern: &str,
+        method: Method,
+        route: T,
+        constraints: &Constraints,
+    ) -> Result<(), PatternError> {
         let segments: Vec<&str> = Segments::new(pattern).collect();
-        self.insert_at(&segments, method, route)
+        self.insert_at(&segments, method, route, constraints)
     }
 
     fn insert_at(
@@ -130,39 +166,47 @@ impl<T: Clone> Node<T> {
         segments: &[&str],
         method: Method,
         route: T,
+        constraints: &Constraints,
     ) -> Result<(), PatternError> {
         let Some((first, rest)) = segments.split_first() else {
             self.methods.insert(method, route);
             return Ok(());
         };
-        match Segment::parse(first)? {
+        match Segment::parse_with(first, constraints)? {
             Segment::Literal(literal) => self
                 .literals
                 .entry(literal.to_string())
                 .or_default()
-                .insert_at(rest, method, route),
+                .insert_at(rest, method, route, constraints),
             Segment::Param { name, constraint } => {
                 let index = match self.params.iter().position(|p| p.constraint == constraint) {
                     Some(i) if self.params[i].name == name => i,
                     Some(i) => return Err(conflict(&self.params[i].name, name)),
                     None => {
-                        let i = if constraint == Constraint::Any {
-                            self.params.len()
-                        } else {
-                            0
-                        };
+                        // Before the unconstrained one, after the other constrained ones.
+                        let i = self
+                            .params
+                            .iter()
+                            .position(|p| p.constraint == Constraint::Any)
+                            .unwrap_or(self.params.len());
+                        let custom = constraints
+                            .regex(constraint)
+                            .map(|regex| Box::new((regex.clone(), constraint_name(first))));
                         self.params.insert(
                             i,
                             Param {
                                 name: name.to_string(),
                                 constraint,
+                                custom,
                                 node: Node::default(),
                             },
                         );
                         i
                     }
                 };
-                self.params[index].node.insert_at(rest, method, route)
+                self.params[index]
+                    .node
+                    .insert_at(rest, method, route, constraints)
             }
             Segment::Wildcard(name) => {
                 if !rest.is_empty() {
@@ -184,18 +228,34 @@ impl<T: Clone> Node<T> {
     /// Removes the route registered for exactly `pattern` and `method`.
     /// Returns whether there was one. Emptied nodes are left in place:
     /// they just stop matching.
+    #[cfg(test)]
     pub fn remove(&mut self, pattern: &str, method: Method) -> Result<bool, PatternError> {
-        let segments: Vec<&str> = Segments::new(pattern).collect();
-        self.remove_at(&segments, method)
+        self.remove_with(pattern, method, &Constraints::default())
     }
 
-    fn remove_at(&mut self, segments: &[&str], method: Method) -> Result<bool, PatternError> {
+    /// Like `remove`, with the app's own `constraints` allowed in `pattern`.
+    pub fn remove_with(
+        &mut self,
+        pattern: &str,
+        method: Method,
+        constraints: &Constraints,
+    ) -> Result<bool, PatternError> {
+        let segments: Vec<&str> = Segments::new(pattern).collect();
+        self.remove_at(&segments, method, constraints)
+    }
+
+    fn remove_at(
+        &mut self,
+        segments: &[&str],
+        method: Method,
+        constraints: &Constraints,
+    ) -> Result<bool, PatternError> {
         let Some((first, rest)) = segments.split_first() else {
             return Ok(self.methods.remove(method));
         };
-        Ok(match Segment::parse(first)? {
+        Ok(match Segment::parse_with(first, constraints)? {
             Segment::Literal(literal) => match self.literals.get_mut(literal) {
-                Some(child) => child.remove_at(rest, method)?,
+                Some(child) => child.remove_at(rest, method, constraints)?,
                 None => false,
             },
             Segment::Param { name, constraint } => {
@@ -204,7 +264,7 @@ impl<T: Clone> Node<T> {
                     .iter_mut()
                     .find(|p| p.constraint == constraint && p.name == name)
                 {
-                    Some(param) => param.node.remove_at(rest, method)?,
+                    Some(param) => param.node.remove_at(rest, method, constraints)?,
                     None => false,
                 }
             }
@@ -248,7 +308,7 @@ impl<T: Clone> Node<T> {
         }
 
         for param in &self.params {
-            if !param.constraint.matches(segment) {
+            if !param.matches(segment) {
                 continue;
             }
             params.push((param.name.as_str(), param.constraint, segment));
@@ -288,7 +348,7 @@ impl<T: Clone> Node<T> {
             child.collect_routes(&format!("{prefix}/{literal}"), out);
         }
         for param in &self.params {
-            let segment = param.constraint.format(&param.name);
+            let segment = param.format();
             param
                 .node
                 .collect_routes(&format!("{prefix}/{segment}"), out);
@@ -300,6 +360,16 @@ impl<T: Clone> Node<T> {
             }
         }
     }
+}
+
+/// `{post:slug}` -> `slug`.
+fn constraint_name(segment: &str) -> String {
+    segment
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .split_once(':')
+        .map(|(_, c)| c.to_string())
+        .unwrap_or_default()
 }
 
 fn conflict(existing: &str, new: &str) -> PatternError {
@@ -583,5 +653,47 @@ mod tests {
             routes,
             expected.map(|(p, m, h)| (p.to_string(), m, h.to_string()))
         );
+    }
+
+    #[test]
+    fn custom_constraints_match_with_their_regex_and_fall_through() {
+        let mut constraints = Constraints::default();
+        constraints.define("slug", "[a-z]+(?:-[a-z]+)*").unwrap();
+        constraints.define("year", "[0-9]{4}").unwrap();
+        let mut root = Node::default();
+        for (pattern, handler) in [
+            ("/posts/{year:year}", "by_year"),
+            ("/posts/{id:int}", "by_id"),
+            ("/posts/{post:slug}", "by_slug"),
+            ("/posts/{other}", "anything"),
+        ] {
+            root.insert_with(pattern, Get, route(handler), &constraints)
+                .unwrap();
+        }
+        assert_eq!(handler(&root, Get, "/posts/hello-world"), "by_slug");
+        assert_eq!(
+            handler(&root, Get, "/posts/2026"),
+            "by_year",
+            "registered first, tried first"
+        );
+        assert_eq!(handler(&root, Get, "/posts/42"), "by_id");
+        assert_eq!(
+            handler(&root, Get, "/posts/Hello"),
+            "anything",
+            "no constraint fits: the plain one"
+        );
+        let mut params = Vec::new();
+        root.find("/posts/hello", Get, &mut params);
+        assert_eq!(params, [("post", Constraint::Custom(0), "hello")]);
+        let listed: Vec<String> = root.routes().into_iter().map(|(path, _, _)| path).collect();
+        assert!(
+            listed.contains(&"/posts/{post:slug}".to_string())
+                && listed.contains(&"/posts/{year:year}".to_string())
+        );
+        assert_eq!(
+            root.remove_with("/posts/{post:slug}", Get, &constraints),
+            Ok(true)
+        );
+        assert_eq!(handler(&root, Get, "/posts/hello-world"), "anything");
     }
 }

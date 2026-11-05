@@ -46,6 +46,7 @@ class Config(NamedTuple):
     access_log: bool
     ws_ping_interval: float = 20.0
     forwarded_host: bool = False
+    constraints: tuple[tuple[str, str], ...] = ()  # the app's own route constraints, for body_limits
 
 
 def run(app: App, host: str, port: int, *, workers: int, graceful_timeout: float, config: Config) -> None:
@@ -116,6 +117,7 @@ async def serve(app: App, fd: int, graceful_timeout: float, config: Config) -> N
         config.trusted_proxies,
         config.ws_ping_interval,
         config.forwarded_host,
+        list(config.constraints),
     )
     handle = _logged(app._serve_one) if config.access_log else app._serve_one
     stopping = asyncio.Event()

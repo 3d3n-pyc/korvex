@@ -44,11 +44,12 @@ def openapi_path(pattern: str) -> str:
     return _PARAM.sub(lambda m: "{" + (m.group(1) or m.group(2)) + "}", pattern)
 
 
-def build(app: App, *, title: str, version: str, description: str | None = None) -> dict[str, Any]:
+def build(app: App, *, title: str, version: str, description: str | None = None, host: str | None = None) -> dict[str, Any]:
     components: dict[str, Any] = {}
     paths: dict[str, dict[str, Any]] = {}
     used_ids: set[str] = set()
-    for pattern, method, name, _ in app.router.routes():
+    custom = dict(app.router.constraints())  # name -> regex
+    for pattern, method, name, _ in app._routes_for(host):
         if name.startswith("korvex.") or name not in app._handlers:
             continue  # static files and the docs themselves; names without a handler can't be described
         func = app._handlers[name]
@@ -62,7 +63,7 @@ def build(app: App, *, title: str, version: str, description: str | None = None)
         everything = plan.everything()  # the handler's parameters and its dependencies'
         annotated = {p.key: p.type for p in everything if p.source == "path"}
         parameters = [
-            {"name": param, "in": "path", "required": True, "schema": scalar_schema(annotated.get(param, given))}
+            {"name": param, "in": "path", "required": True, "schema": _path_schema(param, given, annotated, pattern, custom)}
             for param, given in path_params(pattern).items()
         ]
         for param in everything:
@@ -81,15 +82,19 @@ def build(app: App, *, title: str, version: str, description: str | None = None)
                 "required": body.required,
                 "content": {"application/json": {"schema": Model(body.type).schema(components)}},
             }
-        elif form:
+        elif form or any(p.source == "form_model" for p in everything):
+            models = [p for p in everything if p.source == "form_model"]
             files = any(_unwrap(p.type)[0] is UploadedFile for p in form)
-            properties = {p.key: _with_default(_form_schema(p.type), p) for p in form}
-            schema: dict[str, Any] = {"type": "object", "properties": properties}
-            required = [p.key for p in form if p.required]
-            if required:
-                schema["required"] = required
+            schemas = [Model(p.type).schema(components) for p in models]
+            if form:
+                fields: dict[str, Any] = {"type": "object", "properties": {p.key: _with_default(_form_schema(p.type), p) for p in form}}
+                if [p.key for p in form if p.required]:
+                    fields["required"] = [p.key for p in form if p.required]
+                schemas.append(fields)
+            schema = schemas[0] if len(schemas) == 1 else {"allOf": schemas}
+            required = any(p.required for p in (*form, *models))
             kind = "multipart/form-data" if files else "application/x-www-form-urlencoded"
-            operation["requestBody"] = {"required": bool(required), "content": {kind: {"schema": schema}}}
+            operation["requestBody"] = {"required": required, "content": {kind: {"schema": schema}}}
         success: dict[str, Any] = {"description": "Successful response"}
         if plan.response is not None:
             success["content"] = {"application/json": {"schema": plan.response.schema(components)}}
@@ -109,6 +114,20 @@ def build(app: App, *, title: str, version: str, description: str | None = None)
     if components:
         document["components"] = {"schemas": dict(sorted(components.items()))}
     return document
+
+
+_CONSTRAINED = re.compile(r"\{(\w+):(\w+)\}")
+
+
+def _path_schema(param: str, given: Any, annotated: dict, pattern: str, custom: dict) -> dict:
+    """A path parameter's schema: its annotation's type, or the type its
+    constraint gives; a custom constraint adds its regex."""
+    tp = annotated.get(param, given)
+    schema = scalar_schema(tp)
+    constraint = dict(_CONSTRAINED.findall(pattern)).get(param)
+    if constraint in custom and schema == {"type": "string"}:
+        schema = {"type": "string", "pattern": f"^(?:{custom[constraint]})$"}
+    return schema
 
 
 def _with_default(schema: dict, param: Any) -> dict:

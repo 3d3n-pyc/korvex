@@ -39,12 +39,27 @@ router.match("/users", "DELETE")  # raises MethodNotAllowed, .allowed == ["POST"
 | `{id}`      | any segment                          | `/users/{id}`      |
 | `{id:int}`  | an integer (`42`, `-7`)              | `/users/{id:int}`  |
 | `{id:uuid}` | a UUID                               | `/items/{id:uuid}` |
+| `{post:slug}` | what a constraint you defined allows | `/posts/{post:slug}` |
 | `*path`     | the rest of the path (last segment)  | `/static/*path`    |
 
 `{id:int}` gives an `int` and `{id:uuid}` a `uuid.UUID`; every other
 captured value is a string. When several routes could match,
-the most specific one wins: literal, then `{id:int}`/`{id:uuid}`, then
-`{id}`, then `*path`.
+the most specific one wins: literal, then constrained parameters (in the
+order their routes were registered), then `{id}`, then `*path`.
+
+Define your own constraints as regexes, before the routes that use them:
+
+```python
+router.constraint("slug", r"[a-z0-9]+(?:-[a-z0-9]+)*")   # app.constraint() for an App
+router.get("/posts/{post:slug}", "get_post")             # /posts/hello-world, not /posts/Hello
+```
+
+The whole segment must match. The regex is compiled and matched in Rust
+(the `regex` crate: no look-around or backreferences, so matching takes
+linear time), and the router still only gets a path and gives back a
+name. A constraint can't be redefined differently once routes may use it.
+In an `App`, the value is a string; an annotation converts it further
+(`day: date` on `{day:isodate}`), and OpenAPI shows the regex.
 
 ### API
 
@@ -56,6 +71,8 @@ the most specific one wins: literal, then `{id:int}`/`{id:uuid}`, then
 | `remove(path, method="GET")`                     | Removes a route by its pattern. Returns whether it existed. |
 | `routes()`                                       | Every route as `(path, method, handler, middleware)`.    |
 | `group(prefix, *, middleware=None)`              | A `RouteGroup` (see below).                              |
+| `constraint(name, regex)`                         | Defines a constraint for patterns: `{post:slug}`.        |
+| `constraints()`                                  | Every defined constraint as `(name, regex)`.             |
 
 Invalid paths or methods raise `ValueError`.
 
@@ -79,19 +96,17 @@ admin.get("/stats", "stats")                # GET /api/admin/stats, middleware (
 (uvicorn, hypercorn, granian...).
 
 ```python
-from korvex import App, Response
+from korvex import App, Depends, Header, HTTPException, Response
 
 app = App()
 
-@app.get("/users/{id:int}", middleware=["auth"])
+def signed_in(authorization: str = Header("")) -> None:
+    if not authorization:
+        raise HTTPException(401, "sign in first")  # stops here
+
+@app.get("/users/{id:int}", dependencies=[Depends(signed_in)])
 async def get_user(request, id):
     return Response.json({"id": id})
-
-@app.middleware("auth")
-def auth(request):
-    if request.headers.get("Authorization") is None:
-        return Response.text("Unauthorized", status=401)  # stops here
-    return None                                          # carries on
 ```
 
 ```sh
@@ -100,8 +115,9 @@ uvicorn mymodule:app
 ```
 
 - Handlers receive the `Request` plus path params as keyword arguments,
-  and return a `Response`. Middleware returns a `Response` to answer
-  early, or `None` to continue. Both can be sync or async.
+  and return a `Response`, sync or async. Checks shared by several routes
+  (signing in, permissions) are dependencies: see
+  [Dependencies](#dependencies).
 - `Request` has `method`, `path`, `headers`, `query_params`,
   `path_params`, `cookies`, `client` (`(host, port)`), `scheme`, and
   `await request.body()`,
@@ -121,18 +137,32 @@ uvicorn mymodule:app
   with an `Allow` header.
 - `@app.before_request` runs before every request, ahead of routing (so
   for unknown paths too), and returns a `Response` to answer right away or
-  `None` to carry on. `@app.after_request` gets every response, errors
+  `None` to carry on. It runs for WebSocket handshakes too, with the
+  `WebSocket` as the request: answering refuses the connection. `@app.after_request` gets every response, errors
   included, and returns the one to send (or `None` to keep it).
-- `raise HTTPException(404, "user not found")` in a handler or middleware
-  answers with that error. `@app.exception_handler(404)` (a status) or
+- `raise HTTPException(404, "user not found")` in a handler, a dependency
+  or a before hook answers with that error; `raise Abort(response)` with
+  that exact response (a redirect to the sign-in page, say), past the
+  exception handlers. `@app.exception_handler(404)` (a status) or
   `@app.exception_handler(ValueError)` (an exception class) customizes the
   response. Any other exception gives a 500 and is logged to the `korvex`
   logger.
-- `app.group(prefix, middleware=[...])` works like `router.group()`, with
-  decorators: `api = app.group("/api")`, then `@api.get("/users")`.
-  Groups nest.
+- `app.group(prefix, dependencies=[...])` works like `router.group()`,
+  with decorators: `api = app.group("/api")`, then `@api.get("/users")`.
+  Groups nest; a group's dependencies run before its routes' own.
+- `app.host("api.example.com")` gives a group whose routes only answer
+  for that host (its `Host` header, port aside); `app.host("{tenant}.example.com")`
+  passes `tenant` to the dependencies and handlers that take it, like a
+  path parameter. The
+  first host pattern that fits owns the request (those without parameters
+  first): its routes answer, then the routes declared without a host,
+  which answer on every host. `/docs` documents the routes of the host
+  it's served from, and `app.openapi(host=...)` those of any host. In the
+  built-in server, a route's `max_body` applies to its path on every host.
 - Routes registered on `app.router` directly are linked to a function
-  with `@app.handler("name")`.
+  with `@app.handler("name")`. The App doesn't run the router's middleware
+  names: a route that has some answers a 500, rather than run without
+  what may be its guard.
 - `@app.on_startup` and `@app.on_shutdown` run a function (sync or async)
   when the server starts and stops, for example to open and close a
   database pool. Shutdown hooks run in reverse order. If a startup hook
@@ -198,6 +228,10 @@ async def upload(
   matter. `alias=` gives the exact name.
 - Their errors say where: `["header", "x-client"]`, `["form", "title"]`.
 - An empty form field counts as missing, except for `str`.
+- A model can come from a form too, field by field: `body: Signup = Form()`.
+  A list field takes every value, a checkbox's `on` is true, and text
+  converts to numbers and dates as the model says. Files stay separate
+  `Form()` parameters.
 
 ### Dependencies
 
@@ -272,8 +306,11 @@ async def chat(ws, room, user: CurrentUser):  # no session: refused (403)
   A dependency raising `HTTPException` refuses the connection before it
   opens (403); a handler can also `close()` before `accept()` to refuse.
 - They work the same under ASGI servers and in the built-in server. Groups
-  support them (`api.websocket(...)`), group dependencies included; app
-  hooks and middleware don't run for them.
+  support them (`api.websocket(...)`), group dependencies included.
+- Before hooks run on the handshake, so `request_id()` and `rate_limit()`
+  apply, and a hook can refuse a connection whose `Origin` isn't yours:
+  browsers don't check it for WebSockets. After hooks don't run: there's
+  no response to change.
 
 ### Ready-made hooks
 

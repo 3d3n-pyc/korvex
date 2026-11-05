@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.10.0
+
+Breaking changes are listed with how to update.
+
+- **Removed: App middleware**, `@app.middleware(name)` and `middleware=[...]`
+  on `App` routes and groups. Dependencies do the same job, and also work
+  for WebSockets, take typed parameters, show in OpenAPI and can be
+  replaced in tests. To update: `middleware=["auth"]` becomes
+  `dependencies=[Depends(auth)]`; where the middleware returned a
+  response, raise `HTTPException` (an error) or `Abort(response)` (that
+  exact response). The standalone `Router` keeps its middleware names; a
+  route given some through `app.router` answers a 500 in an `App`, rather
+  than run without what may be its guard.
+- Before hooks run on WebSocket handshakes too, with the `WebSocket` as
+  the request; one answering, or raising `HTTPException` or `Abort`,
+  refuses the connection. `request_id()` gives WebSocket handlers an ID,
+  and **`rate_limit()` now counts handshakes**. A before hook that only
+  makes sense for HTTP can skip them with `isinstance(request, WebSocket)`.
+- Custom route constraints: `app.constraint("slug", r"[a-z0-9-]+")` (or
+  `router.constraint()`), then `{post:slug}`. Regexes, compiled and
+  matched in Rust; OpenAPI shows them; the built-in server's per-route
+  body limits accept them.
+- **Constrained parameters are tried in the order their routes were
+  registered** (before plain ones, as before). They were tried most
+  recent first, which only mattered for `int` and `uuid` together, which
+  never match the same value.
+- Host-based routing: `app.host("api.example.com")` and
+  `app.host("{tenant}.example.com")` give groups whose routes answer for
+  that host; a host parameter reaches the dependencies and handlers that
+  take it, like a path parameter. Routes declared without a host answer on every host.
+  `app.openapi(host=...)`, and `/docs` documents the host it's served
+  from.
+- A model filled from a form: `body: Signup = Form()`, with msgspec or
+  pydantic, each model field from the form field of the same name. Its
+  errors are at `["form", ...]`, and OpenAPI shows it as the form's
+  schema.
+- `Abort(response)`: raised in a dependency, a handler or a before hook,
+  sends that response as is, past the exception handlers. In a
+  WebSocket's dependencies, it refuses the connection.
+
 ## 0.9.0
 
 The built-in server, ready for production behind a reverse proxy.

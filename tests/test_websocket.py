@@ -132,3 +132,56 @@ def test_websocket_in_a_group_and_next_to_an_http_route():
     from test_app import make_scope, response_from, run_app
 
     assert response_from(run_app(app, make_scope("GET", "/api/live")))[2] == b"http"
+
+
+def test_before_hooks_see_the_handshake_and_can_refuse_it():
+    from korvex import Abort, HTTPException
+
+    app = App()
+    seen = []
+
+    @app.before_request
+    def check_origin(request):
+        if isinstance(request, WebSocket):
+            seen.append(request.path)
+            if request.headers.get("origin") not in (None, "https://example.com"):
+                return Response.text("wrong origin", status=403)
+        return None
+
+    @app.before_request
+    def closed(request):
+        if request.path == "/ws/closed":
+            raise HTTPException(503)
+        if request.path == "/ws/moved":
+            raise Abort(Response.redirect("/elsewhere"))
+
+    @app.websocket("/ws/{name}")
+    async def echo(ws, name):
+        await ws.accept()
+        await ws.send_text(name)
+
+    assert run_ws(app, ws_scope("/ws/a", headers=[("Origin", "https://example.com")]))[1] == {"type": "websocket.send", "text": "a"}
+    refused = [{"type": "websocket.close", "code": 1000, "reason": ""}]
+    assert run_ws(app, ws_scope("/ws/a", headers=[("Origin", "https://evil.example")])) == refused
+    assert run_ws(app, ws_scope("/ws/closed")) == refused
+    assert run_ws(app, ws_scope("/ws/moved")) == refused
+    assert run_ws(app, ws_scope("/nowhere")) == refused  # hooks run ahead of routing, as for HTTP
+    assert seen == ["/ws/a", "/ws/a", "/ws/closed", "/ws/moved", "/nowhere"]
+
+
+def test_ready_made_hooks_apply_to_websockets():
+    from korvex.middleware import current_request_id, rate_limit, request_id
+
+    app = App()
+    request_id(app)
+    rate_limit(app, requests=2, per=60)
+
+    @app.websocket("/ws")
+    async def ws(socket):
+        await socket.accept()
+        await socket.send_text(current_request_id() or "none")
+
+    first = run_ws(app, ws_scope("/ws", headers=[("X-Request-ID", "abc-123")]))
+    assert first[1] == {"type": "websocket.send", "text": "abc-123"}
+    assert run_ws(app, ws_scope("/ws"))[0]["type"] == "websocket.accept"
+    assert run_ws(app, ws_scope("/ws")) == [{"type": "websocket.close", "code": 1000, "reason": ""}]  # the third: limited

@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from http import HTTPStatus
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from korvex.response import Response
 
 
 class HTTPException(Exception):
-    """Raise it in a handler or middleware to answer with an HTTP error:
+    """Raise it in a handler, a dependency or a before hook to answer with
+    an HTTP error:
     `raise HTTPException(404, "user not found")`. Without a `detail`, the
     standard reason (`Not Found`) is used."""
 
@@ -27,3 +32,21 @@ class ValidationError(HTTPException):
     def __init__(self, errors: list[dict]) -> None:
         super().__init__(422)
         self.errors = errors
+
+
+class Abort(Exception):
+    """Raise it to stop a request with this exact response: from a
+    dependency, a handler or a before hook.
+
+        def signed_in(session: Optional[str] = Cookie(None)) -> None:
+            if session is None:
+                raise Abort(Response.redirect("/login"))
+
+    The response is sent as is, without going through exception handlers;
+    after hooks still apply. For an error status, `HTTPException` is
+    usually what you want. In a WebSocket's dependencies, it refuses the
+    connection (403): there's no other response to send before accepting."""
+
+    def __init__(self, response: Response) -> None:
+        super().__init__(response)
+        self.response = response

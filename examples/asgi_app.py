@@ -1,7 +1,7 @@
 """Level 3: a web API served over ASGI.
 
 `App` does what `basic_router.py` does by hand: match the request, run
-the middleware, call the handler, send the response.
+the route's checks, call the handler, send the response.
 
 Run:
     pip install uvicorn
@@ -17,7 +17,7 @@ Then:
 
 from __future__ import annotations
 
-from korvex import App, Request, Response
+from korvex import App, Depends, Header, HTTPException, Request, Response
 
 app = App()
 
@@ -38,13 +38,13 @@ async def create_user(request: Request) -> Response:
     return Response.json({"created": data}, status=201)
 
 
-@app.get("/secret", middleware=["auth"])
+def auth(authorization: str = Header("")) -> None:
+    """A dependency: runs before the handler, and stops the request if
+    the token is wrong."""
+    if authorization != "Bearer token":
+        raise HTTPException(401, "Unauthorized")
+
+
+@app.get("/secret", dependencies=[Depends(auth)])
 def secret(request: Request) -> Response:
     return Response.text("top secret")
-
-
-@app.middleware("auth")
-def auth(request: Request) -> Response | None:
-    if request.headers.get("Authorization") != "Bearer token":
-        return Response.text("Unauthorized", status=401)
-    return None  # carry on to the handler

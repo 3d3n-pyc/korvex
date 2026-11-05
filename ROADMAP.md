@@ -2,7 +2,7 @@
 
 Where Korvex is going. Versions are a rough order, not promises.
 
-## Where it stands (0.9)
+## Where it stands (0.10)
 
 - **Fast.** On one CPU core, Korvex serves the most requests per second of
   the frameworks tested, with the least memory. Its built-in server serves
@@ -12,9 +12,11 @@ Where Korvex is going. Versions are a rough order, not promises.
   cookies and forms, streaming, files and static directories, WebSockets,
   app-wide hooks, CORS, request IDs and rate limiting; validation from
   type annotations with msgspec or pydantic, headers, cookies and forms
-  as parameters, and dependencies; an OpenAPI document and Swagger UI; a
-  built-in server with workers, graceful shutdown, size limits, timeouts,
-  backpressure and WebSocket pings; and a deployment guide.
+  (models too) as parameters, and dependencies, which guard routes,
+  groups and WebSockets; custom route constraints and host-based
+  routing; an OpenAPI document and Swagger UI; a built-in server with
+  workers, graceful shutdown, size limits, timeouts, backpressure and
+  WebSocket pings; and a deployment guide.
 - **Young.** Alpha, one maintainer, no known production use yet.
 
 Two rules hold for everything below:
@@ -45,23 +47,37 @@ timeouts; the app adds rate limiting per user or API key and request
 IDs. That also helps where there's no full proxy in front: local
 development, or a platform whose load balancer doesn't do everything.
 
-## Later
+## Until 1.0
 
-- Free-threaded Python (3.14t), to let one worker use several cores.
-- A shared rate limit store (Redis), so the limit holds across workers and
-  machines.
-- WebSockets: a way for app hooks to see the handshake (dependencies
-  already can).
-- Optional middleware for security headers and response compression,
-  for deployments without a proxy.
-- Validation: a model filled from form fields, and dependencies
-  available to middleware.
-- More route syntax: custom constraints, host-based routing.
-- Benchmarks with several workers and with a real database.
+Everything left is done before 1.0, while no one runs Korvex in
+production: an API can still change for free now, and won't after. Until
+then, a version may break things; each break is listed in the changelog
+with how to update.
+
+The versions go from what shapes the API to what only adds to it.
+
+### 0.11: ready-made middleware
+
+- **Response compression** (gzip, and brotli or zstd when installed), for
+  deployments without a proxy to do it.
+- **Security headers**: `Strict-Transport-Security`, `Content-Security-Policy`,
+  `X-Content-Type-Options` and the like, with safe defaults.
+- **A shared rate limit store on Redis**, so a limit holds across workers
+  and machines (`redis` as an optional dependency).
+
+### 0.12: more than one core per worker
+
+- **Free-threaded Python (3.14t)**: wheels built for it (the `abi3` wheels
+  don't cover it), and the Rust and Python sides checked for real
+  parallel threads.
+- **Benchmarks with several workers and with a real database**
+  (PostgreSQL), in `benches/` like the others.
 
 ## 1.0
 
-- An API that stays stable, with deprecations announced in advance.
-- A documentation site.
+- An API that stays stable, with deprecations announced in advance: a
+  deprecated feature warns for at least two minor versions before it goes.
+- A documentation site, built from the README, the deployment guide and
+  the examples.
 - A built-in server that's solid in production behind a reverse proxy.
 - At least a few projects running it in production.
