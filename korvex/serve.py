@@ -141,7 +141,8 @@ async def serve(app: App, fd: int, graceful_timeout: float, config: Config) -> N
     def take_requests() -> None:
         for kind, *event in server.take():
             if kind == "http":
-                start(handle(*event, writable=writable))
+                method, path, query, headers, body, client, scheme, responder, error = event
+                start(handle(method, path, query, headers, body, client, scheme, responder, error, writable))
             elif kind == "ws":
                 path, query, headers, client, scheme, connection = event
                 queue: asyncio.Queue = asyncio.Queue()

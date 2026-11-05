@@ -10,6 +10,13 @@
 use std::net::{IpAddr, SocketAddr};
 
 use hyper::HeaderMap;
+use hyper::header::{FORWARDED, HeaderName};
+
+// Looked up by `HeaderName`, not by `&str`: a string is parsed and checked
+// again on every lookup, and these run on every request from a proxy.
+const X_FORWARDED_FOR: HeaderName = HeaderName::from_static("x-forwarded-for");
+const X_FORWARDED_PROTO: HeaderName = HeaderName::from_static("x-forwarded-proto");
+const X_FORWARDED_HOST: HeaderName = HeaderName::from_static("x-forwarded-host");
 
 /// The proxies whose forwarding headers are believed. Connections over a
 /// Unix socket are always trusted: only a local process can open one.
@@ -89,7 +96,7 @@ pub fn resolve(peer: Option<SocketAddr>, headers: &HeaderMap, trusted: &Trusted)
 /// written by the client itself. For `-Proto` and `-Host`, the rightmost
 /// value is believed: the one the nearest proxy set or appended.
 fn resolve_x_forwarded(headers: &HeaderMap, trusted: &Trusted, resolved: &mut Resolved) {
-    let entries = values(headers, "x-forwarded-for");
+    let entries = values(headers, &X_FORWARDED_FOR);
     let untrusted = entries
         .iter()
         .rev()
@@ -97,10 +104,10 @@ fn resolve_x_forwarded(headers: &HeaderMap, trusted: &Trusted, resolved: &mut Re
     if let Some(entry) = untrusted.or(entries.first()) {
         resolved.client = Some(((*entry).to_string(), 0));
     }
-    if let Some(proto) = values(headers, "x-forwarded-proto").last() {
+    if let Some(proto) = values(headers, &X_FORWARDED_PROTO).last() {
         resolved.scheme = scheme(proto);
     }
-    resolved.host = values(headers, "x-forwarded-host")
+    resolved.host = values(headers, &X_FORWARDED_HOST)
         .last()
         .and_then(|host| valid_host(host));
 }
@@ -151,7 +158,7 @@ fn valid_host(host: &str) -> Option<String> {
 }
 
 /// Every comma-separated value of a header, in order, over all its lines.
-fn values<'a>(headers: &'a HeaderMap, name: &str) -> Vec<&'a str> {
+fn values<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Vec<&'a str> {
     headers
         .get_all(name)
         .iter()
@@ -194,7 +201,7 @@ struct Element {
 fn forwarded(headers: &HeaderMap) -> Vec<Element> {
     let mut elements = Vec::new();
     for line in headers
-        .get_all("forwarded")
+        .get_all(FORWARDED)
         .iter()
         .filter_map(|v| v.to_str().ok())
     {
