@@ -894,6 +894,7 @@ def test_host_routes_answer_for_their_host_only():
     assert on(app, "acme.example.com", "/admin/purge", "POST") == (200, b"purged acme")
     assert on(app, "acme.example.com", "/admin/purge")[0] == 405  # the host has the path, not for GET
     assert on(app, "a.b.example.com")[1] == b"main home"  # {tenant} takes one label: no match there
+    assert on(app, ".example.com")[1] == b"main home"  # an empty label isn't a tenant
     assert on(app, "api.example.com", "/admin/purge", "POST")[0] == 404  # api isn't a tenant: its host owns it
 
 
