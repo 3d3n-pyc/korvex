@@ -19,3 +19,10 @@ def home(request):
 def get_user(request, id):
     # Behind a trusted proxy, client and scheme are the real ones, not the proxy's.
     return Response.json({"id": id, "client": request.client, "scheme": request.scheme})
+
+
+@app.websocket("/ws")
+async def echo(ws):
+    await ws.accept()
+    async for message in ws:
+        await ws.send_text(f"echo: {message}")

@@ -9,8 +9,13 @@ import sys
 from pathlib import Path
 
 from korvex import App, HTTPException, Response
+from korvex.middleware import rate_limit, request_id
 
 app = App()
+if os.environ.get("REQUEST_ID"):
+    request_id(app)
+if os.environ.get("RATE_LIMIT"):
+    rate_limit(app, requests=int(os.environ["RATE_LIMIT"]), per=60)
 if os.environ.get("STATIC_DIR"):
     app.static("/static", Path(os.environ["STATIC_DIR"]))
 
@@ -25,6 +30,11 @@ def startup():
 @app.on_shutdown
 def shutdown():
     print("STOPPED", flush=True)
+
+
+@app.after_request
+def powered_by(request, response):
+    response.headers.set("X-Powered-By", "korvex")
 
 
 @app.get("/users/{id:int}")
@@ -83,6 +93,20 @@ async def import_data(request):
 @app.get("/client")
 def client(request):
     return Response.json({"client": request.client, "scheme": request.scheme})
+
+
+@app.websocket("/ws/{room}")
+async def ws_echo(ws, room):
+    if ws.query_params.get("token") != ["secret"]:
+        await ws.close(code=1008)  # refuses it: a 403
+        return
+    await ws.accept(subprotocol="chat" if "chat" in ws.subprotocols else None)
+    async for message in ws:
+        if isinstance(message, bytes):
+            await ws.send_bytes(message[::-1])
+        else:
+            await ws.send_text(f"{room}: {message}")
+    print("WS CLOSED", flush=True)
 
 
 @app.get("/fail")

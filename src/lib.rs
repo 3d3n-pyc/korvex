@@ -17,6 +17,8 @@ mod proxy;
 #[cfg(unix)] // the built-in server relies on Unix sockets; Windows uses an ASGI server
 mod server;
 mod tree;
+#[cfg(unix)]
+mod websocket;
 
 use method::Method;
 use path::Constraint;
@@ -164,6 +166,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     {
         m.add_class::<server::Server>()?;
         m.add_class::<server::Responder>()?;
+        m.add_class::<websocket::WsConnection>()?;
     }
     m.add("MethodNotAllowed", m.py().get_type::<MethodNotAllowed>())?;
     Ok(())

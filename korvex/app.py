@@ -11,7 +11,7 @@ import asyncio
 import json
 import logging
 import os
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from email.message import Message
 from http import HTTPStatus
 from inspect import isawaitable
@@ -35,6 +35,10 @@ sends it right away; returning `None` moves on to the next step."""
 
 Hook = Callable[[], Union[None, Awaitable[None]]]
 """`() -> None`, sync or async, run when the server starts or stops."""
+
+AfterHook = Callable[["Request", Response], Union[Optional[Response], Awaitable[Optional[Response]]]]
+"""`(request, response) -> Response | None`, sync or async. Returns the
+response to send, or `None` to keep it as it is."""
 
 ExceptionHandler = Callable[["Request", Exception], Union[Response, Awaitable[Response]]]
 """`(request, exception) -> Response`, sync or async."""
@@ -77,7 +81,7 @@ class Request:
     __slots__ = ("method", "path", "headers", "query_params", "path_params", "client", "scheme", "_receive", "_cookies")
 
     def __init__(self, scope: dict, receive: Callable[[], Awaitable[dict]], path_params: Mapping[str, Any]) -> None:
-        self.method: str = scope["method"]
+        self.method: str = scope.get("method", "GET")  # a WebSocket handshake is a GET
         self.path: str = scope["path"]
         client = scope.get("client")
         self.client: tuple[str, int] | None = tuple(client) if client else None  # type: ignore[assignment]
@@ -139,6 +143,125 @@ class Request:
 
     def __repr__(self) -> str:
         return f"Request({self.method} {self.path!r})"
+
+
+class WebSocketDisconnect(Exception):
+    """Raised by `WebSocket.receive()` once the client has disconnected."""
+
+    def __init__(self, code: int = 1000) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+class WebSocket(Request):
+    """A WebSocket connection, passed to `@app.websocket` handlers. It has
+    the handshake request's headers, cookies, params, client and scheme
+    (`"ws"` or `"wss"`), so the handler can check who connects before
+    calling `accept()`.
+
+        @app.websocket("/ws")
+        async def echo(ws):
+            await ws.accept()
+            async for message in ws:
+                await ws.send_text(message)
+    """
+
+    __slots__ = ("subprotocols", "_send", "_connected", "_accepted", "_closed")
+
+    def __init__(self, scope: dict, receive: Callable, send: Callable, path_params: Mapping[str, Any]) -> None:
+        super().__init__(scope, receive, path_params)
+        self._send = send
+        self._connected = False
+        self._accepted = False
+        self._closed = False
+        self.subprotocols: list[str] = list(scope.get("subprotocols", []))
+        """Subprotocols the client asked for, to pick one in `accept()`."""
+
+    async def accept(self, subprotocol: str | None = None, headers: Iterable[tuple[str, str]] = ()) -> None:
+        """Accepts the connection, optionally with one of `subprotocols`."""
+        await self._wait_connect()
+        await self._send(
+            {
+                "type": "websocket.accept",
+                "subprotocol": subprotocol,
+                "headers": [(name.lower().encode("latin-1"), value.encode("latin-1")) for name, value in headers],
+            }
+        )
+        self._accepted = True
+
+    async def receive(self) -> str | bytes:
+        """The next message, text or binary. Raises `WebSocketDisconnect`
+        when the client has gone."""
+        message = await self._receive()
+        if message["type"] == "websocket.disconnect":
+            self._closed = True
+            raise WebSocketDisconnect(message.get("code", 1000))
+        if message.get("text") is not None:
+            return message["text"]
+        return message.get("bytes") or b""
+
+    async def receive_text(self) -> str:
+        message = await self.receive()
+        if not isinstance(message, str):
+            raise TypeError("expected a text message, got binary")
+        return message
+
+    async def receive_bytes(self) -> bytes:
+        message = await self.receive()
+        if not isinstance(message, bytes):
+            raise TypeError("expected a binary message, got text")
+        return message
+
+    async def receive_json(self) -> JSONValue:
+        return json.loads(await self.receive())
+
+    async def send_text(self, text: str) -> None:
+        await self._send({"type": "websocket.send", "text": text})
+
+    async def send_bytes(self, data: bytes) -> None:
+        await self._send({"type": "websocket.send", "bytes": data})
+
+    async def send_json(self, data: JSONValue) -> None:
+        await self.send_text(json.dumps(data))
+
+    async def close(self, code: int = 1000, reason: str = "") -> None:
+        """Closes the connection. Before `accept()`, this refuses it: the
+        client gets a 403."""
+        if self._closed:
+            return
+        await self._wait_connect()
+        await self._send({"type": "websocket.close", "code": code, "reason": reason})
+        self._closed = True
+
+    async def __aiter__(self) -> AsyncIterator[str | bytes]:
+        """The messages, until the client disconnects."""
+        while True:
+            try:
+                yield await self.receive()
+            except WebSocketDisconnect:
+                return
+
+    async def _wait_connect(self) -> None:
+        """ASGI starts with a `websocket.connect` message to receive first."""
+        if not self._connected:
+            self._connected = True
+            await self._receive()
+
+    async def body(self) -> bytes:
+        raise TypeError("a WebSocket has no body: use receive()")
+
+    async def json(self) -> JSONValue:
+        raise TypeError("a WebSocket has no body: use receive_json()")
+
+    async def form(self) -> FormData:
+        raise TypeError("a WebSocket has no form")
+
+    def __repr__(self) -> str:
+        return f"WebSocket({self.path!r})"
+
+
+WebSocketHandler = Callable[..., Awaitable[None]]
+"""`async (websocket, **path_params) -> None`."""
 
 
 class _RouteDecorators:
@@ -230,6 +353,19 @@ class AppGroup(_RouteDecorators):
 
         return register
 
+    def websocket(self, path: str) -> Callable[[WebSocketHandler], WebSocketHandler]:
+        """Decorator: registers the function as the WebSocket handler for
+        `path`, under this group's prefix. Group middleware and app hooks
+        don't run for WebSockets: check who connects in the handler."""
+
+        def register(func: WebSocketHandler) -> WebSocketHandler:
+            name = f"{func.__module__}.{func.__qualname__}"
+            self._app._ws_router.route(self._routes.full_path(path), name)
+            self._app._ws_handlers[name] = func
+            return func
+
+        return register
+
     def group(self, prefix: str = "", *, middleware: Sequence[str] | None = None) -> AppGroup:
         """Returns a nested group. Its `middleware` runs after this group's."""
         return AppGroup(self._app, self._routes.group(prefix, middleware=middleware))
@@ -252,6 +388,8 @@ class App(_RouteDecorators):
 
     def __init__(self, router: Router | None = None) -> None:
         self.router = router if router is not None else Router()
+        self._ws_router = Router()  # WebSocket routes: a path can have both
+        self._ws_handlers: dict[str, WebSocketHandler] = {}
         self._root = AppGroup(self, self.router.group())
         self._handlers: dict[str, Handler] = {}
         self._middleware: dict[str, Middleware] = {}
@@ -259,6 +397,8 @@ class App(_RouteDecorators):
         self._on_shutdown: list[Hook] = []
         self._exception_handlers: dict[int | type[Exception], ExceptionHandler] = {}
         self._body_limits: list[tuple[str, str, int]] = []  # (method, path, bytes), for the built-in server
+        self._before_request: list[Middleware] = []
+        self._after_request: list[AfterHook] = []
 
     def route(
         self,
@@ -274,6 +414,12 @@ class App(_RouteDecorators):
     def group(self, prefix: str = "", *, middleware: Sequence[str] | None = None) -> AppGroup:
         """Returns an `AppGroup` that registers handlers under `prefix`."""
         return self._root.group(prefix, middleware=middleware)
+
+    def websocket(self, path: str) -> Callable[[WebSocketHandler], WebSocketHandler]:
+        """Decorator: registers the function as the WebSocket handler for
+        `path`; it gets a `WebSocket` and the path params. App hooks don't
+        run for WebSockets: check who connects in the handler."""
+        return self._root.websocket(path)
 
     def handler(self, name: str) -> Callable[[Handler], Handler]:
         """Decorator: attaches a function to a handler name already
@@ -337,6 +483,28 @@ class App(_RouteDecorators):
         Works with or without parentheses."""
         return _add_hook(self._on_shutdown, func)
 
+    @overload
+    def before_request(self, func: Middleware) -> Middleware: ...
+    @overload
+    def before_request(self, func: None = None) -> Callable[[Middleware], Middleware]: ...
+    def before_request(self, func: Middleware | None = None) -> Middleware | Callable[[Middleware], Middleware]:
+        """Decorator: runs the function before every request, ahead of
+        routing, so it sees unknown paths too. It gets the request
+        (`path_params` not filled yet) and returns a `Response` to answer
+        right away, or `None` to carry on. Hooks run in the order declared."""
+        return _add_hook(self._before_request, func)  # type: ignore[arg-type]
+
+    @overload
+    def after_request(self, func: AfterHook) -> AfterHook: ...
+    @overload
+    def after_request(self, func: None = None) -> Callable[[AfterHook], AfterHook]: ...
+    def after_request(self, func: AfterHook | None = None) -> AfterHook | Callable[[AfterHook], AfterHook]:
+        """Decorator: runs the function on every response, errors included.
+        It gets the request and the response, and returns the response to
+        send, or `None` to keep it. Hooks run in reverse order, like layers:
+        the first declared sees the response last."""
+        return _add_hook(self._after_request, func)  # type: ignore[arg-type]
+
     def exception_handler(self, key: int | type[Exception]) -> Callable[[ExceptionHandler], ExceptionHandler]:
         """Decorator: answers errors with the function's `Response`. `key` is
         an HTTP status (`404`, also used for unknown paths) or an exception
@@ -351,6 +519,9 @@ class App(_RouteDecorators):
     async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
         if scope["type"] == "lifespan":
             await self._lifespan(receive, send)
+            return
+        if scope["type"] == "websocket":
+            await self._websocket(scope, receive, send)
             return
         if scope["type"] != "http":
             raise NotImplementedError(f"unsupported ASGI scope type: {scope['type']!r}")
@@ -368,34 +539,120 @@ class App(_RouteDecorators):
             await send({"type": "http.response.body", "body": response.body})
 
     async def _respond(self, scope: dict, receive: Callable) -> Response:
-        request = None
+        """The response to one request: before hooks, then the route (its
+        middleware and handler), then after hooks, with errors turned into
+        responses at each step."""
+        request = Request(scope, receive, {})
         try:
-            try:
-                found = self.router.match(scope["path"], method=scope["method"])
-            except MethodNotAllowed as exc:
-                if scope["method"] == "HEAD" and "GET" in exc.allowed:
-                    found = self.router.match(scope["path"], method="GET")  # HEAD is GET without the body
-                else:
-                    raise HTTPException(405, headers=[("Allow", ", ".join(exc.allowed))]) from None
-            if found is None:
-                raise HTTPException(404)
-
-            handler_name, path_params, middleware_names = found
-            request = Request(scope, receive, path_params)
-
-            for name in middleware_names:
-                if name not in self._middleware:
-                    raise LookupError(f"no middleware named {name!r}; register one with @app.middleware({name!r})")
-                early_response = await _call(self._middleware[name], request)
-                if early_response is not None:
-                    return early_response
-
-            if handler_name not in self._handlers:
-                raise LookupError(f"no handler named {handler_name!r}; register one with @app.handler({handler_name!r})")
-            return await _call(self._handlers[handler_name], request, **path_params)
+            response = None
+            for hook in self._before_request:
+                response = await _call(hook, request)
+                if response is not None:
+                    break
+            if response is None:
+                response = await self._dispatch(request)
         except Exception as exc:
-            # Unknown paths fail before the request is built: build it now.
-            return await self._handle_error(request or Request(scope, receive, {}), exc)
+            response = await self._handle_error(request, exc)
+        for hook in reversed(self._after_request):
+            try:
+                changed = await _call(hook, request, response)
+            except Exception:
+                logger.exception("after_request hook failed for %s %s", request.method, request.path)
+                return Response.text("Internal Server Error", status=500)
+            if changed is not None:
+                response = changed
+        return response
+
+    async def _dispatch(self, request: Request) -> Response:
+        """Routes the request and runs its middleware and handler."""
+        try:
+            found = self.router.match(request.path, method=request.method)
+        except MethodNotAllowed as exc:
+            if request.method == "HEAD" and "GET" in exc.allowed:
+                found = self.router.match(request.path, method="GET")  # HEAD is GET without the body
+            else:
+                raise HTTPException(405, headers=[("Allow", ", ".join(exc.allowed))]) from None
+        if found is None:
+            raise HTTPException(404)
+
+        handler_name, path_params, middleware_names = found
+        request.path_params = path_params
+        for name in middleware_names:
+            if name not in self._middleware:
+                raise LookupError(f"no middleware named {name!r}; register one with @app.middleware({name!r})")
+            early_response = await _call(self._middleware[name], request)
+            if early_response is not None:
+                return early_response
+
+        if handler_name not in self._handlers:
+            raise LookupError(f"no handler named {handler_name!r}; register one with @app.handler({handler_name!r})")
+        return await _call(self._handlers[handler_name], request, **path_params)
+
+    async def _serve_websocket(
+        self,
+        path: str,
+        query_string: bytes,
+        headers: list,
+        client: tuple[str, int] | None,
+        scheme: str,
+        connection: Any,
+        incoming: asyncio.Queue,
+    ) -> None:
+        """Runs a WebSocket from the built-in server through the same code
+        as under ASGI: it speaks ASGI messages over the Rust connection."""
+        offered = next((v.decode("latin-1") for k, v in headers if k == b"sec-websocket-protocol"), "")
+        scope = {
+            "type": "websocket",
+            "path": unquote(path),
+            "query_string": query_string,
+            "headers": headers,
+            "client": client,
+            "scheme": scheme,
+            "subprotocols": [p.strip() for p in offered.split(",") if p.strip()],
+        }
+        connected = False
+
+        async def receive() -> dict:
+            nonlocal connected
+            if not connected:
+                connected = True
+                return {"type": "websocket.connect"}
+            return await incoming.get()
+
+        async def send(message: dict) -> None:
+            kind = message["type"]
+            if kind == "websocket.accept":
+                connection.accept(message.get("subprotocol"), message.get("headers") or [])
+            elif kind == "websocket.send":
+                if message.get("text") is not None:
+                    connection.send_text(message["text"])
+                else:
+                    connection.send_bytes(message.get("bytes") or b"")
+            elif kind == "websocket.close":
+                connection.close(message.get("code", 1000), message.get("reason") or "")
+
+        try:
+            await self._websocket(scope, receive, send)
+        finally:
+            connection.finish()
+
+    async def _websocket(self, scope: dict, receive: Callable, send: Callable) -> None:
+        """Runs a WebSocket connection: its handler, or a refusal (403) for
+        an unknown path. Whatever the handler leaves open gets closed."""
+        found = self._ws_router.match(scope["path"])
+        websocket = WebSocket(scope, receive, send, found[1] if found else {})
+        if found is None or found[0] not in self._ws_handlers:
+            await websocket.close()  # before accept: the client gets a 403
+            return
+        try:
+            await self._ws_handlers[found[0]](websocket, **found[1])
+        except WebSocketDisconnect:
+            pass  # the client left; nothing more to do
+        except Exception:
+            logger.exception("unhandled error in WebSocket %s", websocket.path)
+            await websocket.close(1011 if websocket._accepted else 1000)  # 1011: server error
+            return
+        await websocket.close()
 
     async def _handle_error(self, request: Request, exc: Exception) -> Response:
         """Turns an exception into a response: the matching exception
@@ -571,7 +828,7 @@ async def _call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     return await result if isawaitable(result) else result
 
 
-def _add_hook(hooks: list[Hook], func: Hook | None) -> Hook | Callable[[Hook], Hook]:
+def _add_hook(hooks: list, func: Callable | None) -> Any:
     """Registers `func` (`@app.on_startup`), or returns a decorator that
     will (`@app.on_startup()`)."""
     if func is None:

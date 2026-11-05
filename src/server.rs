@@ -26,29 +26,38 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Either, Full, LengthLimitError, Limited};
-use hyper::body::{Body, Frame, Incoming};
+use hyper::body::{Body, Frame};
 use hyper::header::CONTENT_LENGTH;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
-use hyper_util::server::graceful::{GracefulShutdown, Watcher};
 use pyo3::exceptions::{PyOSError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, UnixListener};
-use tokio::sync::{Notify, mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::method::Method;
 use crate::proxy::{Trusted, resolve};
 use crate::tree::{Node, Outcome};
+use crate::websocket::{self, Incoming, Opening};
 
-type Headers = Vec<(Vec<u8>, Vec<u8>)>;
-type ResponseBody = Either<Full<Bytes>, ChannelBody>;
+pub type Headers = Vec<(Vec<u8>, Vec<u8>)>;
+pub type ResponseBody = Either<Full<Bytes>, ChannelBody>;
+
+/// What the Rust thread queues for Python.
+pub enum Event {
+    Request(Pending),
+    /// A WebSocket handshake for the app to accept or refuse.
+    WebSocket(Opening),
+    /// A message on an open WebSocket, or the news that it closed.
+    WebSocketMessage(u64, Incoming),
+}
 
 /// A request read by the Rust thread, waiting for Python.
-struct Pending {
+pub struct Pending {
     method: String,
     path: String,
     query: Vec<u8>,
@@ -68,8 +77,8 @@ struct Reply {
 }
 
 /// State shared by the Rust thread and Python.
-struct Shared {
-    queue: Mutex<VecDeque<Pending>>,
+pub struct Shared {
+    queue: Mutex<VecDeque<Event>>,
     /// Set when a wake-up byte is on its way and the loop hasn't taken the
     /// queue yet, so a burst of requests sends a single byte.
     woken: AtomicBool,
@@ -78,14 +87,17 @@ struct Shared {
     grace_ms: AtomicU64,
     /// Set once the server has stopped and every connection is closed.
     finished: AtomicBool,
-    /// Largest request body accepted, in bytes, unless a route sets its own.
-    max_body: u64,
+    /// Largest request body (and WebSocket message) accepted, in bytes,
+    /// unless a route sets its own.
+    pub max_body: u64,
     /// Per-route body limits, matched like routes: `(method, pattern) -> bytes`.
     body_limits: Node<u64>,
     /// How long a client gets to send the headers, then the body.
     timeout: Duration,
     /// Proxies whose `X-Forwarded-*` headers are believed.
-    trusted: Trusted,
+    pub trusted: Trusted,
+    /// The next WebSocket connection's ID.
+    pub next_websocket: AtomicU64,
 }
 
 impl Shared {
@@ -102,11 +114,11 @@ impl Shared {
 }
 
 impl Shared {
-    fn push(&self, pending: Pending) {
+    pub fn push(&self, event: Event) {
         self.queue
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .push_back(pending);
+            .push_back(event);
         if !self.woken.swap(true, Ordering::AcqRel) {
             // If the socket buffer is full, bytes are already waiting: the loop will wake anyway.
             let _ = (&self.wake_writer).write(&[1]);
@@ -183,6 +195,7 @@ impl Server {
             body_limits: limits,
             timeout: Duration::from_secs_f64(timeout),
             trusted,
+            next_websocket: AtomicU64::new(0),
         });
         let stop = Arc::new(Notify::new());
         let thread = {
@@ -205,47 +218,67 @@ impl Server {
         self.wake_reader.as_raw_fd()
     }
 
-    /// Every request waiting, as `(method, path, query_string, headers,
-    /// body, responder)` tuples.
+    /// Every event waiting, as tuples whose first item says what it is:
+    /// `("http", method, path, query_string, headers, body, client, scheme,
+    /// responder)`, `("ws", path, query_string, headers, client, scheme,
+    /// connection)`, `("ws_message", id, text_or_bytes)` or
+    /// `("ws_closed", id, code)`.
     fn take<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         // Order matters, or a wake-up gets lost: empty the socket, then clear
-        // the flag, then drain the queue. A request queued after the flag is
+        // the flag, then drain the queue. An event queued after the flag is
         // cleared writes a new byte, so the loop wakes again (at worst once
         // for nothing). Clearing the flag first would let this call swallow
-        // the byte of a request it then drains, leaving the flag set with no
-        // byte on its way: the next request would never wake the loop.
+        // the byte of an event it then drains, leaving the flag set with no
+        // byte on its way: the next event would never wake the loop.
         let mut buffer = [0u8; 256];
         while matches!((&self.wake_reader).read(&mut buffer), Ok(n) if n > 0) {}
         self.shared.woken.store(false, Ordering::Release);
 
-        let pending: Vec<Pending> = self
+        let events: Vec<Event> = self
             .shared
             .queue
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .drain(..)
             .collect();
-        let requests = PyList::empty(py);
-        for request in pending {
-            let headers = PyList::empty(py);
-            for (name, value) in &request.headers {
-                headers.append((PyBytes::new(py, name), PyBytes::new(py, value)))?;
+        let items = PyList::empty(py);
+        for event in events {
+            match event {
+                Event::Request(request) => items.append((
+                    "http",
+                    request.method,
+                    request.path,
+                    PyBytes::new(py, &request.query),
+                    header_list(py, &request.headers)?,
+                    PyBytes::new(py, &request.body),
+                    request.client,
+                    request.scheme,
+                    Responder {
+                        reply: Mutex::new(Some(request.reply)),
+                        stream: Mutex::new(None),
+                    },
+                ))?,
+                Event::WebSocket(opening) => items.append((
+                    "ws",
+                    opening.path,
+                    PyBytes::new(py, &opening.query),
+                    header_list(py, &opening.headers)?,
+                    opening.client,
+                    opening.scheme,
+                    opening.connection,
+                ))?,
+                Event::WebSocketMessage(id, Incoming::Text(text)) => {
+                    items.append(("ws_message", id, text))?;
+                }
+                Event::WebSocketMessage(id, Incoming::Binary(data)) => {
+                    items.append(("ws_message", id, PyBytes::new(py, &data)))?;
+                }
+                Event::WebSocketMessage(id, Incoming::Closed(code)) => {
+                    items.append(("ws_closed", id, code))?;
+                }
             }
-            requests.append((
-                request.method,
-                request.path,
-                PyBytes::new(py, &request.query),
-                headers,
-                PyBytes::new(py, &request.body),
-                request.client,
-                request.scheme,
-                Responder {
-                    reply: Mutex::new(Some(request.reply)),
-                    stream: Mutex::new(None),
-                },
-            ))?;
         }
-        Ok(requests)
+        Ok(items)
     }
 
     /// Stops accepting connections; open ones finish their current request,
@@ -357,6 +390,14 @@ impl Body for ChannelBody {
     }
 }
 
+fn header_list<'py>(py: Python<'py>, headers: &Headers) -> PyResult<Bound<'py, PyList>> {
+    let list = PyList::empty(py);
+    for (name, value) in headers {
+        list.append((PyBytes::new(py, name), PyBytes::new(py, value)))?;
+    }
+    Ok(list)
+}
+
 /// The listening socket as handed over by Python, before tokio takes it.
 enum StdListener {
     Tcp(StdTcpListener),
@@ -379,39 +420,57 @@ enum Listener {
 
 impl Listener {
     /// Accepts one connection and serves it in its own task.
-    async fn serve_next(&self, shared: &Arc<Shared>, watcher: Watcher) {
+    async fn serve_next(&self, shared: &Arc<Shared>, shutdown: &watch::Sender<bool>) {
         // An accept error (e.g. too many open files) skips this connection only.
         match self {
             Self::Tcp(listener) => {
                 if let Ok((stream, peer)) = listener.accept().await {
                     let _ = stream.set_nodelay(true);
-                    serve_connection(stream, Some(peer), shared, watcher);
+                    serve_connection(stream, Some(peer), shared, shutdown.subscribe());
                 }
             }
             Self::Unix(listener) => {
                 if let Ok((stream, _)) = listener.accept().await {
-                    serve_connection(stream, None, shared, watcher);
+                    serve_connection(stream, None, shared, shutdown.subscribe());
                 }
             }
         }
     }
 }
 
-fn serve_connection<S>(stream: S, peer: Option<SocketAddr>, shared: &Arc<Shared>, watcher: Watcher)
-where
+/// Serves one connection in its own task. It holds a `shutdown` receiver
+/// while it runs, which is how `accept_loop` knows when all are done.
+fn serve_connection<S>(
+    stream: S,
+    peer: Option<SocketAddr>,
+    shared: &Arc<Shared>,
+    mut shutdown: watch::Receiver<bool>,
+) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let shared = Arc::clone(shared);
     let timeout = shared.timeout;
+    let for_websockets = shutdown.clone();
     tokio::spawn(async move {
-        let service = service_fn(move |request| handle(request, peer, Arc::clone(&shared)));
+        let service = service_fn(move |request| {
+            handle(request, peer, Arc::clone(&shared), for_websockets.clone())
+        });
         // Covers slow headers and idle keep-alive connections alike.
         let connection = http1::Builder::new()
             .timer(TokioTimer::new())
             .header_read_timeout(timeout)
-            .serve_connection(TokioIo::new(stream), service);
+            .serve_connection(TokioIo::new(stream), service)
+            .with_upgrades();
+        let mut connection = std::pin::pin!(connection);
         // A client closing its connection early isn't an error worth reporting.
-        let _ = watcher.watch(connection).await;
+        tokio::select! {
+            _ = connection.as_mut() => {}
+            _ = shutdown.changed() => {
+                // Finish the request in progress, then close (no more keep-alive).
+                connection.as_mut().graceful_shutdown();
+                let _ = connection.await;
+            }
+        }
     });
 }
 
@@ -424,19 +483,24 @@ fn accept_loop(listener: StdListener, shared: &Arc<Shared>, stop: &Notify) -> st
             StdListener::Tcp(listener) => Listener::Tcp(TcpListener::from_std(listener)?),
             StdListener::Unix(listener) => Listener::Unix(UnixListener::from_std(listener)?),
         };
-        let graceful = GracefulShutdown::new();
+        // Every connection and WebSocket holds a receiver: `closed()` resolves
+        // once the last one is done.
+        let (shutdown, unused) = watch::channel(false);
+        drop(unused);
         loop {
             tokio::select! {
-                () = listener.serve_next(shared, graceful.watcher()) => {}
+                () = listener.serve_next(shared, &shutdown) => {}
                 () = stop.notified() => break,
             }
         }
-        // Stop accepting, let open connections finish their current request
-        // (keep-alive ends after it), and give up on them after the grace delay.
+        // Stop accepting; open connections finish their current request
+        // (keep-alive ends after it) and WebSockets close with 1001. Give up
+        // on them after the grace delay.
         drop(listener);
+        let _ = shutdown.send(true);
         let grace = Duration::from_millis(shared.grace_ms.load(Ordering::Acquire));
         tokio::select! {
-            () = graceful.shutdown() => {}
+            () = shutdown.closed() => {}
             () = tokio::time::sleep(grace) => {}
         }
         Ok(())
@@ -446,10 +510,14 @@ fn accept_loop(listener: StdListener, shared: &Arc<Shared>, stop: &Notify) -> st
 }
 
 async fn handle(
-    request: Request<Incoming>,
+    request: Request<hyper::body::Incoming>,
     peer: Option<SocketAddr>,
     shared: Arc<Shared>,
+    shutdown: watch::Receiver<bool>,
 ) -> Result<Response<ResponseBody>, Infallible> {
+    if websocket::is_upgrade(&request) {
+        return Ok(websocket::handshake(request, peer, shared, shutdown).await);
+    }
     let (parts, body) = request.into_parts();
     let (client, scheme) = resolve(peer, &parts.headers, &shared.trusted);
     // Read the whole body before Python sees the request, within the size
@@ -474,7 +542,7 @@ async fn handle(
         Ok(Ok(collected)) => collected.to_bytes(),
     };
     let (reply, answer) = oneshot::channel();
-    shared.push(Pending {
+    shared.push(Event::Request(Pending {
         method: parts.method.as_str().to_owned(),
         path: parts.uri.path().to_owned(),
         query: parts.uri.query().unwrap_or("").as_bytes().to_vec(),
@@ -487,7 +555,7 @@ async fn handle(
         client,
         scheme,
         reply,
-    });
+    }));
     // An error means Python dropped the request without answering (it raised).
     Ok(match answer.await {
         Ok(Reply {
@@ -512,12 +580,12 @@ fn build(
     builder.body(body).unwrap_or_else(|_| internal_error())
 }
 
-fn internal_error() -> Response<ResponseBody> {
+pub fn internal_error() -> Response<ResponseBody> {
     plain(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
 }
 
 /// An error answered by Rust itself, before Python sees the request.
-fn plain(status: StatusCode, text: &'static str) -> Response<ResponseBody> {
+pub fn plain(status: StatusCode, text: &'static str) -> Response<ResponseBody> {
     let mut response = Response::new(Either::Left(Full::new(Bytes::from_static(text.as_bytes()))));
     *response.status_mut() = status;
     response.headers_mut().insert(

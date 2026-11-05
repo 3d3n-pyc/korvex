@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.6.0
+
+- `@app.before_request` and `@app.after_request`: hooks around every
+  request, under ASGI and in the built-in server. Before hooks run ahead
+  of routing and can answer right away; after hooks see every response,
+  errors included, in reverse order.
+- `korvex.middleware.cors(app, ...)`: CORS, preflight requests included.
+- `korvex.middleware.request_id(app)`: an ID per request, sent back in
+  `X-Request-ID`, available through `current_request_id()`, added to log
+  records by `RequestIdFilter` and shown in the built-in server's access
+  logs.
+- WebSockets: `@app.websocket(path)`, with `accept()`, `receive()`,
+  `send_text/bytes/json()`, `close()` and `async for`. They work the same
+  under ASGI servers and in the built-in server (messages limited to
+  `max_body`, closed with 1001 on shutdown).
+- The nginx examples pass WebSocket upgrades on; without that, WebSocket
+  connections failed behind nginx.
+- `korvex.middleware.rate_limit(app, requests=..., per=..., key=...)`:
+  per-key limits (client address by default), 429 with `Retry-After`,
+  RateLimit-* headers. In-memory by default, one store per worker; the
+  `RateLimitStore` interface allows a shared one.
+
 ## 0.5.0
 
 A built-in server, written in Rust, to run an App without an ASGI server

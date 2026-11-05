@@ -346,7 +346,7 @@ def test_unsupported_scope_type_raises():
     app = App()
 
     with pytest.raises(NotImplementedError):
-        run_app(app, {"type": "websocket"})
+        run_app(app, {"type": "carrier-pigeon"})
 
 
 def run_lifespan(app):
@@ -737,3 +737,113 @@ def test_request_client_and_scheme_come_from_the_asgi_server():
     scope.update(client=["203.0.113.9", 4242], scheme="https")  # as uvicorn passes them
     _, _, body = response_from(run_app(app, scope))
     assert json.loads(body) == {"client": ["203.0.113.9", 4242], "scheme": "https"}
+
+
+def test_before_request_can_answer_right_away_even_for_unknown_paths():
+    app = App()
+    calls = []
+
+    @app.get("/users")
+    def users(request):
+        calls.append("handler")
+        return Response.text("users")
+
+    @app.before_request
+    def first(request):
+        calls.append(f"first {request.path}")
+
+    @app.before_request()
+    async def maintenance(request):
+        calls.append("maintenance")
+        if request.headers.get("X-Maintenance"):
+            return Response.text("down for maintenance", status=503)
+
+    assert response_from(run_app(app, make_scope("GET", "/users")))[0] == 200
+    assert calls == ["first /users", "maintenance", "handler"]
+
+    calls.clear()
+    scope = make_scope("GET", "/no-such-path", headers=[("X-Maintenance", "1")])
+    assert response_from(run_app(app, scope))[:3:2] == (503, b"down for maintenance")
+    assert calls == ["first /no-such-path", "maintenance"]  # ran before routing, handler skipped
+
+
+def test_after_request_sees_every_response_in_reverse_order():
+    app = App()
+
+    @app.get("/ok")
+    def ok(request):
+        return Response.text("ok")
+
+    @app.get("/boom")
+    def boom(request):
+        raise RuntimeError("boom")
+
+    @app.after_request
+    def outer(request, response):
+        response.headers.add("X-Order", "outer")  # declared first: runs last
+
+    @app.after_request()
+    async def inner(request, response):
+        response.headers.add("X-Order", "inner")
+        return response
+
+    for path, status in [("/ok", 200), ("/missing", 404), ("/boom", 500)]:
+        got_status, headers, _ = response_from(run_app(app, make_scope("GET", path)))
+        assert got_status == status
+        assert [v for k, v in headers if k == "X-Order"] == ["inner", "outer"], path
+
+
+def test_after_request_can_replace_the_response():
+    app = App()
+
+    @app.get("/")
+    def home(request):
+        return Response.text("original")
+
+    @app.after_request
+    def replace(request, response):
+        return Response.text(f"replaced {response.status}")
+
+    assert response_from(run_app(app, make_scope("GET", "/")))[2] == b"replaced 200"
+
+
+def test_failing_hooks_give_a_logged_500(caplog):
+    app = App()
+
+    @app.get("/")
+    def home(request):
+        return Response.text("ok")
+
+    @app.before_request
+    def broken_before(request):
+        if request.headers.get("X-Break") == "before":
+            raise RuntimeError("before broke")
+
+    @app.after_request
+    def broken_after(request, response):
+        if request.headers.get("X-Break") == "after":
+            raise RuntimeError("after broke")
+
+    assert response_from(run_app(app, make_scope("GET", "/", headers=[("X-Break", "before")])))[0] == 500
+    assert response_from(run_app(app, make_scope("GET", "/", headers=[("X-Break", "after")])))[0] == 500
+    assert "before broke" in caplog.text and "after_request hook failed" in caplog.text
+
+
+def test_path_params_are_filled_after_routing():
+    app = App()
+    seen = []
+
+    @app.get("/users/{id:int}")
+    def user(request, id):
+        return Response.text("user")
+
+    @app.before_request
+    def before(request):
+        seen.append(dict(request.path_params))
+
+    @app.after_request
+    def after(request, response):
+        seen.append(dict(request.path_params))
+
+    run_app(app, make_scope("GET", "/users/7"))
+    assert seen == [{}, {"id": 7}]

@@ -7,7 +7,7 @@ ASGI server, including serverless platforms. The files below are in
 
 | Setup | When | Checked |
 |---|---|---|
-| [Built-in server behind a reverse proxy](#1-built-in-server-behind-a-reverse-proxy) | Your own server or VM, Linux or macOS | Yes, behind Caddy and nginx over a Unix socket, in containers |
+| [Built-in server behind a reverse proxy](#1-built-in-server-behind-a-reverse-proxy) | Your own server or VM, Linux or macOS | Yes, behind Caddy and nginx over a Unix socket, in containers, WebSockets included |
 | [uvicorn behind a reverse proxy](#2-uvicorn-behind-a-reverse-proxy) | The same, or Windows | Yes, behind Caddy and nginx, in containers |
 | [Docker](#3-docker) | Fly.io, Railway, Render, Cloud Run, Kubernetes... | Yes, image built and run, stops cleanly on SIGTERM |
 | [AWS Lambda](#4-aws-lambda) | Serverless on AWS | Locally: handler called with an API Gateway event, not on AWS |
@@ -53,6 +53,12 @@ example.com {
 With [nginx](../examples/deploy/nginx-unix.conf):
 
 ```nginx
+# Passes WebSocket upgrades on, and keeps plain requests as they were.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
 upstream korvex {
     server unix:/run/korvex/korvex.sock;
 }
@@ -63,12 +69,19 @@ server {
 
     location / {
         proxy_pass http://korvex;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 ```
+
+Caddy passes WebSockets on by itself. nginx needs the `map` and the
+`Upgrade` / `Connection` headers above; without them, WebSocket
+connections reach the app as plain requests and fail.
 
 Keep `korvex run` running with systemd, or use Docker (section 3).
 
@@ -102,12 +115,21 @@ With [nginx](../examples/deploy/nginx.conf) (add a certificate, for
 example with certbot, to serve HTTPS):
 
 ```nginx
+# Passes WebSocket upgrades on, and keeps plain requests as they were.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
 server {
     listen 80;
     server_name example.com;
 
     location / {
         proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;

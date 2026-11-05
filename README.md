@@ -7,7 +7,7 @@ A fast router for Python, written in Rust, with an ASGI app on top and a
 built-in server to run it.
 
 Korvex is young (alpha). It's fast (see [Performance](#performance)), but it
-lacks some of what full frameworks offer: WebSockets, validation, OpenAPI. The [roadmap](ROADMAP.md) lists what's coming.
+lacks some of what full frameworks offer: validation, OpenAPI. The [roadmap](ROADMAP.md) lists what's coming.
 
 ```sh
 pip install korvex
@@ -119,6 +119,10 @@ uvicorn mymodule:app
 - `HEAD` requests are answered by the `GET` route, without the body.
 - Unknown paths get a 404; known paths with the wrong method get a 405
   with an `Allow` header.
+- `@app.before_request` runs before every request, ahead of routing (so
+  for unknown paths too), and returns a `Response` to answer right away or
+  `None` to carry on. `@app.after_request` gets every response, errors
+  included, and returns the one to send (or `None` to keep it).
 - `raise HTTPException(404, "user not found")` in a handler or middleware
   answers with that error. `@app.exception_handler(404)` (a status) or
   `@app.exception_handler(ValueError)` (an exception class) customizes the
@@ -134,6 +138,53 @@ uvicorn mymodule:app
   database pool. Shutdown hooks run in reverse order. If a startup hook
   raises, the server doesn't start. Both `@app.on_startup` and
   `@app.on_startup()` work.
+
+### WebSockets
+
+```python
+@app.websocket("/ws/{room}")
+async def chat(ws, room):
+    if ws.cookies.get("session") is None:
+        await ws.close(code=1008)  # before accept: refuses it (403)
+        return
+    await ws.accept()
+    async for message in ws:  # text or bytes, until the client leaves
+        await ws.send_text(f"{room}: {message}")
+```
+
+- A `WebSocket` has the handshake's `headers`, `cookies`, `query_params`,
+  `path_params`, `client` and `scheme`; `accept(subprotocol=...)`,
+  `receive()` (raises `WebSocketDisconnect`), `receive_text/bytes/json`,
+  `send_text/bytes/json` and `close(code)`.
+- They work the same under ASGI servers and in the built-in server. Groups
+  support them (`api.websocket(...)`); app hooks don't run for them.
+
+### Ready-made hooks
+
+`korvex.middleware` registers hooks for common jobs:
+
+```python
+from korvex.middleware import cors
+
+cors(app, allow_origins=["https://example.com"], allow_credentials=True)
+```
+
+- `cors(app, allow_origins=..., allow_methods=..., allow_headers=...,
+  allow_credentials=False, expose_headers=(), max_age=600)` lets browsers
+  call the app from other origins. Preflight requests are answered before
+  routing; every response to an allowed origin, errors included, gets the
+  CORS headers.
+- `request_id(app, header="X-Request-ID", trust_incoming=True)` gives
+  every request an ID (the incoming one if it's safe, a new one
+  otherwise) and sends it back. `current_request_id()` returns it anywhere
+  in your code, `RequestIdFilter` adds it to log records
+  (`%(request_id)s`), and the built-in server's access logs show it.
+- `rate_limit(app, requests=100, per=60, key=...)` allows each key (the
+  client's address by default, or an API key, a user ID...) that many
+  requests per period; beyond that, a 429 with `Retry-After`. Responses
+  carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`.
+  Counters live in each worker's memory, so with 3 workers a client can
+  get up to 3 times the limit; `store=` takes a shared store instead.
 
 More in [`examples/`](examples/). To put it in production (behind nginx or
 Caddy, in Docker, on AWS Lambda or Vercel), see the
@@ -157,7 +208,7 @@ or, from Python, `app.run(workers=3)`. The same options exist in both:
 | `--uds PATH` | | Listen on a Unix socket instead, for a proxy on the same machine. |
 | `--workers N` | `1` | Processes sharing the port. About 3 per 4 CPU cores works best. A worker that crashes is restarted. |
 | `--graceful-timeout S` | `30` | On Ctrl+C or SIGTERM, seconds requests in progress get to finish. |
-| `--max-body BYTES` | 1 MiB | Larger request bodies get a 413. A route can set its own: `@app.post("/upload", max_body=50_000_000)`. |
+| `--max-body BYTES` | 1 MiB | Larger request bodies get a 413, larger WebSocket messages close the connection. A route can set its own: `@app.post("/upload", max_body=50_000_000)`. |
 | `--timeout S` | `30` | Seconds a client gets to send the headers, then the body (408 after that). |
 | `--forwarded-allow-ips` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-For` and `X-Forwarded-Proto` set `request.client` and `request.scheme`. `*` trusts any. |
 | `--access-log` | off | Log each request. |
@@ -169,7 +220,8 @@ handlers. A slow or huge upload never holds a Python worker.
 Things to know:
 
 - Run it behind a reverse proxy (nginx, Caddy, Traefik) in production: it
-  speaks HTTP/1.1 only, and HTTPS, HTTP/2 and HTTP/3 are the proxy's job.
+  speaks HTTP/1.1 and WebSocket; HTTPS, HTTP/2 and HTTP/3 are the proxy's
+  job.
 - The 413 and 408 errors are answered by the server itself, before your
   app sees the request, so `@app.exception_handler` doesn't apply to them.
 - The `App` is still a plain ASGI app: uvicorn, Granian or a serverless
