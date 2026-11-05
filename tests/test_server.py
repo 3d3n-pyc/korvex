@@ -336,3 +336,34 @@ def test_access_log():
     fetch(f"http://127.0.0.1:{port}/users/1?verbose=1")
     _, output = stop_and_collect(process)
     assert '127.0.0.1 "GET /users/1?verbose=1" 200' in output
+
+
+def test_command_line_serves_an_app():
+    port = free_port()
+    command = [sys.executable, "-m", "korvex", "run", "server_app:app", "--app-dir", str(SERVER_APP.parent)]
+    process = subprocess.Popen(
+        [*command, "--port", str(port), "--workers", "2", "--access-log"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    for _ in range(100):
+        try:
+            socket.create_connection(("127.0.0.1", port), timeout=0.1).close()
+            break
+        except OSError:
+            time.sleep(0.05)
+    status, _, body = fetch(f"http://127.0.0.1:{port}/users/7")
+    code, output = stop_and_collect(process)
+    assert (status, json.loads(body), code) == (200, {"id": 7}, 0)
+    assert output.count("STARTED") == 2 and '"GET /users/7" 200' in output
+
+
+@pytest.mark.parametrize(
+    ("target", "message"),
+    [("no_such_module:app", "can't find module"), ("server_app:startup", "isn't a korvex App")],
+)
+def test_command_line_explains_a_wrong_target(target, message):
+    command = [sys.executable, "-m", "korvex", "run", target, "--app-dir", str(SERVER_APP.parent)]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    assert result.returncode != 0 and message in result.stderr
