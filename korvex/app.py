@@ -387,7 +387,7 @@ class AppGroup(_RouteDecorators):
         after the group's."""
 
         def register(func: Handler) -> Handler:
-            name = f"{func.__module__}.{func.__qualname__}"
+            name = _route_name(func, self._app._handlers)
             full_path = self._routes.full_path(path)
             # Bad annotations fail here, at import.
             plan = self._app._plan(func, full_path, (*self._dependencies, *dependencies))
@@ -408,7 +408,7 @@ class AppGroup(_RouteDecorators):
         Group middleware and app hooks don't run for WebSockets."""
 
         def register(func: WebSocketHandler) -> WebSocketHandler:
-            name = f"{func.__module__}.{func.__qualname__}"
+            name = _route_name(func, self._app._ws_handlers)
             full_path = self._routes.full_path(path)
             plan = self._app._plan(func, full_path, (*self._dependencies, *dependencies), websocket=True)
             self._app._ws_router.route(full_path, name)
@@ -1011,6 +1011,19 @@ def _start_task(loop: asyncio.AbstractEventLoop, coroutine: Any) -> asyncio.Task
     if _eager_task_factory is not None:
         return _eager_task_factory(loop, coroutine)
     return loop.create_task(coroutine)
+
+
+def _route_name(func: Callable[..., Any], taken: Mapping[str, Any]) -> str:
+    """The handler name a route is registered under: the function's own,
+    `module.qualname`, with `#2`, `#3`... once that's taken. Each route gets
+    its own name, so its own plan (dependencies included) and its own
+    function, even when one function serves two routes (stacked decorators)
+    or a factory registers functions of the same name in several groups."""
+    base = f"{func.__module__}.{func.__qualname__}"
+    name, n = base, 2
+    while name in taken:
+        name, n = f"{base}#{n}", n + 1
+    return name
 
 
 async def _finish(response: StreamingResponse, path: str) -> None:

@@ -20,6 +20,11 @@
 - `Request.body()` and `form()` can be called more than once.
 - Path parameters annotated with a type Korvex can't convert are refused
   at registration, like query parameters in 0.7.
+- Each route is registered under its own handler name (`module.func`,
+  then `module.func#2`...). A function serving two routes now runs each
+  route's own dependencies, and functions of the same name registered by
+  a factory in several groups each run their own code: before, the last
+  one registered ran for all of them.
 - `examples/taskboard/` guards its API and WebSocket with one dependency.
 
 ## 0.7.0

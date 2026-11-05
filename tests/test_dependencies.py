@@ -397,3 +397,56 @@ def test_a_dependency_must_yield_exactly_once(caplog):
     assert "yielded more than once" in caplog.text
     assert call(app, "/never")[0] == 500
     assert "didn't yield" in caplog.text
+
+
+def guarded_and_public(stack_public_on_top):
+    """One function on a guarded route and on a public one, stacked in the
+    given order."""
+    app = App()
+    admin = app.group("/admin", dependencies=[Depends(current_user)])
+
+    def items(request):
+        return Response.text("items")
+
+    if stack_public_on_top:
+        app.get("/public/items")(admin.get("/items")(items))
+    else:
+        admin.get("/items")(app.get("/public/items")(items))
+    return app
+
+
+@pytest.mark.parametrize("public_on_top", [True, False])
+def test_each_route_keeps_its_own_dependencies_when_a_function_serves_two(public_on_top):
+    app = guarded_and_public(public_on_top)
+    assert call(app, "/admin/items") == (401, "sign in first")
+    assert call(app, "/admin/items", headers=[("Cookie", "session=t1")]) == (200, "items")
+    assert call(app, "/public/items") == (200, "items")
+
+
+def test_functions_of_the_same_name_from_a_factory_stay_apart():
+    app = App()
+
+    def crud(group, tag):
+        @group.get("/stats")
+        def stats(request):  # the same qualname each time
+            return Response.text(tag)
+
+    crud(app.group("/admin", dependencies=[Depends(current_user)]), "admin")
+    crud(app.group("/public"), "public")
+    assert call(app, "/admin/stats") == (401, "sign in first")
+    assert call(app, "/admin/stats", headers=[("Cookie", "session=t1")]) == (200, "admin")
+    assert call(app, "/public/stats") == (200, "public")
+
+
+def test_a_websocket_function_on_two_paths_keeps_each_guard():
+    app = App()
+    admin = app.group("/admin", dependencies=[Depends(current_user)])
+
+    async def feed(ws: WebSocket):
+        await ws.accept()
+        await ws.send_text("data")
+
+    app.websocket("/public/ws")(admin.websocket("/ws")(feed))
+    assert run_ws(app, ws_scope("/admin/ws")) == [{"type": "websocket.close", "code": 1000, "reason": ""}]
+    assert run_ws(app, ws_scope("/admin/ws", headers=[("Cookie", "session=t1")]))[1]["text"] == "data"
+    assert run_ws(app, ws_scope("/public/ws"))[1]["text"] == "data"
