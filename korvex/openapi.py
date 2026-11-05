@@ -48,6 +48,7 @@ def build(app: App, *, title: str, version: str, description: str | None = None)
     components: dict[str, Any] = {}
     paths: dict[str, dict[str, Any]] = {}
     used_ids: set[str] = set()
+    custom = dict(app.router.constraints())  # name -> regex
     for pattern, method, name, _ in app.router.routes():
         if name.startswith("korvex.") or name not in app._handlers:
             continue  # static files and the docs themselves; names without a handler can't be described
@@ -62,7 +63,7 @@ def build(app: App, *, title: str, version: str, description: str | None = None)
         everything = plan.everything()  # the handler's parameters and its dependencies'
         annotated = {p.key: p.type for p in everything if p.source == "path"}
         parameters = [
-            {"name": param, "in": "path", "required": True, "schema": scalar_schema(annotated.get(param, given))}
+            {"name": param, "in": "path", "required": True, "schema": _path_schema(param, given, annotated, pattern, custom)}
             for param, given in path_params(pattern).items()
         ]
         for param in everything:
@@ -109,6 +110,20 @@ def build(app: App, *, title: str, version: str, description: str | None = None)
     if components:
         document["components"] = {"schemas": dict(sorted(components.items()))}
     return document
+
+
+_CONSTRAINED = re.compile(r"\{(\w+):(\w+)\}")
+
+
+def _path_schema(param: str, given: Any, annotated: dict, pattern: str, custom: dict) -> dict:
+    """A path parameter's schema: its annotation's type, or the type its
+    constraint gives; a custom constraint adds its regex."""
+    tp = annotated.get(param, given)
+    schema = scalar_schema(tp)
+    constraint = dict(_CONSTRAINED.findall(pattern)).get(param)
+    if constraint in custom and schema == {"type": "string"}:
+        schema = {"type": "string", "pattern": f"^(?:{custom[constraint]})$"}
+    return schema
 
 
 def _with_default(schema: dict, param: Any) -> dict:

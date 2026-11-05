@@ -831,3 +831,18 @@ def test_abort_in_a_websocket_dependency_refuses_the_connection():
         await socket.accept()
 
     assert run_ws(app, ws_scope("/ws")) == [{"type": "websocket.close", "code": 1000, "reason": ""}]
+
+
+def test_custom_route_constraints_and_annotations():
+    from datetime import date
+
+    app = App()
+    app.constraint("isodate", r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+    @app.get("/days/{day:isodate}")
+    def day(request, day: date):  # the constraint picks the route, the annotation converts
+        return Response.text(day.strftime("%A"))
+
+    assert response_from(run_app(app, make_scope("GET", "/days/2026-11-05")))[::2] == (200, b"Thursday")
+    assert response_from(run_app(app, make_scope("GET", "/days/tomorrow")))[0] == 404  # doesn't fit
+    assert response_from(run_app(app, make_scope("GET", "/days/2026-13-45")))[0] == 422  # fits, isn't a date

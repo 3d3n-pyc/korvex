@@ -18,6 +18,14 @@ Breaking changes are listed with how to update.
   refuses the connection. `request_id()` gives WebSocket handlers an ID,
   and **`rate_limit()` now counts handshakes**. A before hook that only
   makes sense for HTTP can skip them with `isinstance(request, WebSocket)`.
+- Custom route constraints: `app.constraint("slug", r"[a-z0-9-]+")` (or
+  `router.constraint()`), then `{post:slug}`. Regexes, compiled and
+  matched in Rust; OpenAPI shows them; the built-in server's per-route
+  body limits accept them.
+- **Constrained parameters are tried in the order their routes were
+  registered** (before plain ones, as before). They were tried most
+  recent first, which only mattered for `int` and `uuid` together, which
+  never match the same value.
 - `Abort(response)`: raised in a dependency, a handler or a before hook,
   sends that response as is, past the exception handlers. In a
   WebSocket's dependencies, it refuses the connection.

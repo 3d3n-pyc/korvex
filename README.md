@@ -39,12 +39,27 @@ router.match("/users", "DELETE")  # raises MethodNotAllowed, .allowed == ["POST"
 | `{id}`      | any segment                          | `/users/{id}`      |
 | `{id:int}`  | an integer (`42`, `-7`)              | `/users/{id:int}`  |
 | `{id:uuid}` | a UUID                               | `/items/{id:uuid}` |
+| `{post:slug}` | what a constraint you defined allows | `/posts/{post:slug}` |
 | `*path`     | the rest of the path (last segment)  | `/static/*path`    |
 
 `{id:int}` gives an `int` and `{id:uuid}` a `uuid.UUID`; every other
 captured value is a string. When several routes could match,
-the most specific one wins: literal, then `{id:int}`/`{id:uuid}`, then
-`{id}`, then `*path`.
+the most specific one wins: literal, then constrained parameters (in the
+order their routes were registered), then `{id}`, then `*path`.
+
+Define your own constraints as regexes, before the routes that use them:
+
+```python
+router.constraint("slug", r"[a-z0-9]+(?:-[a-z0-9]+)*")   # app.constraint() for an App
+router.get("/posts/{post:slug}", "get_post")             # /posts/hello-world, not /posts/Hello
+```
+
+The whole segment must match. The regex is compiled and matched in Rust
+(the `regex` crate: no look-around or backreferences, so matching takes
+linear time), and the router still only gets a path and gives back a
+name. A constraint can't be redefined differently once routes may use it.
+In an `App`, the value is a string; an annotation converts it further
+(`day: date` on `{day:isodate}`), and OpenAPI shows the regex.
 
 ### API
 
@@ -56,6 +71,8 @@ the most specific one wins: literal, then `{id:int}`/`{id:uuid}`, then
 | `remove(path, method="GET")`                     | Removes a route by its pattern. Returns whether it existed. |
 | `routes()`                                       | Every route as `(path, method, handler, middleware)`.    |
 | `group(prefix, *, middleware=None)`              | A `RouteGroup` (see below).                              |
+| `constraint(name, regex)`                         | Defines a constraint for patterns: `{post:slug}`.        |
+| `constraints()`                                  | Every defined constraint as `(name, regex)`.             |
 
 Invalid paths or methods raise `ValueError`.
 

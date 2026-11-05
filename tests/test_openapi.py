@@ -211,3 +211,17 @@ def test_dependencies_headers_cookies_and_forms_are_described():
     assert schema["required"] == ["title", "file"]
     login_form = doc["paths"]["/login"]["post"]["requestBody"]["content"]["application/x-www-form-urlencoded"]["schema"]
     assert login_form["properties"]["remember"] == {"type": "boolean", "default": False}
+
+
+def test_custom_constraints_give_their_regex():
+    app = App()
+    app.constraint("slug", r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+    @app.get("/posts/{post:slug}")
+    def post(request, post):
+        pass
+
+    doc = app.openapi()
+    validator.validate(doc)
+    (param,) = doc["paths"]["/posts/{post}"]["get"]["parameters"]
+    assert param["schema"] == {"type": "string", "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*)$"}

@@ -21,7 +21,7 @@ mod tree;
 mod websocket;
 
 use method::Method;
-use path::Constraint;
+use path::{Constraint, Constraints};
 use tree::{Node, Outcome, Route};
 
 create_exception!(
@@ -45,6 +45,7 @@ type RouteInfo<'py> = (String, &'static str, String, Bound<'py, PyTuple>);
 #[pyclass(subclass, module = "korvex._core")]
 struct Router {
     root: Node<Route>,
+    constraints: Constraints,
 }
 
 #[pymethods]
@@ -53,7 +54,25 @@ impl Router {
     fn new() -> Self {
         Self {
             root: Node::default(),
+            constraints: Constraints::default(),
         }
+    }
+
+    /// Defines a constraint for patterns, beyond `int`, `uuid` and `str`:
+    /// `constraint("slug", "[a-z0-9]+(?:-[a-z0-9]+)*")`, then `{post:slug}`.
+    /// A value matches when the whole of it matches the regex (Rust's
+    /// `regex` syntax: no look-around or backreferences, linear time).
+    /// Define it before the routes that use it; it can't be redefined
+    /// differently. Raises `ValueError` for a bad name or regex.
+    fn constraint(&mut self, name: &str, pattern: &str) -> PyResult<()> {
+        self.constraints
+            .define(name, pattern)
+            .map_err(PyValueError::new_err)
+    }
+
+    /// Every constraint defined with `constraint()`, as `(name, pattern)`.
+    fn constraints(&self) -> Vec<(String, String)> {
+        self.constraints.list()
     }
 
     /// Registers `handler` for `path` and `method`, replacing any route
@@ -71,7 +90,7 @@ impl Router {
             middleware: middleware.unwrap_or_default(),
         };
         self.root
-            .insert(path, parse_method(method)?, route)
+            .insert_with(path, parse_method(method)?, route, &self.constraints)
             .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
@@ -109,7 +128,7 @@ impl Router {
     #[pyo3(signature = (path, method = "GET"))]
     fn remove(&mut self, path: &str, method: &str) -> PyResult<bool> {
         self.root
-            .remove(path, parse_method(method)?)
+            .remove_with(path, parse_method(method)?, &self.constraints)
             .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
@@ -136,14 +155,15 @@ impl Router {
 static UUID: PyOnceLock<Py<PyType>> = PyOnceLock::new();
 
 /// Turns a captured value into what its constraint promises: an `int` for
-/// `{id:int}`, a `uuid.UUID` for `{id:uuid}`, a `str` otherwise.
+/// `{id:int}`, a `uuid.UUID` for `{id:uuid}`, a `str` otherwise (custom
+/// constraints included).
 fn convert<'py>(
     py: Python<'py>,
     constraint: Constraint,
     value: &str,
 ) -> PyResult<Bound<'py, PyAny>> {
     match constraint {
-        Constraint::Any => Ok(value.into_pyobject(py)?.into_any()),
+        Constraint::Any | Constraint::Custom(_) => Ok(value.into_pyobject(py)?.into_any()),
         Constraint::Int => {
             let number: i64 = value
                 .parse()

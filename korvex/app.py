@@ -525,6 +525,22 @@ class App(_RouteDecorators):
             self.router.route(docs_path, "korvex.docs")
             self._handlers["korvex.docs"] = serve_docs
 
+    def constraint(self, name: str, pattern: str) -> None:
+        """Defines a route constraint, beyond `int`, `uuid` and `str`:
+
+            app.constraint("slug", r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+            @app.get("/posts/{post:slug}")       # /posts/hello-world, not /posts/Hello
+
+        A value fits when the whole of it matches the regex (Rust's `regex`
+        syntax: no look-around or backreferences, so matching takes linear
+        time). One that doesn't gives a 404, or another route's match:
+        constrained parameters are tried in the order they were registered,
+        before plain ones. The value reaches the handler as a `str`; an
+        annotation converts it further. Define a constraint before the
+        routes that use it; it can't be redefined differently."""
+        self.router.constraint(name, pattern)
+
     def handler(self, name: str) -> Callable[[Handler], Handler]:
         """Decorator: attaches a function to a handler name already
         registered on `app.router` (e.g. through a route group)."""
@@ -948,6 +964,7 @@ class App(_RouteDecorators):
                 access_log,
                 ws_ping_interval,
                 forwarded_host,
+                tuple(self.router.constraints()),
             ),
         )
 
