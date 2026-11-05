@@ -17,4 +17,5 @@ def home(request):
 
 @app.get("/users/{id:int}")
 def get_user(request, id):
-    return Response.json({"id": id, "forwarded_for": request.headers.get("x-forwarded-for")})
+    # Behind a trusted proxy, client and scheme are the real ones, not the proxy's.
+    return Response.json({"id": id, "client": request.client, "scheme": request.scheme})

@@ -18,18 +18,24 @@ src/
   tree.rs     the radix tree: insert, match, remove, list routes
   path.rs     path splitting and pattern syntax ({id:int}, *path)
   method.rs   HTTP methods
+  server.rs   the built-in server (Unix only): HTTP in a Rust thread, handed to asyncio
+  proxy.rs    trusted X-Forwarded-* headers
 korvex/
   router.py   Router (wraps the Rust one) and RouteGroup
   app.py      App and Request (ASGI)
   response.py Response and Headers
+  serve.py    App.run(): one process, or a supervisor and its workers
+  cli.py      the `korvex run` command
 tests/        Python tests (Rust tests live next to the code)
 benches/      comparisons with other frameworks:
   bench_router.py  route matching alone
-  load_test.py     a real server under load (apps in benches/load/)
+  load_test.py     frameworks on the same server under load (apps in benches/load/)
+  servers.py       servers on the same CPU cores, built-in one included
   plot.py          draws the charts in docs/
 ```
 
-Only `lib.rs` uses PyO3; keep the rest plain Rust.
+Only `lib.rs` and `server.rs` use PyO3; keep `tree`, `path`, `method` and
+`proxy` plain Rust.
 
 ## Before opening a PR
 
