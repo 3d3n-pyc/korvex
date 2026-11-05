@@ -8,19 +8,22 @@ on an App:
 
 from __future__ import annotations
 
+import inspect
 import logging
 import math
 import re
 import time
 import uuid
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Hashable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Hashable, Sequence
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, NamedTuple, Optional, Protocol
+from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Protocol
 
 from korvex.response import Response
 
 if TYPE_CHECKING:
     from korvex.app import App, Request
+
+logger = logging.getLogger("korvex")
 
 ALL_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
 
@@ -160,9 +163,10 @@ class Decision(NamedTuple):
 
 class RateLimitStore(Protocol):
     """Where rate limit state lives. The store decides, rather than just
-    storing numbers, so a shared store (Redis, say) can do it atomically."""
+    storing numbers, so a shared store (Redis, say) can do it atomically.
+    `hit` can be a coroutine function, for a store over the network."""
 
-    def hit(self, key: Hashable, requests: int, per: float) -> Decision: ...
+    def hit(self, key: Hashable, requests: int, per: float) -> Decision | Awaitable[Decision]: ...
 
 
 class MemoryStore:
@@ -198,6 +202,71 @@ class MemoryStore:
             self._next_free = {k: t for k, t in self._next_free.items() if t > now}
 
 
+# GCRA as MemoryStore does it, in Redis, atomically: one script, run by
+# Redis alone, so concurrent workers and machines can't race. The clock is
+# Redis's own, the same for all of them. Numbers go back as strings: Redis
+# would truncate Lua floats to integers.
+_REDIS_GCRA = """
+local requests = tonumber(ARGV[1])
+local per = tonumber(ARGV[2])
+local interval = per / requests
+local time = redis.call('TIME')
+local now = tonumber(time[1]) + tonumber(time[2]) / 1000000
+local full_back = tonumber(redis.call('GET', KEYS[1])) or now
+if full_back < now then full_back = now end
+local allowed_at = full_back - per + interval
+if now < allowed_at then
+  return {0, 0, tostring(allowed_at - now), tostring(full_back - now)}
+end
+full_back = full_back + interval
+redis.call('SET', KEYS[1], tostring(full_back), 'PX', math.ceil((full_back - now) * 1000))
+local remaining = math.floor((per - (full_back - now)) / interval)
+if remaining < 0 then remaining = 0 end
+return {1, remaining, '0', tostring(full_back - now)}
+"""
+
+
+class RedisStore:
+    """Rate limit state in Redis, shared by every worker and machine, so a
+    limit holds for the whole deployment. Needs the `redis` package
+    (`pip install korvex[redis]`).
+
+        rate_limit(app, requests=100, per=60, store=RedisStore("redis://localhost:6379/0"))
+
+    - `client`: a URL, or a `redis.asyncio.Redis` you made yourself (TLS,
+      a password, Sentinel...). Connections open on first use, so creating
+      the store at import time is fine with several workers.
+    - `prefix`: put before each key, to keep them apart from your own.
+    - `fail_open`: if Redis can't be reached, let requests through (the
+      default, so an outage of Redis isn't one of the app) or refuse them
+      with a 429. Either way, the error is logged.
+
+    Same algorithm as `MemoryStore`, run atomically in Redis on its clock.
+    """
+
+    def __init__(self, client: Any = "redis://localhost:6379/0", *, prefix: str = "korvex:ratelimit:", fail_open: bool = True) -> None:
+        if isinstance(client, str):
+            try:
+                import redis.asyncio
+            except ImportError:
+                raise ImportError("RedisStore needs the redis package: pip install korvex[redis]") from None
+            client = redis.asyncio.Redis.from_url(client)
+        self.client = client
+        self._prefix = prefix
+        self._fail_open = fail_open
+        self._script = client.register_script(_REDIS_GCRA)
+
+    async def hit(self, key: Hashable, requests: int, per: float) -> Decision:
+        try:
+            allowed, remaining, retry_after, reset = await self._script(keys=[f"{self._prefix}{key}"], args=[requests, repr(float(per))])
+        except Exception:  # a connection error, a timeout...: Redis isn't answering
+            logger.exception("rate limit store unreachable; %s the request", "allowing" if self._fail_open else "refusing")
+            if self._fail_open:
+                return Decision(True, requests, 0.0, 0.0)
+            return Decision(False, 0, 1.0, 1.0)
+        return Decision(bool(int(allowed)), int(remaining), float(retry_after), float(reset))
+
+
 def _client_address(request: Request) -> Optional[Hashable]:
     # An unknown address shares one limit rather than escaping it: behind a
     # proxy that doesn't send X-Forwarded-For, every address is unknown.
@@ -224,7 +293,7 @@ def rate_limit(
       key or user ID is fairer behind shared addresses. Return `None` to
       exempt a request (a health check, say).
     - `store`: where the state lives; a `MemoryStore` by default, one per
-      worker process.
+      worker process. `RedisStore` shares it between workers and machines.
     - `headers`: send RateLimit-Limit, RateLimit-Remaining and
       RateLimit-Reset on every limited response, so clients can slow down.
 
@@ -235,17 +304,31 @@ def rate_limit(
         raise ValueError("requests must be at least 1 and per positive")
     state = store if store is not None else MemoryStore()
 
-    @app.before_request
-    def check(request: Request) -> Response | None:
-        who = key(request)
-        if who is None:
-            _decision.set(None)
-            return None
-        decision = state.hit(who, requests, per)
+    def answer(decision: Decision) -> Response | None:
         _decision.set(decision)
         if decision.allowed:
             return None
         return Response.text("Too Many Requests", status=429, headers=[("Retry-After", str(math.ceil(decision.retry_after)))])
+
+    if inspect.iscoroutinefunction(state.hit):  # a store over the network: don't block the loop
+
+        @app.before_request
+        async def check_async(request: Request) -> Response | None:
+            who = key(request)
+            if who is None:
+                _decision.set(None)
+                return None
+            return answer(await state.hit(who, requests, per))  # type: ignore[misc]
+
+    else:
+
+        @app.before_request
+        def check(request: Request) -> Response | None:
+            who = key(request)
+            if who is None:
+                _decision.set(None)
+                return None
+            return answer(state.hit(who, requests, per))  # type: ignore[arg-type]
 
     if headers:
 

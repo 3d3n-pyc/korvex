@@ -408,3 +408,102 @@ def test_security_headers_can_be_left_out():
     assert "x-frame-options" not in headers and "referrer-policy" not in headers
     with pytest.raises(ValueError):
         security_headers(App(), hsts=-1)
+
+
+# --- RedisStore (needs a Redis server: REDIS_URL, or redis://localhost:6379) ---
+
+
+def redis_url():
+    import os
+    import socket
+    from urllib.parse import urlparse
+
+    pytest.importorskip("redis")
+    url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    where = urlparse(url)
+    try:
+        socket.create_connection((where.hostname, where.port or 6379), timeout=0.5).close()
+    except OSError:
+        pytest.skip(f"no Redis at {url}")
+    return url
+
+
+def run_requests(app, scopes):
+    """Several requests on one event loop, as a server runs them (a Redis
+    client's connections belong to the loop that opened them)."""
+    statuses = []
+
+    async def one(scope):
+        sent = []
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            sent.append(message)
+
+        await app(scope, receive, send)
+        return sent[0]["status"]
+
+    async def all_of_them():
+        for scope in scopes:
+            statuses.append(await one(scope))
+
+    asyncio.run(all_of_them())
+    return statuses
+
+
+def test_redis_store_limits_like_the_memory_store():
+    import uuid
+
+    from korvex.middleware import RedisStore, rate_limit
+
+    app = App()
+    rate_limit(app, requests=3, per=60, store=RedisStore(redis_url(), prefix=f"test:{uuid.uuid4().hex}:"))
+
+    @app.get("/")
+    def home(request):
+        return Response.text("ok")
+
+    statuses = run_requests(app, [make_scope("GET", "/")] * 5)
+    assert statuses == [200, 200, 200, 429, 429]
+
+
+def test_redis_store_is_shared_and_atomic_across_clients():
+    import uuid
+
+    import redis.asyncio
+
+    from korvex.middleware import RedisStore
+
+    url, prefix = redis_url(), f"test:{uuid.uuid4().hex}:"
+
+    async def race():
+        # Two "workers", each with its own client, 50 requests at once.
+        stores = [RedisStore(redis.asyncio.Redis.from_url(url), prefix=prefix) for _ in range(2)]
+        decisions = await asyncio.gather(*(stores[n % 2].hit("client", 20, 60) for n in range(50)))
+        for store in stores:
+            await store.client.aclose()
+        return decisions
+
+    decisions = asyncio.run(race())
+    assert sum(d.allowed for d in decisions) == 20  # exactly the limit, not 20 per worker
+    refused = [d for d in decisions if not d.allowed]
+    assert all(0 < d.retry_after <= 3 for d in refused)  # one request every 3 s
+
+
+def test_redis_store_fails_open_or_closed(caplog):
+    import redis.asyncio
+
+    from korvex.middleware import RedisStore
+
+    pytest.importorskip("redis")
+    nowhere = "redis://127.0.0.1:1/0"  # nothing listens there
+
+    async def ask(fail_open):
+        store = RedisStore(redis.asyncio.Redis.from_url(nowhere, socket_connect_timeout=0.2), fail_open=fail_open)
+        return await store.hit("x", 5, 60)
+
+    assert asyncio.run(ask(True)).allowed is True
+    assert asyncio.run(ask(False)).allowed is False
+    assert "rate limit store unreachable" in caplog.text
