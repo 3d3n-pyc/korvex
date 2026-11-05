@@ -12,6 +12,10 @@ use pyo3::types::{PyDict, PyMappingProxy, PyTuple, PyType};
 
 mod method;
 mod path;
+#[cfg(unix)]
+mod proxy;
+#[cfg(unix)] // the built-in server relies on Unix sockets; Windows uses an ASGI server
+mod server;
 mod tree;
 
 use method::Method;
@@ -38,7 +42,7 @@ type RouteInfo<'py> = (String, &'static str, String, Bound<'py, PyTuple>);
 /// `get`/`post`/... shortcuts and `group()`.
 #[pyclass(subclass, module = "korvex._core")]
 struct Router {
-    root: Node,
+    root: Node<Route>,
 }
 
 #[pymethods]
@@ -156,6 +160,11 @@ fn parse_method(method: &str) -> PyResult<Method> {
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Router>()?;
+    #[cfg(unix)]
+    {
+        m.add_class::<server::Server>()?;
+        m.add_class::<server::Responder>()?;
+    }
     m.add("MethodNotAllowed", m.py().get_type::<MethodNotAllowed>())?;
     Ok(())
 }

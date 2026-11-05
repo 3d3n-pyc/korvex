@@ -56,7 +56,7 @@ def raise_fd_limit():
 
 def start_server(run):
     framework = run.split(",")[0]
-    env = {**os.environ, "ROUTE_FIRST": "1" if run.endswith("route first") else "0"}
+    env = {**os.environ, "ROUTE_FIRST": "1" if run.endswith("route first") else "0", "PORT": str(PORT)}
     command = ["taskset", "-c", SERVER_CPU, sys.executable, "-m", "uvicorn", f"benches.load.{framework}_app:app"]
     command += ["--port", str(PORT), "--log-level", "warning", "--no-access-log", "--loop", "uvloop", "--http", "httptools"]
     server = subprocess.Popen(command, preexec_fn=raise_fd_limit, env=env)

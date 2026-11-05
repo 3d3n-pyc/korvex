@@ -7,6 +7,7 @@ handler and sends its `Response`.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -73,11 +74,16 @@ FormData = dict[str, list[Union[str, UploadedFile]]]
 class Request:
     """An incoming HTTP request."""
 
-    __slots__ = ("method", "path", "headers", "query_params", "path_params", "_receive", "_cookies")
+    __slots__ = ("method", "path", "headers", "query_params", "path_params", "client", "scheme", "_receive", "_cookies")
 
     def __init__(self, scope: dict, receive: Callable[[], Awaitable[dict]], path_params: Mapping[str, Any]) -> None:
         self.method: str = scope["method"]
         self.path: str = scope["path"]
+        client = scope.get("client")
+        self.client: tuple[str, int] | None = tuple(client) if client else None  # type: ignore[assignment]
+        """`(host, port)` of the client, behind a trusted proxy too; `None` if unknown."""
+        self.scheme: str = scope.get("scheme", "http")
+        """`"https"` or `"http"`, as the client used it."""
         self.headers = Headers((k.decode("latin-1"), v.decode("latin-1")) for k, v in scope["headers"])
         self.query_params: dict[str, list[str]] = parse_qs(scope.get("query_string", b"").decode("latin-1"))
         self.path_params = path_params
@@ -136,35 +142,56 @@ class Request:
 
 
 class _RouteDecorators:
-    """`@get(path)` and friends, for any class with a `route()` decorator."""
+    """`@get(path)` and friends, for any class with a `route()` decorator.
+    `max_body` (bytes) raises or lowers the built-in server's body size
+    limit for that route; ASGI servers ignore it."""
 
     __slots__ = ()
 
     def route(
-        self, path: str, *, method: str = "GET", middleware: Sequence[str] | None = None
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        middleware: Sequence[str] | None = None,
+        max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
         raise NotImplementedError
 
-    def get(self, path: str, *, middleware: Sequence[str] | None = None) -> Callable[[Handler], Handler]:
-        return self.route(path, method="GET", middleware=middleware)
+    def get(
+        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+    ) -> Callable[[Handler], Handler]:
+        return self.route(path, method="GET", middleware=middleware, max_body=max_body)
 
-    def post(self, path: str, *, middleware: Sequence[str] | None = None) -> Callable[[Handler], Handler]:
-        return self.route(path, method="POST", middleware=middleware)
+    def post(
+        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+    ) -> Callable[[Handler], Handler]:
+        return self.route(path, method="POST", middleware=middleware, max_body=max_body)
 
-    def put(self, path: str, *, middleware: Sequence[str] | None = None) -> Callable[[Handler], Handler]:
-        return self.route(path, method="PUT", middleware=middleware)
+    def put(
+        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+    ) -> Callable[[Handler], Handler]:
+        return self.route(path, method="PUT", middleware=middleware, max_body=max_body)
 
-    def patch(self, path: str, *, middleware: Sequence[str] | None = None) -> Callable[[Handler], Handler]:
-        return self.route(path, method="PATCH", middleware=middleware)
+    def patch(
+        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+    ) -> Callable[[Handler], Handler]:
+        return self.route(path, method="PATCH", middleware=middleware, max_body=max_body)
 
-    def delete(self, path: str, *, middleware: Sequence[str] | None = None) -> Callable[[Handler], Handler]:
-        return self.route(path, method="DELETE", middleware=middleware)
+    def delete(
+        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+    ) -> Callable[[Handler], Handler]:
+        return self.route(path, method="DELETE", middleware=middleware, max_body=max_body)
 
-    def head(self, path: str, *, middleware: Sequence[str] | None = None) -> Callable[[Handler], Handler]:
-        return self.route(path, method="HEAD", middleware=middleware)
+    def head(
+        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+    ) -> Callable[[Handler], Handler]:
+        return self.route(path, method="HEAD", middleware=middleware, max_body=max_body)
 
-    def options(self, path: str, *, middleware: Sequence[str] | None = None) -> Callable[[Handler], Handler]:
-        return self.route(path, method="OPTIONS", middleware=middleware)
+    def options(
+        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+    ) -> Callable[[Handler], Handler]:
+        return self.route(path, method="OPTIONS", middleware=middleware, max_body=max_body)
 
 
 class AppGroup(_RouteDecorators):
@@ -183,7 +210,12 @@ class AppGroup(_RouteDecorators):
         self._routes = routes
 
     def route(
-        self, path: str, *, method: str = "GET", middleware: Sequence[str] | None = None
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        middleware: Sequence[str] | None = None,
+        max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
         """Decorator: registers the function as the handler for `path`, under
         this group's prefix. Its own `middleware` runs after the group's."""
@@ -192,6 +224,8 @@ class AppGroup(_RouteDecorators):
             name = f"{func.__module__}.{func.__qualname__}"
             self._routes.route(path, name, method=method, middleware=middleware)
             self._app._handlers[name] = func
+            if max_body is not None:
+                self._app._body_limits.append((method, self._routes.full_path(path), max_body))
             return func
 
         return register
@@ -224,12 +258,18 @@ class App(_RouteDecorators):
         self._on_startup: list[Hook] = []
         self._on_shutdown: list[Hook] = []
         self._exception_handlers: dict[int | type[Exception], ExceptionHandler] = {}
+        self._body_limits: list[tuple[str, str, int]] = []  # (method, path, bytes), for the built-in server
 
     def route(
-        self, path: str, *, method: str = "GET", middleware: Sequence[str] | None = None
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        middleware: Sequence[str] | None = None,
+        max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
         """Decorator: registers the function as the handler for `path`."""
-        return self._root.route(path, method=method, middleware=middleware)
+        return self._root.route(path, method=method, middleware=middleware, max_body=max_body)
 
     def group(self, prefix: str = "", *, middleware: Sequence[str] | None = None) -> AppGroup:
         """Returns an `AppGroup` that registers handlers under `prefix`."""
@@ -317,15 +357,7 @@ class App(_RouteDecorators):
 
         response = await self._respond(scope, receive)
         head = scope["method"] == "HEAD"
-        if head and not isinstance(response, StreamingResponse) and "Content-Length" not in response.headers:
-            response.headers.set("Content-Length", str(len(response.body)))
-        await send(
-            {
-                "type": "http.response.start",
-                "status": response.status,
-                "headers": [(n.encode("latin-1"), v.encode("latin-1")) for n, v in response.headers],
-            }
-        )
+        await send({"type": "http.response.start", "status": response.status, "headers": _raw_headers(response, head)})
         if head:  # same headers as GET, no body
             await send({"type": "http.response.body", "body": b""})
         elif isinstance(response, StreamingResponse):
@@ -400,6 +432,90 @@ class App(_RouteDecorators):
                 await _run_hooks(reversed(self._on_shutdown), "shutdown", send)
                 return
 
+    def run(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8000,
+        *,
+        workers: int = 1,
+        graceful_timeout: float = 30.0,
+        max_body: int = 1024 * 1024,
+        timeout: float = 30.0,
+        uds: str | None = None,
+        forwarded_allow_ips: Sequence[str] = ("127.0.0.1", "::1"),
+        access_log: bool = False,
+    ) -> None:
+        """Serves the app with Korvex's built-in server until Ctrl+C or
+        SIGTERM. Linux and macOS only; on Windows, use an ASGI server.
+
+        - `workers` processes share the port, each running the startup and
+          shutdown hooks. About 3 per 4 CPU cores works best.
+        - On stop, requests in progress get up to `graceful_timeout` seconds.
+        - Request bodies over `max_body` bytes get a 413 (a route's own
+          `max_body` overrides it); clients get `timeout` seconds to send
+          the headers, then the body (408 after that).
+        - `uds` listens on a Unix socket at that path instead of host:port,
+          for a reverse proxy on the same machine.
+        - `X-Forwarded-For` and `X-Forwarded-Proto` set `request.client` and
+          `request.scheme` when they come from `forwarded_allow_ips` (`"*"`
+          for any) or a Unix socket.
+        - `access_log` logs each request to the `korvex.access` logger.
+        """
+        from korvex import serve
+
+        serve.run(
+            self,
+            host,
+            port,
+            workers=workers,
+            graceful_timeout=graceful_timeout,
+            config=serve.Config(max_body, timeout, list(self._body_limits), list(forwarded_allow_ips), uds, access_log),
+        )
+
+    async def _serve_one(
+        self,
+        method: str,
+        path: str,
+        query_string: bytes,
+        headers: list,
+        body: bytes,
+        client: tuple[str, int] | None,
+        scheme: str,
+        responder: Any,
+    ) -> int:
+        """Runs one request taken from the built-in server, through the same
+        dispatch as under ASGI, hands the response back to Rust, and returns
+        its status."""
+        scope = {
+            "type": "http",
+            "method": method,
+            "path": unquote(path),
+            "query_string": query_string,
+            "headers": headers,
+            "client": client,
+            "scheme": scheme,
+        }
+
+        async def receive() -> dict:
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        response = await self._respond(scope, receive)
+        head = method == "HEAD"
+        raw_headers = _raw_headers(response, head)
+        if head:
+            responder.respond(response.status, raw_headers, b"")
+        elif isinstance(response, StreamingResponse):
+            responder.start_stream(response.status, raw_headers)
+            try:
+                async for chunk in response:
+                    if not responder.send_chunk(chunk):
+                        break  # the client is gone
+            finally:
+                responder.end_stream()
+        else:
+            responder.respond(response.status, raw_headers, response.body)
+        return response.status
+
     def __repr__(self) -> str:
         return f"App(router={self.router!r})"
 
@@ -428,6 +544,25 @@ def _parse_multipart(body: bytes, boundary: str) -> FormData:
             value = UploadedFile(filename, headers.get_content_type(), data)
         form.setdefault(field, []).append(value)
     return form
+
+
+def _raw_headers(response: Response, head: bool) -> list[tuple[bytes, bytes]]:
+    """The response headers as bytes. A HEAD response keeps the Content-Length
+    its body would have had, since the body itself isn't sent."""
+    if head and not isinstance(response, StreamingResponse) and "Content-Length" not in response.headers:
+        response.headers.set("Content-Length", str(len(response.body)))
+    return [(name.encode("latin-1"), value.encode("latin-1")) for name, value in response.headers]
+
+
+# Python 3.12+: a request handler that doesn't wait completes right away,
+# without going through the loop's queue. Older versions schedule it.
+_eager_task_factory = getattr(asyncio, "eager_task_factory", None)
+
+
+def _start_task(loop: asyncio.AbstractEventLoop, coroutine: Any) -> asyncio.Task:
+    if _eager_task_factory is not None:
+        return _eager_task_factory(loop, coroutine)
+    return loop.create_task(coroutine)
 
 
 async def _call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:

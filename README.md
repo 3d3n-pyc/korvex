@@ -3,11 +3,11 @@
 [![CI](https://github.com/3d3n-pyc/korvex/actions/workflows/ci.yml/badge.svg)](https://github.com/3d3n-pyc/korvex/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A fast router for Python, written in Rust, with an optional ASGI app on top.
+A fast router for Python, written in Rust, with an ASGI app on top and a
+built-in server to run it.
 
-Korvex is young (alpha). Its routing is fast (see [Performance](#performance)),
-but it lacks some of what full frameworks offer: WebSockets, validation,
-OpenAPI. The [roadmap](ROADMAP.md) lists what's coming.
+Korvex is young (alpha). It's fast (see [Performance](#performance)), but it
+lacks some of what full frameworks offer: WebSockets, validation, OpenAPI. The [roadmap](ROADMAP.md) lists what's coming.
 
 ```sh
 pip install korvex
@@ -103,7 +103,8 @@ uvicorn mymodule:app
   and return a `Response`. Middleware returns a `Response` to answer
   early, or `None` to continue. Both can be sync or async.
 - `Request` has `method`, `path`, `headers`, `query_params`,
-  `path_params`, `cookies`, and `await request.body()`,
+  `path_params`, `cookies`, `client` (`(host, port)`), `scheme`, and
+  `await request.body()`,
   `await request.json()`, `await request.form()`. A form maps each field
   to its values; files from a multipart form are `UploadedFile`s
   (`filename`, `content_type`, `data`). A body that can't be parsed is
@@ -138,7 +139,68 @@ More in [`examples/`](examples/). To put it in production (behind nginx or
 Caddy, in Docker, on AWS Lambda or Vercel), see the
 [deployment guide](docs/deployment.md).
 
+## The built-in server
+
+Korvex can run an `App` without an ASGI server, on Linux and macOS. On the
+same CPU cores, it serves 20 to 36% more requests than uvicorn with about
+40% less memory (see [Performance](#performance)).
+
+```sh
+korvex run main:app --workers 3
+```
+
+or, from Python, `app.run(workers=3)`. The same options exist in both:
+
+| Option | Default | Does |
+|---|---|---|
+| `--host`, `--port` | `127.0.0.1`, `8000` | Address to listen on. |
+| `--uds PATH` | | Listen on a Unix socket instead, for a proxy on the same machine. |
+| `--workers N` | `1` | Processes sharing the port. About 3 per 4 CPU cores works best. A worker that crashes is restarted. |
+| `--graceful-timeout S` | `30` | On Ctrl+C or SIGTERM, seconds requests in progress get to finish. |
+| `--max-body BYTES` | 1 MiB | Larger request bodies get a 413. A route can set its own: `@app.post("/upload", max_body=50_000_000)`. |
+| `--timeout S` | `30` | Seconds a client gets to send the headers, then the body (408 after that). |
+| `--forwarded-allow-ips` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-For` and `X-Forwarded-Proto` set `request.client` and `request.scheme`. `*` trusts any. |
+| `--access-log` | off | Log each request. |
+
+How it works: a Rust thread per worker reads each request in full, without
+touching Python, then hands it to the asyncio loop, which runs your
+handlers. A slow or huge upload never holds a Python worker.
+
+Things to know:
+
+- Run it behind a reverse proxy (nginx, Caddy, Traefik) in production: it
+  speaks HTTP/1.1 only, and HTTPS, HTTP/2 and HTTP/3 are the proxy's job.
+- The 413 and 408 errors are answered by the server itself, before your
+  app sees the request, so `@app.exception_handler` doesn't apply to them.
+- The `App` is still a plain ASGI app: uvicorn, Granian or a serverless
+  platform keep working, and Windows needs one of them.
+
 ## Performance
+
+### Servers
+
+The same app, served by each server on the same 4 CPU cores, each with its
+best number of workers:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/servers-dark.svg">
+  <img alt="Requests per second on the same 4 CPU cores, with 200 and 1,000 clients: Korvex built-in server 126.4k and 130.5k, Granian with the Korvex app 111.6k and 113.4k, uvicorn with the Korvex app 105.0k and 96.3k, Robyn 90.3k and 81.9k." src="docs/servers-light.svg">
+</picture>
+
+| Server | Requests/s, 200 clients | 1,000 clients | RAM |
+|---|---|---|---|
+| **Korvex built-in** (3 workers) | **126.4k** | **130.5k** | **113 MB** |
+| Granian + Korvex app (3 workers) | 111.6k | 113.4k | 196 MB |
+| uvicorn + Korvex app (4 workers) | 105.0k | 96.3k | 196 MB |
+| Robyn (4 processes, 2 threads each) | 90.3k | 81.9k | 228 MB |
+
+- Granian is a Rust ASGI server too: it does better than uvicorn here, but
+  the built-in server still leads, because it skips the ASGI layer.
+- Robyn runs its own version of the app with its own Rust server.
+- No request failed.
+
+Reproduce with `uv run python benches/servers.py` (needs `cargo install oha`,
+takes about 4 minutes).
 
 ### Under load
 
@@ -173,9 +235,8 @@ requests to random URLs by [oha](https://github.com/hatoo/oha):
   grows because requests queue, not because each one gets slower. After
   the flood, memory stays flat and speed is back to normal.
 
-Robyn isn't included: it runs its own server, so it wouldn't be the same
-comparison. Korvex plans its own built-in server (see the
-[roadmap](ROADMAP.md)), and the two will be compared then.
+Robyn isn't in this table, since it can't run on uvicorn: it's compared
+with Korvex's built-in server above.
 
 Reproduce with `uv run python benches/load_test.py` (needs
 `cargo install oha`, takes about 11 minutes).

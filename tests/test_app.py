@@ -721,3 +721,19 @@ def test_malformed_bodies_are_client_errors(caplog):
     assert status_for("/form", "multipart/form-data; boundary=B", bad_charset_part) == 400
     assert status_for("/form", "multipart/form-data; boundary=B", bad_bytes_part) == 400
     assert "unhandled error" not in caplog.text  # client mistakes don't fill the logs
+
+
+def test_request_client_and_scheme_come_from_the_asgi_server():
+    app = App()
+
+    @app.get("/")
+    def home(request):
+        return Response.json({"client": request.client, "scheme": request.scheme})
+
+    scope = make_scope("GET", "/")
+    _, _, body = response_from(run_app(app, scope))
+    assert json.loads(body) == {"client": None, "scheme": "http"}
+
+    scope.update(client=["203.0.113.9", 4242], scheme="https")  # as uvicorn passes them
+    _, _, body = response_from(run_app(app, scope))
+    assert json.loads(body) == {"client": ["203.0.113.9", 4242], "scheme": "https"}

@@ -25,6 +25,9 @@ classifiers = [
 Repository = "https://github.com/3d3n-pyc/korvex"
 Issues = "https://github.com/3d3n-pyc/korvex/issues"
 
+[project.scripts]
+korvex = "korvex.cli:main"
+
 [project.optional-dependencies]
 serve = ["uvicorn>=0.30"]
 
@@ -38,11 +41,13 @@ dev = [
     "falcon>=4.4.0",
     "fastapi>=0.128.8",
     "flask>=3.1.3",
+    "granian>=2.5.7",
     "litestar>=2.25.0",
     "maturin>=1.14,<2.0",
     "psutil>=7.2.2",
     "pytest>=8.4.2",
     "pytest-benchmark>=5.2.3",
+    "robyn>=0.88.0",
     "sanic>=25.3.0",
     "starlette>=0.49.3",
     "uvicorn>=0.39.0",

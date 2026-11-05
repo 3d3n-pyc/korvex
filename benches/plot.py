@@ -2,6 +2,7 @@
 
 - benchmark-{light,dark}.svg from benches/results.json (bench_router.py)
 - load-{light,dark}.svg from benches/load_results.json (load_test.py)
+- servers-{light,dark}.svg from benches/servers_results.json (servers.py)
 
 Run: uv run python benches/plot.py
 """
@@ -240,6 +241,92 @@ def draw_load(results, machine, theme):
     return "\n".join(out)
 
 
+SERVER_NAMES = {
+    "korvex": "Korvex (built-in)",
+    "granian": "Granian + Korvex app",
+    "uvicorn": "uvicorn + Korvex app",
+    "robyn": "Robyn",
+}
+SERVERS_MAX = 140_000
+
+
+def draw_servers(results, machine, theme):
+    """Requests per second per server, each with its best worker count,
+    on the same 4 cores: a light dot for 200 clients, a dark one for 1,000."""
+    t = THEMES[theme]
+    light, dark = t["dots"][0], t["dots"][2]
+    def total(runs):
+        return sum(run["requests_per_second"] for run in runs)
+
+    best = {}  # server -> (label, runs), keeping the config with the most req/s over both loads
+    for label, runs in results.items():
+        server = label.split(",")[0]
+        if server not in best or total(runs) > total(best[server][1]):
+            best[server] = (label, runs)
+    servers = sorted(best, key=lambda name: -best[name][1][-1]["requests_per_second"])
+
+    def x_of_rps(value):
+        return PLOT_LEFT + value / SERVERS_MAX * (PLOT_RIGHT - PLOT_LEFT)
+
+    top = 112
+    axis_y = top + ROW_HEIGHT * len(servers)
+    height = axis_y + 82
+    out = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{height}" '
+        f'viewBox="0 0 {WIDTH} {height}" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img">',
+        "<title>Requests per second per server on the same 4 CPU cores, higher is better</title>",
+        "<desc>"
+        + "; ".join(
+            f"{SERVER_NAMES[name]}: {best[name][1][0]['requests_per_second']:,.0f} with 200 clients, "
+            f"{best[name][1][-1]['requests_per_second']:,.0f} with 1,000"
+            for name in servers
+        )
+        + ".</desc>",
+        f'<rect width="{WIDTH}" height="{height}" rx="8" fill="{t["surface"]}"/>',
+        f'<text x="20" y="32" font-size="16" font-weight="600" fill="{t["primary"]}">'
+        "Requests per second on the same 4 CPU cores (higher is better)</text>",
+        f'<text x="20" y="54" font-size="12" fill="{t["secondary"]}">'
+        "Same app for all, each server with its best worker count. No request failed.</text>",
+    ]
+    legend_x = 20
+    for color, text in [(light, "200 clients"), (dark, "1,000 clients")]:
+        out.append(f'<circle cx="{legend_x + 5}" cy="78" r="5" fill="{color}"/>')
+        out.append(f'<text x="{legend_x + 15}" y="82" font-size="12" fill="{t["secondary"]}">{text}</text>')
+        legend_x += 30 + 6.6 * len(text)
+
+    for value in range(0, SERVERS_MAX + 1, 20_000):
+        x = x_of_rps(value)
+        out.append(f'<line x1="{x:.1f}" y1="{top - 16}" x2="{x:.1f}" y2="{axis_y}" stroke="{t["grid"]}" stroke-width="1"/>')
+        tick = "0" if value == 0 else f"{value // 1000}k"
+        out.append(f'<text x="{x:.1f}" y="{axis_y + 18}" font-size="11" text-anchor="middle" fill="{t["muted"]}">{tick}</text>')
+    out.append(f'<line x1="{PLOT_LEFT}" y1="{axis_y}" x2="{PLOT_RIGHT}" y2="{axis_y}" stroke="{t["axis"]}" stroke-width="1"/>')
+
+    for i, name in enumerate(servers):
+        y = top + i * ROW_HEIGHT
+        label, runs = best[name]
+        is_korvex = name == "korvex"
+        weight = ' font-weight="600"' if is_korvex else ""
+        ink = t["primary"] if is_korvex else t["secondary"]
+        out.append(f'<text x="20" y="{y + 4}" font-size="13"{weight} fill="{ink}">{SERVER_NAMES[name]}</text>')
+        xs = [x_of_rps(run["requests_per_second"]) for run in runs]
+        out.append(
+            f'<line x1="{min(xs):.1f}" y1="{y}" x2="{max(xs):.1f}" y2="{y}" stroke="{t["axis"]}" stroke-width="2" stroke-linecap="round"/>'
+        )
+        for x, color in zip(xs, [light, dark]):
+            out.append(f'<circle cx="{x:.1f}" cy="{y}" r="5" fill="{color}" stroke="{t["surface"]}" stroke-width="2"/>')
+        value_label = " / ".join(thousands(run["requests_per_second"]) for run in runs)
+        out.append(f'<text x="{PLOT_RIGHT + 16}" y="{y + 4}" font-size="12"{weight} fill="{ink}">{value_label}</text>')
+
+    out.append(
+        f'<text x="20" y="{axis_y + 46}" font-size="12" fill="{t["secondary"]}">'
+        "uvicorn and Granian run the Korvex ASGI app; Robyn runs its own version with its own server.</text>"
+    )
+    cpu = machine.get("cpu", {}).get("brand_raw", "")
+    out.append(f'<text x="20" y="{axis_y + 66}" font-size="11" fill="{t["muted"]}">Python {machine.get("python_version", "")}, {cpu}</text>')
+    out.append("</svg>")
+    return "\n".join(out)
+
+
 def main():
     docs = Path("docs")
     docs.mkdir(exist_ok=True)
@@ -248,6 +335,12 @@ def main():
         (docs / f"benchmark-{theme}.svg").write_text(draw(timings, machine, theme) + "\n")
     for router, by_count in sorted(timings.items(), key=lambda item: item[1][10_000]):
         print(f"{router:20}" + "".join(f"{duration(by_count[n]):>12}" for n in ROUTE_COUNTS))
+
+    server_results = Path("benches/servers_results.json")
+    if server_results.exists():
+        results = json.loads(server_results.read_text())
+        for theme in THEMES:
+            (docs / f"servers-{theme}.svg").write_text(draw_servers(results, machine, theme) + "\n")
 
     load_results = Path("benches/load_results.json")
     if load_results.exists():

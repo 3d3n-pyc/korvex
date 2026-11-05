@@ -1,21 +1,81 @@
 # Deploying a Korvex app
 
-`App` is a standard ASGI app, so anything that runs ASGI apps runs it.
-The files below are in [`examples/deploy/`](../examples/deploy/), around a
-small [`main.py`](../examples/deploy/main.py).
+An `App` runs on Korvex's built-in server (Linux and macOS) or on any
+ASGI server, including serverless platforms. The files below are in
+[`examples/deploy/`](../examples/deploy/), around a small
+[`main.py`](../examples/deploy/main.py).
 
 | Setup | When | Checked |
 |---|---|---|
-| [uvicorn behind a reverse proxy](#1-uvicorn-behind-a-reverse-proxy) | Your own server or VM | Yes, behind Caddy and nginx, in containers |
-| [Docker](#2-docker) | Fly.io, Railway, Render, Cloud Run, Kubernetes... | Yes, image built and run |
-| [AWS Lambda](#3-aws-lambda) | Serverless on AWS | Locally: handler called with an API Gateway event, not on AWS |
-| [Vercel](#4-vercel) | Serverless on Vercel | Yes, deployed and tested |
+| [Built-in server behind a reverse proxy](#1-built-in-server-behind-a-reverse-proxy) | Your own server or VM, Linux or macOS | Yes, behind Caddy and nginx over a Unix socket, in containers |
+| [uvicorn behind a reverse proxy](#2-uvicorn-behind-a-reverse-proxy) | The same, or Windows | Yes, behind Caddy and nginx, in containers |
+| [Docker](#3-docker) | Fly.io, Railway, Render, Cloud Run, Kubernetes... | Yes, image built and run, stops cleanly on SIGTERM |
+| [AWS Lambda](#4-aws-lambda) | Serverless on AWS | Locally: handler called with an API Gateway event, not on AWS |
+| [Vercel](#5-vercel) | Serverless on Vercel | Yes, deployed and tested |
 
-## 1. uvicorn behind a reverse proxy
+In every setup with your own server, put a reverse proxy in front: it
+handles HTTPS, HTTP/2 and HTTP/3, then forwards each request to Korvex in
+plain HTTP/1.1.
 
-The recommended setup on your own server. The proxy handles HTTPS,
-HTTP/2 and HTTP/3, slow clients and size limits, then forwards each
-request to uvicorn in plain HTTP/1.1.
+## 1. Built-in server behind a reverse proxy
+
+The fastest setup (see the server comparison in the README). With the
+proxy on the same machine, a Unix socket is the simplest link:
+
+```sh
+pip install korvex
+korvex run main:app --workers 3 --uds /run/korvex/korvex.sock
+```
+
+- `--workers`: about 3 per 4 CPU cores. Each worker is a separate
+  process, restarted if it crashes.
+- `--uds`: only processes on the machine can reach the app. Korvex makes
+  the socket file writable by every user, as uvicorn does, so a proxy
+  running as another user can connect; restrict access with the
+  permissions of its directory (`/run/korvex` here). Keep the path short:
+  macOS allows 104 characters.
+- Requests coming through the socket are trusted, so `request.client` and
+  `request.scheme` are the client's, from the proxy's `X-Forwarded-For`
+  and `X-Forwarded-Proto`.
+- On SIGTERM (systemd, Docker, Kubernetes), requests in progress get up
+  to 30 seconds to finish (`--graceful-timeout`).
+- To listen on TCP instead, use `--host 127.0.0.1 --port 8000` with the
+  proxy configurations of section 2.
+
+With [Caddy](../examples/deploy/Caddyfile-unix):
+
+```
+example.com {
+	reverse_proxy unix//run/korvex/korvex.sock
+}
+```
+
+With [nginx](../examples/deploy/nginx-unix.conf):
+
+```nginx
+upstream korvex {
+    server unix:/run/korvex/korvex.sock;
+}
+
+server {
+    listen 80;
+    server_name example.com;
+
+    location / {
+        proxy_pass http://korvex;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Keep `korvex run` running with systemd, or use Docker (section 3).
+
+## 2. uvicorn behind a reverse proxy
+
+On Windows, where the built-in server isn't available, or to keep an
+ASGI server:
 
 ```sh
 pip install "korvex[serve]"
@@ -25,8 +85,8 @@ uvicorn main:app --host 127.0.0.1 --port 8000 --workers 4 \
 
 - `--workers`: one per CPU core. Each worker is a separate process.
 - `--proxy-headers` with `--forwarded-allow-ips`: uvicorn trusts the
-  proxy's `X-Forwarded-*` headers, so its logs show the client's real
-  address. The headers also reach your handlers, in `request.headers`.
+  proxy's `X-Forwarded-*` headers, so `request.client` and
+  `request.scheme` are the client's, and its logs show the real address.
 - Listen on `127.0.0.1`, not `0.0.0.0`, so only the proxy can reach the app.
 
 With [Caddy](../examples/deploy/Caddyfile), which gets and renews the
@@ -55,9 +115,7 @@ server {
 }
 ```
 
-Keep uvicorn running with systemd, or use Docker (next section).
-
-## 2. Docker
+## 3. Docker
 
 ```dockerfile
 FROM python:3.14-slim
@@ -74,18 +132,22 @@ RUN useradd --no-create-home --shell /usr/sbin/nologin app
 USER app
 
 EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["korvex", "run", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-`requirements.txt` contains `korvex[serve]`. Wheels exist for Linux
-x86_64 and ARM64, so the image builds on both.
+`requirements.txt` contains `korvex`. Wheels exist for Linux x86_64 and
+ARM64, so the image builds on both.
+
+- Set `--workers` to about 3/4 of the container's CPUs (1 for a single
+  CPU, the default).
+- `docker stop` sends SIGTERM: requests in progress finish, then the
+  container exits (in 0.1 s when idle, in our test).
 
 Hosting platforms (Fly.io, Railway, Render, Cloud Run...) put their own
-proxy in front and handle HTTPS. There, run one worker per container and
-let the platform add containers when traffic grows. On your own server,
-put Caddy or nginx in front as in section 1.
+proxy in front and handle HTTPS, and add containers when traffic grows.
+On your own server, put Caddy or nginx in front as in section 1.
 
-## 3. AWS Lambda
+## 4. AWS Lambda
 
 [Mangum](https://pypi.org/project/mangum/) turns Lambda events into ASGI
 calls. [`lambda_handler.py`](../examples/deploy/lambda_handler.py):
@@ -108,7 +170,7 @@ and shutdown events around each Lambda call, so `@app.on_startup` and
 (a database pool, for example): create them once at module level, or on
 first use, so they're reused while the Lambda instance stays warm.
 
-## 4. Vercel
+## 5. Vercel
 
 Vercel finds the app by itself: put it in `main.py` (or `app.py`) as a
 top-level `app` variable, and list `korvex` in `requirements.txt`

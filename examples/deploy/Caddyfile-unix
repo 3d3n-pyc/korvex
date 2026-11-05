@@ -1,0 +1,5 @@
+# Caddy in front of Korvex's built-in server, over a Unix socket:
+#   korvex run main:app --workers 3 --uds /run/korvex/korvex.sock
+example.com {
+	reverse_proxy unix//run/korvex/korvex.sock
+}

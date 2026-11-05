@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.0
+
+A built-in server, written in Rust, to run an App without an ASGI server
+(Linux and macOS).
+
+- `korvex run main:app` or `app.run()`. On the same 4 CPU cores it serves
+  126k to 131k requests/s, against 105k/96k for uvicorn, 112k/113k for
+  Granian and 90k/82k for Robyn, with about 40% less memory than the first
+  two (`benches/servers.py`, chart in the README).
+- How it works: a Rust thread per worker reads each request in full, then
+  hands it to the asyncio loop, which runs the handlers, waiting ones
+  included. Requests go through the same dispatch as under ASGI.
+- `--workers N`: processes sharing one listening socket; a crashed worker
+  is restarted, one failing at startup stops everything.
+- Graceful shutdown on SIGINT and SIGTERM (`--graceful-timeout`).
+- Request bodies over `--max-body` (1 MiB by default, per route with
+  `max_body=`) get a 413; slow headers or bodies (`--timeout`) a 408.
+- `--uds` for a Unix socket; `request.client` and `request.scheme`, from
+  `X-Forwarded-For` and `X-Forwarded-Proto` when they come from
+  `--forwarded-allow-ips` or the socket; `--access-log`.
+- `request.client` and `request.scheme` also work under ASGI servers.
+- The deployment guide covers the built-in server behind Caddy and nginx,
+  and the Docker example now uses it.
+
 ## 0.4.0
 
 - Breaking: path parameters are converted by their constraint. `{id:int}`
