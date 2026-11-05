@@ -5,8 +5,8 @@ the route is registered:
 
 - a msgspec `Struct` or pydantic model (or a list of them): the JSON body;
 - the name of a path parameter: the path, converted to the annotated type;
-- `str`, `int`, `float`, `bool`, `UUID`, or an `Optional` or `list` of
-  those: the query string.
+- `str`, `int`, `float`, `bool`, `UUID`, `date`, `datetime`, or an
+  `Optional` or `list` of those: the query string (dates in ISO 8601).
 
 A model return annotation turns the returned object into a JSON response.
 Invalid input gets a 422 listing every problem. msgspec and pydantic are
@@ -15,6 +15,7 @@ optional: Korvex depends on neither, and uses whichever a model comes from.
 
 from __future__ import annotations
 
+import datetime
 import inspect
 import re
 import sys
@@ -27,7 +28,7 @@ from typing import Any, NamedTuple, Union
 from korvex.errors import ValidationError
 from korvex.response import Response
 
-SCALARS = (str, int, float, bool, uuid.UUID)
+SCALARS = (str, int, float, bool, uuid.UUID, datetime.date, datetime.datetime)
 _TRUE = {"true", "1", "yes", "on"}
 _FALSE = {"false", "0", "no", "off"}
 _PATH_PARAM = re.compile(r"\{(\w+)(?::(\w+))?\}|\*(\w+)")
@@ -151,10 +152,22 @@ def _convert(value: str, tp: Any) -> Any:
         if lowered in _FALSE:
             return False
         raise ValueError(f"not a boolean: {value!r}")
+    if tp is datetime.datetime:  # before date: a datetime is a date too
+        return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))  # "Z": Python 3.11+ only otherwise
+    if tp is datetime.date:
+        return datetime.date.fromisoformat(value)
     return tp(value)
 
 
-_TYPE_NAMES = {str: "string", int: "integer", float: "number", bool: "boolean", uuid.UUID: "UUID"}
+_TYPE_NAMES = {
+    str: "string",
+    int: "integer",
+    float: "number",
+    bool: "boolean",
+    uuid.UUID: "UUID",
+    datetime.date: "date (YYYY-MM-DD)",
+    datetime.datetime: "datetime (ISO 8601)",
+}
 
 
 def scalar_schema(tp: Any) -> dict:
@@ -165,6 +178,8 @@ def scalar_schema(tp: Any) -> dict:
         float: {"type": "number"},
         bool: {"type": "boolean"},
         uuid.UUID: {"type": "string", "format": "uuid"},
+        datetime.date: {"type": "string", "format": "date"},
+        datetime.datetime: {"type": "string", "format": "date-time"},
     }.get(inner, {"type": "string"})
     return {"type": "array", "items": schema} if is_list else schema
 
@@ -278,10 +293,12 @@ def plan_for(func: Callable, pattern: str) -> Plan:
             params.append(Param(name, "body", body_type, not (has_default or optional), default))
         elif tp is not None and inner in SCALARS:
             params.append(Param(name, "query", tp, not (has_default or optional), default))
-        elif not has_default:
+        elif tp is not None or not has_default:
+            # An annotated parameter is refused even with a default: silently
+            # ignored, it would always get that default.
             raise TypeError(
                 f"{func.__qualname__}: can't tell where parameter {name!r} comes from: it isn't in the path "
-                f"{pattern!r}, and its annotation isn't a model or a str, int, float, bool or UUID"
+                f"{pattern!r}, and its annotation isn't a model or a str, int, float, bool, UUID, date or datetime"
             )
     if sum(p.source == "body" for p in params) > 1:
         raise TypeError(f"{func.__qualname__}: only one parameter can be the request body")

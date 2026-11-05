@@ -4,6 +4,7 @@ See App.openapi() and App.docs()."""
 
 from __future__ import annotations
 
+import datetime
 import html
 import json
 import re
@@ -106,6 +107,8 @@ def _unique(name: str, used: set[str]) -> str:
 
 
 def _jsonable(value: Any) -> Any:
+    if isinstance(value, (datetime.date, datetime.datetime)):
+        return value.isoformat()
     return str(value) if isinstance(value, uuid.UUID) else value
 
 

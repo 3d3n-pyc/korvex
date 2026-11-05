@@ -163,9 +163,10 @@ async def create(request, body: UserIn, notify: bool = False) -> UserOut:
 
 - A model (or `list[Model]`) parameter is the JSON body, validated.
 - A path parameter's name gets its value, converted to the annotated type.
-- Other `str`, `int`, `float`, `bool` or `UUID` parameters (or `Optional`
-  or `list` of them) come from the query string; a default makes them
-  optional.
+- Other `str`, `int`, `float`, `bool`, `UUID`, `date` or `datetime`
+  parameters (or `Optional` or `list` of them) come from the query string,
+  dates in ISO 8601; a default makes them optional. Any other annotation
+  is refused when the route is registered.
 - A model return annotation turns the returned object into JSON; a
   returned `Response` is sent as is.
 - Invalid input gets a 422 with `{"detail": [{"loc": ["body", "age"],

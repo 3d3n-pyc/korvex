@@ -191,3 +191,43 @@ def test_handlers_attached_by_name_get_their_plan_on_first_use(models):
 
     assert call(app, "POST", "/things/4", b'{"name": "x", "age": 1}')[2] == {"id": 4, "name": "x"}
     assert call(app, "POST", "/things/four", b'{"name": "x", "age": 1}')[0] == 422
+
+
+def test_dates_in_the_query_string_and_the_path():
+    from datetime import date, datetime, timezone
+
+    app = App()
+
+    @app.get("/agenda/{day}")
+    def agenda(request, day: date, after: Optional[datetime] = None, until: Optional[date] = None):
+        return Response.json({"day": day.isoformat(), "after": after.isoformat() if after else None, "until": str(until)})
+
+    data = call(app, "GET", "/agenda/2026-11-05", query=b"after=2026-11-05T08:30:00Z&until=2026-12-31")[2]
+    assert data == {"day": "2026-11-05", "after": "2026-11-05T08:30:00+00:00", "until": "2026-12-31"}
+    assert datetime.fromisoformat(data["after"]).tzinfo == timezone.utc
+    status, _, data = call(app, "GET", "/agenda/tomorrow", query=b"until=31/12/2026")
+    assert status == 422
+    assert [e["loc"] for e in data["detail"]] == [["path", "day"], ["query", "until"]]
+    assert "YYYY-MM-DD" in data["detail"][0]["msg"]
+
+    schema = {p["name"]: p["schema"] for p in app.openapi()["paths"]["/agenda/{day}"]["get"]["parameters"]}
+    assert schema == {
+        "day": {"type": "string", "format": "date"},
+        "after": {"type": "string", "format": "date-time"},
+        "until": {"type": "string", "format": "date"},
+    }
+
+
+def test_an_unsupported_annotation_is_refused_even_with_a_default():
+    app = App()
+    with pytest.raises(TypeError, match="can't tell where parameter 'options'"):
+
+        @app.get("/a")
+        def annotated(request, options: dict = {}):  # would silently always be {}
+            pass
+
+    @app.get("/b")
+    def unannotated(request, page=1):  # no annotation: left alone, as before 0.7
+        return Response.json(page)
+
+    assert call(app, "GET", "/b")[2] == 1
