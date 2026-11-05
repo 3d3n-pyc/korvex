@@ -13,14 +13,15 @@ import logging
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from email.message import Message
-from http import HTTPStatus
 from inspect import isawaitable
 from pathlib import Path
-from typing import Any, Optional, Union, overload
+from typing import Any, Optional, Union, cast, overload
 from urllib.parse import parse_qs, unquote
 
 from korvex._core import MethodNotAllowed
+from korvex.errors import HTTPException, ValidationError
 from korvex.response import Headers, JSONValue, Response, StreamingResponse
+from korvex.schema import Plan, needs_plan, plan_for
 from korvex.router import RouteGroup, Router
 
 # `Union`/`Optional` rather than `|`: these lines run at import time, and
@@ -46,16 +47,6 @@ ExceptionHandler = Callable[["Request", Exception], Union[Response, Awaitable[Re
 logger = logging.getLogger("korvex")
 
 
-class HTTPException(Exception):
-    """Raise it in a handler or middleware to answer with an HTTP error:
-    `raise HTTPException(404, "user not found")`. Without a `detail`, the
-    standard reason (`Not Found`) is used."""
-
-    def __init__(self, status: int, detail: str | None = None, *, headers: Iterable[tuple[str, str]] = ()) -> None:
-        self.status = status
-        self.detail = detail if detail is not None else HTTPStatus(status).phrase
-        self.headers = list(headers)
-        super().__init__(status, self.detail)
 
 
 class UploadedFile:
@@ -345,8 +336,10 @@ class AppGroup(_RouteDecorators):
 
         def register(func: Handler) -> Handler:
             name = f"{func.__module__}.{func.__qualname__}"
+            plan = plan_for(func, self._routes.full_path(path))  # bad annotations fail here, at import
             self._routes.route(path, name, method=method, middleware=middleware)
             self._app._handlers[name] = func
+            self._app._plans[name] = plan
             if max_body is not None:
                 self._app._body_limits.append((method, self._routes.full_path(path), max_body))
             return func
@@ -390,6 +383,7 @@ class App(_RouteDecorators):
         self.router = router if router is not None else Router()
         self._ws_router = Router()  # WebSocket routes: a path can have both
         self._ws_handlers: dict[str, WebSocketHandler] = {}
+        self._plans: dict[str, Plan] = {}  # what each handler's annotations ask for
         self._root = AppGroup(self, self.router.group())
         self._handlers: dict[str, Handler] = {}
         self._middleware: dict[str, Middleware] = {}
@@ -586,7 +580,21 @@ class App(_RouteDecorators):
 
         if handler_name not in self._handlers:
             raise LookupError(f"no handler named {handler_name!r}; register one with @app.handler({handler_name!r})")
-        return await _call(self._handlers[handler_name], request, **path_params)
+        handler = self._handlers[handler_name]
+        plan = self._plan_of(handler_name)
+        if not needs_plan(plan):  # no annotations to act on: called as before, at no cost
+            return await _call(handler, request, **path_params)
+        arguments = {**path_params, **await plan.bind(request, path_params)}
+        return plan.respond(await _call(handler, request, **arguments))
+
+    def _plan_of(self, handler_name: str) -> Plan:
+        """The handler's plan. Handlers attached with @app.handler get theirs
+        on first use, once their route's pattern is known."""
+        plan = self._plans.get(handler_name)
+        if plan is None:
+            pattern = next((path for path, _, name, _ in self.router.routes() if name == handler_name), "")
+            plan = self._plans[handler_name] = plan_for(self._handlers[handler_name], pattern)
+        return plan
 
     async def _serve_websocket(
         self,
@@ -664,6 +672,8 @@ class App(_RouteDecorators):
             except Exception:
                 logger.exception("exception handler failed for %s %s", request.method, request.path)
                 return Response.text("Internal Server Error", status=500)
+        if isinstance(exc, ValidationError):
+            return Response.json(cast(JSONValue, {"detail": exc.errors}), status=422, headers=exc.headers)
         if isinstance(exc, HTTPException):
             return Response.text(exc.detail, status=exc.status, headers=exc.headers)
         logger.exception("unhandled error in %s %s", request.method, request.path, exc_info=exc)

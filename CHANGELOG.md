@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Validation from type annotations, with msgspec or pydantic models (both
+  optional): a model parameter is the JSON body, typed parameters come
+  from the path or the query string, a model return annotation becomes a
+  JSON response. Invalid input gets a 422 listing the problems
+  (`ValidationError`, customizable with `@app.exception_handler(422)`).
+- `HTTPException` moves to `korvex.errors`; `from korvex import
+  HTTPException` works as before.
+
 ## 0.6.0
 
 - `@app.before_request` and `@app.after_request`: hooks around every

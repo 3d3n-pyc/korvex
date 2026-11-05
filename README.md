@@ -139,6 +139,42 @@ uvicorn mymodule:app
   raises, the server doesn't start. Both `@app.on_startup` and
   `@app.on_startup()` work.
 
+### Validation
+
+Type annotations say where a handler's parameters come from. Models can be
+[msgspec](https://jcristharif.com/msgspec/) structs or
+[pydantic](https://docs.pydantic.dev/) models; Korvex needs neither.
+
+```python
+import msgspec
+
+class UserIn(msgspec.Struct):
+    name: str
+    age: int
+
+class UserOut(msgspec.Struct):
+    id: int
+    name: str
+
+@app.post("/users")
+async def create(request, body: UserIn, notify: bool = False) -> UserOut:
+    return UserOut(id=1, name=body.name)
+```
+
+- A model (or `list[Model]`) parameter is the JSON body, validated.
+- A path parameter's name gets its value, converted to the annotated type.
+- Other `str`, `int`, `float`, `bool` or `UUID` parameters (or `Optional`
+  or `list` of them) come from the query string; a default makes them
+  optional.
+- A model return annotation turns the returned object into JSON; a
+  returned `Response` is sent as is.
+- Invalid input gets a 422 with `{"detail": [{"loc": ["body", "age"],
+  "msg": ..., "type": ...}]}`. pydantic lists every problem; msgspec stops
+  at the first. `@app.exception_handler(422)` changes the response.
+- Annotations are read once, when the route is registered: a handler
+  without them costs nothing extra, and one that can't be understood fails
+  at import.
+
 ### WebSockets
 
 ```python
