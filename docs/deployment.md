@@ -32,7 +32,8 @@ korvex run main:app --workers 3 --uds /run/korvex/korvex.sock
 - `--uds`: only processes on the machine can reach the app. Korvex makes
   the socket file writable by every user, as uvicorn does, so a proxy
   running as another user can connect; restrict access with the
-  permissions of its directory (`/run/korvex` here).
+  permissions of its directory (`/run/korvex` here). Keep the path short:
+  macOS allows 104 characters.
 - Requests coming through the socket are trusted, so `request.client` and
   `request.scheme` are the client's, from the proxy's `X-Forwarded-For`
   and `X-Forwarded-Proto`.

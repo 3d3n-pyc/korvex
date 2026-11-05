@@ -308,10 +308,12 @@ def test_proxy_headers_from_untrusted_addresses_are_ignored():
         process.kill()
 
 
-def test_unix_socket(tmp_path):
+def test_unix_socket():
     import http.client
+    import tempfile
 
-    path = str(tmp_path / "korvex.sock")
+    # macOS limits socket paths to 104 characters: pytest's tmp_path is too long there.
+    path = os.path.join(tempfile.mkdtemp(prefix="kx", dir="/tmp"), "korvex.sock")
 
     class UnixConnection(http.client.HTTPConnection):
         def connect(self):
@@ -347,6 +349,7 @@ def test_command_line_serves_an_app():
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        cwd=SERVER_APP.parent,  # from the repo root, `-m korvex` would import the source folder
     )
     for _ in range(100):
         try:
@@ -366,5 +369,5 @@ def test_command_line_serves_an_app():
 )
 def test_command_line_explains_a_wrong_target(target, message):
     command = [sys.executable, "-m", "korvex", "run", target, "--app-dir", str(SERVER_APP.parent)]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    result = subprocess.run(command, capture_output=True, text=True, timeout=10, cwd=SERVER_APP.parent)
     assert result.returncode != 0 and message in result.stderr
