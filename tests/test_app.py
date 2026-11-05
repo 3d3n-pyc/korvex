@@ -346,7 +346,7 @@ def test_unsupported_scope_type_raises():
     app = App()
 
     with pytest.raises(NotImplementedError):
-        run_app(app, {"type": "websocket"})
+        run_app(app, {"type": "carrier-pigeon"})
 
 
 def run_lifespan(app):

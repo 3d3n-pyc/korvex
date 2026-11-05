@@ -11,7 +11,7 @@ import asyncio
 import json
 import logging
 import os
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from email.message import Message
 from http import HTTPStatus
 from inspect import isawaitable
@@ -81,7 +81,7 @@ class Request:
     __slots__ = ("method", "path", "headers", "query_params", "path_params", "client", "scheme", "_receive", "_cookies")
 
     def __init__(self, scope: dict, receive: Callable[[], Awaitable[dict]], path_params: Mapping[str, Any]) -> None:
-        self.method: str = scope["method"]
+        self.method: str = scope.get("method", "GET")  # a WebSocket handshake is a GET
         self.path: str = scope["path"]
         client = scope.get("client")
         self.client: tuple[str, int] | None = tuple(client) if client else None  # type: ignore[assignment]
@@ -143,6 +143,125 @@ class Request:
 
     def __repr__(self) -> str:
         return f"Request({self.method} {self.path!r})"
+
+
+class WebSocketDisconnect(Exception):
+    """Raised by `WebSocket.receive()` once the client has disconnected."""
+
+    def __init__(self, code: int = 1000) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+class WebSocket(Request):
+    """A WebSocket connection, passed to `@app.websocket` handlers. It has
+    the handshake request's headers, cookies, params, client and scheme
+    (`"ws"` or `"wss"`), so the handler can check who connects before
+    calling `accept()`.
+
+        @app.websocket("/ws")
+        async def echo(ws):
+            await ws.accept()
+            async for message in ws:
+                await ws.send_text(message)
+    """
+
+    __slots__ = ("subprotocols", "_send", "_connected", "_accepted", "_closed")
+
+    def __init__(self, scope: dict, receive: Callable, send: Callable, path_params: Mapping[str, Any]) -> None:
+        super().__init__(scope, receive, path_params)
+        self._send = send
+        self._connected = False
+        self._accepted = False
+        self._closed = False
+        self.subprotocols: list[str] = list(scope.get("subprotocols", []))
+        """Subprotocols the client asked for, to pick one in `accept()`."""
+
+    async def accept(self, subprotocol: str | None = None, headers: Iterable[tuple[str, str]] = ()) -> None:
+        """Accepts the connection, optionally with one of `subprotocols`."""
+        await self._wait_connect()
+        await self._send(
+            {
+                "type": "websocket.accept",
+                "subprotocol": subprotocol,
+                "headers": [(name.lower().encode("latin-1"), value.encode("latin-1")) for name, value in headers],
+            }
+        )
+        self._accepted = True
+
+    async def receive(self) -> str | bytes:
+        """The next message, text or binary. Raises `WebSocketDisconnect`
+        when the client has gone."""
+        message = await self._receive()
+        if message["type"] == "websocket.disconnect":
+            self._closed = True
+            raise WebSocketDisconnect(message.get("code", 1000))
+        if message.get("text") is not None:
+            return message["text"]
+        return message.get("bytes") or b""
+
+    async def receive_text(self) -> str:
+        message = await self.receive()
+        if not isinstance(message, str):
+            raise TypeError("expected a text message, got binary")
+        return message
+
+    async def receive_bytes(self) -> bytes:
+        message = await self.receive()
+        if not isinstance(message, bytes):
+            raise TypeError("expected a binary message, got text")
+        return message
+
+    async def receive_json(self) -> JSONValue:
+        return json.loads(await self.receive())
+
+    async def send_text(self, text: str) -> None:
+        await self._send({"type": "websocket.send", "text": text})
+
+    async def send_bytes(self, data: bytes) -> None:
+        await self._send({"type": "websocket.send", "bytes": data})
+
+    async def send_json(self, data: JSONValue) -> None:
+        await self.send_text(json.dumps(data))
+
+    async def close(self, code: int = 1000, reason: str = "") -> None:
+        """Closes the connection. Before `accept()`, this refuses it: the
+        client gets a 403."""
+        if self._closed:
+            return
+        await self._wait_connect()
+        await self._send({"type": "websocket.close", "code": code, "reason": reason})
+        self._closed = True
+
+    async def __aiter__(self) -> AsyncIterator[str | bytes]:
+        """The messages, until the client disconnects."""
+        while True:
+            try:
+                yield await self.receive()
+            except WebSocketDisconnect:
+                return
+
+    async def _wait_connect(self) -> None:
+        """ASGI starts with a `websocket.connect` message to receive first."""
+        if not self._connected:
+            self._connected = True
+            await self._receive()
+
+    async def body(self) -> bytes:
+        raise TypeError("a WebSocket has no body: use receive()")
+
+    async def json(self) -> JSONValue:
+        raise TypeError("a WebSocket has no body: use receive_json()")
+
+    async def form(self) -> FormData:
+        raise TypeError("a WebSocket has no form")
+
+    def __repr__(self) -> str:
+        return f"WebSocket({self.path!r})"
+
+
+WebSocketHandler = Callable[..., Awaitable[None]]
+"""`async (websocket, **path_params) -> None`."""
 
 
 class _RouteDecorators:
@@ -234,6 +353,19 @@ class AppGroup(_RouteDecorators):
 
         return register
 
+    def websocket(self, path: str) -> Callable[[WebSocketHandler], WebSocketHandler]:
+        """Decorator: registers the function as the WebSocket handler for
+        `path`, under this group's prefix. Group middleware and app hooks
+        don't run for WebSockets: check who connects in the handler."""
+
+        def register(func: WebSocketHandler) -> WebSocketHandler:
+            name = f"{func.__module__}.{func.__qualname__}"
+            self._app._ws_router.route(self._routes.full_path(path), name)
+            self._app._ws_handlers[name] = func
+            return func
+
+        return register
+
     def group(self, prefix: str = "", *, middleware: Sequence[str] | None = None) -> AppGroup:
         """Returns a nested group. Its `middleware` runs after this group's."""
         return AppGroup(self._app, self._routes.group(prefix, middleware=middleware))
@@ -256,6 +388,8 @@ class App(_RouteDecorators):
 
     def __init__(self, router: Router | None = None) -> None:
         self.router = router if router is not None else Router()
+        self._ws_router = Router()  # WebSocket routes: a path can have both
+        self._ws_handlers: dict[str, WebSocketHandler] = {}
         self._root = AppGroup(self, self.router.group())
         self._handlers: dict[str, Handler] = {}
         self._middleware: dict[str, Middleware] = {}
@@ -280,6 +414,12 @@ class App(_RouteDecorators):
     def group(self, prefix: str = "", *, middleware: Sequence[str] | None = None) -> AppGroup:
         """Returns an `AppGroup` that registers handlers under `prefix`."""
         return self._root.group(prefix, middleware=middleware)
+
+    def websocket(self, path: str) -> Callable[[WebSocketHandler], WebSocketHandler]:
+        """Decorator: registers the function as the WebSocket handler for
+        `path`; it gets a `WebSocket` and the path params. App hooks don't
+        run for WebSockets: check who connects in the handler."""
+        return self._root.websocket(path)
 
     def handler(self, name: str) -> Callable[[Handler], Handler]:
         """Decorator: attaches a function to a handler name already
@@ -380,6 +520,9 @@ class App(_RouteDecorators):
         if scope["type"] == "lifespan":
             await self._lifespan(receive, send)
             return
+        if scope["type"] == "websocket":
+            await self._websocket(scope, receive, send)
+            return
         if scope["type"] != "http":
             raise NotImplementedError(f"unsupported ASGI scope type: {scope['type']!r}")
 
@@ -444,6 +587,24 @@ class App(_RouteDecorators):
         if handler_name not in self._handlers:
             raise LookupError(f"no handler named {handler_name!r}; register one with @app.handler({handler_name!r})")
         return await _call(self._handlers[handler_name], request, **path_params)
+
+    async def _websocket(self, scope: dict, receive: Callable, send: Callable) -> None:
+        """Runs a WebSocket connection: its handler, or a refusal (403) for
+        an unknown path. Whatever the handler leaves open gets closed."""
+        found = self._ws_router.match(scope["path"])
+        websocket = WebSocket(scope, receive, send, found[1] if found else {})
+        if found is None or found[0] not in self._ws_handlers:
+            await websocket.close()  # before accept: the client gets a 403
+            return
+        try:
+            await self._ws_handlers[found[0]](websocket, **found[1])
+        except WebSocketDisconnect:
+            pass  # the client left; nothing more to do
+        except Exception:
+            logger.exception("unhandled error in WebSocket %s", websocket.path)
+            await websocket.close(1011 if websocket._accepted else 1000)  # 1011: server error
+            return
+        await websocket.close()
 
     async def _handle_error(self, request: Request, exc: Exception) -> Response:
         """Turns an exception into a response: the matching exception
