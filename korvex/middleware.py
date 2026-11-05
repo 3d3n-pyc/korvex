@@ -8,19 +8,22 @@ on an App:
 
 from __future__ import annotations
 
+import inspect
 import logging
 import math
 import re
 import time
 import uuid
-from collections.abc import Callable, Hashable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Hashable, Sequence
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, NamedTuple, Optional, Protocol
+from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Protocol
 
 from korvex.response import Response
 
 if TYPE_CHECKING:
     from korvex.app import App, Request
+
+logger = logging.getLogger("korvex")
 
 ALL_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
 
@@ -160,9 +163,10 @@ class Decision(NamedTuple):
 
 class RateLimitStore(Protocol):
     """Where rate limit state lives. The store decides, rather than just
-    storing numbers, so a shared store (Redis, say) can do it atomically."""
+    storing numbers, so a shared store (Redis, say) can do it atomically.
+    `hit` can be a coroutine function, for a store over the network."""
 
-    def hit(self, key: Hashable, requests: int, per: float) -> Decision: ...
+    def hit(self, key: Hashable, requests: int, per: float) -> Decision | Awaitable[Decision]: ...
 
 
 class MemoryStore:
@@ -198,6 +202,71 @@ class MemoryStore:
             self._next_free = {k: t for k, t in self._next_free.items() if t > now}
 
 
+# GCRA as MemoryStore does it, in Redis, atomically: one script, run by
+# Redis alone, so concurrent workers and machines can't race. The clock is
+# Redis's own, the same for all of them. Numbers go back as strings: Redis
+# would truncate Lua floats to integers.
+_REDIS_GCRA = """
+local requests = tonumber(ARGV[1])
+local per = tonumber(ARGV[2])
+local interval = per / requests
+local time = redis.call('TIME')
+local now = tonumber(time[1]) + tonumber(time[2]) / 1000000
+local full_back = tonumber(redis.call('GET', KEYS[1])) or now
+if full_back < now then full_back = now end
+local allowed_at = full_back - per + interval
+if now < allowed_at then
+  return {0, 0, tostring(allowed_at - now), tostring(full_back - now)}
+end
+full_back = full_back + interval
+redis.call('SET', KEYS[1], tostring(full_back), 'PX', math.ceil((full_back - now) * 1000))
+local remaining = math.floor((per - (full_back - now)) / interval)
+if remaining < 0 then remaining = 0 end
+return {1, remaining, '0', tostring(full_back - now)}
+"""
+
+
+class RedisStore:
+    """Rate limit state in Redis, shared by every worker and machine, so a
+    limit holds for the whole deployment. Needs the `redis` package
+    (`pip install korvex[redis]`).
+
+        rate_limit(app, requests=100, per=60, store=RedisStore("redis://localhost:6379/0"))
+
+    - `client`: a URL, or a `redis.asyncio.Redis` you made yourself (TLS,
+      a password, Sentinel...). Connections open on first use, so creating
+      the store at import time is fine with several workers.
+    - `prefix`: put before each key, to keep them apart from your own.
+    - `fail_open`: if Redis can't be reached, let requests through (the
+      default, so an outage of Redis isn't one of the app) or refuse them
+      with a 429. Either way, the error is logged.
+
+    Same algorithm as `MemoryStore`, run atomically in Redis on its clock.
+    """
+
+    def __init__(self, client: Any = "redis://localhost:6379/0", *, prefix: str = "korvex:ratelimit:", fail_open: bool = True) -> None:
+        if isinstance(client, str):
+            try:
+                import redis.asyncio
+            except ImportError:
+                raise ImportError("RedisStore needs the redis package: pip install korvex[redis]") from None
+            client = redis.asyncio.Redis.from_url(client)
+        self.client = client
+        self._prefix = prefix
+        self._fail_open = fail_open
+        self._script = client.register_script(_REDIS_GCRA)
+
+    async def hit(self, key: Hashable, requests: int, per: float) -> Decision:
+        try:
+            allowed, remaining, retry_after, reset = await self._script(keys=[f"{self._prefix}{key}"], args=[requests, repr(float(per))])
+        except Exception:  # a connection error, a timeout...: Redis isn't answering
+            logger.exception("rate limit store unreachable; %s the request", "allowing" if self._fail_open else "refusing")
+            if self._fail_open:
+                return Decision(True, requests, 0.0, 0.0)
+            return Decision(False, 0, 1.0, 1.0)
+        return Decision(bool(int(allowed)), int(remaining), float(retry_after), float(reset))
+
+
 def _client_address(request: Request) -> Optional[Hashable]:
     # An unknown address shares one limit rather than escaping it: behind a
     # proxy that doesn't send X-Forwarded-For, every address is unknown.
@@ -224,7 +293,7 @@ def rate_limit(
       key or user ID is fairer behind shared addresses. Return `None` to
       exempt a request (a health check, say).
     - `store`: where the state lives; a `MemoryStore` by default, one per
-      worker process.
+      worker process. `RedisStore` shares it between workers and machines.
     - `headers`: send RateLimit-Limit, RateLimit-Remaining and
       RateLimit-Reset on every limited response, so clients can slow down.
 
@@ -235,17 +304,31 @@ def rate_limit(
         raise ValueError("requests must be at least 1 and per positive")
     state = store if store is not None else MemoryStore()
 
-    @app.before_request
-    def check(request: Request) -> Response | None:
-        who = key(request)
-        if who is None:
-            _decision.set(None)
-            return None
-        decision = state.hit(who, requests, per)
+    def answer(decision: Decision) -> Response | None:
         _decision.set(decision)
         if decision.allowed:
             return None
         return Response.text("Too Many Requests", status=429, headers=[("Retry-After", str(math.ceil(decision.retry_after)))])
+
+    if inspect.iscoroutinefunction(state.hit):  # a store over the network: don't block the loop
+
+        @app.before_request
+        async def check_async(request: Request) -> Response | None:
+            who = key(request)
+            if who is None:
+                _decision.set(None)
+                return None
+            return answer(await state.hit(who, requests, per))  # type: ignore[misc]
+
+    else:
+
+        @app.before_request
+        def check(request: Request) -> Response | None:
+            who = key(request)
+            if who is None:
+                _decision.set(None)
+                return None
+            return answer(state.hit(who, requests, per))  # type: ignore[arg-type]
 
     if headers:
 
@@ -256,3 +339,246 @@ def rate_limit(
                 response.headers.set("RateLimit-Limit", str(requests))
                 response.headers.set("RateLimit-Remaining", str(decision.remaining))
                 response.headers.set("RateLimit-Reset", str(math.ceil(decision.reset)))
+
+
+# --- compression ---
+
+# Text-like content worth compressing; images, video, archives and fonts
+# (woff2) are compressed already.
+COMPRESSIBLE = (
+    "text/",
+    "application/json",
+    "application/javascript",
+    "application/xml",
+    "application/x-ndjson",
+    "application/wasm",
+    "image/svg+xml",
+    "+json",
+    "+xml",
+)
+
+
+class _Encoder:
+    """One content encoding: whole bodies at once, or a stream piece by
+    piece (each piece flushed, so a streamed response isn't held back)."""
+
+    def __init__(self, name: str, whole: Callable[[bytes], bytes], stream: Callable[[], tuple[Callable, Callable]]) -> None:
+        self.name = name
+        self.whole = whole
+        self.stream = stream  # -> (compress_and_flush(piece), finish())
+
+
+def _gzip(level: int) -> _Encoder:
+    import zlib
+
+    def whole(data: bytes) -> bytes:
+        compressor = zlib.compressobj(level, zlib.DEFLATED, 16 + zlib.MAX_WBITS)  # 16+: a gzip header
+        return compressor.compress(data) + compressor.flush()
+
+    def stream() -> tuple[Callable, Callable]:
+        compressor = zlib.compressobj(level, zlib.DEFLATED, 16 + zlib.MAX_WBITS)
+        return (lambda piece: compressor.compress(piece) + compressor.flush(zlib.Z_SYNC_FLUSH)), compressor.flush
+
+    return _Encoder("gzip", whole, stream)
+
+
+def _brotli(level: int) -> _Encoder | None:
+    try:
+        import brotli  # type: ignore[import-not-found]
+    except ImportError:
+        return None
+
+    def stream() -> tuple[Callable, Callable]:
+        compressor = brotli.Compressor(quality=level)
+        return (lambda piece: compressor.process(piece) + compressor.flush()), compressor.finish
+
+    return _Encoder("br", lambda data: brotli.compress(data, quality=level), stream)
+
+
+def _zstd(level: int) -> _Encoder | None:
+    try:
+        from compression import zstd  # type: ignore[import-not-found]  # Python 3.14+
+    except ImportError:
+        return None
+
+    def stream() -> tuple[Callable, Callable]:
+        compressor = zstd.ZstdCompressor(level=level)
+        return (
+            lambda piece: compressor.compress(piece, zstd.ZstdCompressor.FLUSH_BLOCK),
+            lambda: compressor.flush(zstd.ZstdCompressor.FLUSH_FRAME),
+        )
+
+    return _Encoder("zstd", lambda data: zstd.compress(data, level=level), stream)
+
+
+def _accepted(header: str) -> dict[str, float]:
+    """`Accept-Encoding: gzip, br;q=0.8, *;q=0` -> `{"gzip": 1.0, "br": 0.8, "*": 0.0}`."""
+    accepted: dict[str, float] = {}
+    for item in header.split(","):
+        name, _, params = item.strip().partition(";")
+        if not name:
+            continue
+        q = 1.0
+        key, _, value = params.strip().partition("=")
+        if key.strip().lower() == "q":
+            try:
+                q = float(value)
+            except ValueError:
+                q = 0.0
+        accepted[name.strip().lower()] = q
+    return accepted
+
+
+def compress(
+    app: App,
+    *,
+    minimum_size: int = 500,
+    encodings: Sequence[str] = ("zstd", "br", "gzip"),
+    levels: dict[str, int] | None = None,
+    content_types: Sequence[str] = COMPRESSIBLE,
+) -> None:
+    """Compresses responses for clients that accept it, for deployments
+    without a proxy to do it.
+
+    - `encodings`: in order of preference, among those the client accepts
+      (`Accept-Encoding`). `gzip` always works; `br` needs the `brotli`
+      package (`pip install korvex[brotli]`), `zstd` Python 3.14 or later.
+      Those not available are skipped.
+    - `minimum_size`: smaller bodies are sent as they are (compressing them
+      gains little). Streamed responses are compressed whatever their size,
+      each piece flushed as it goes, so a live stream isn't held back.
+    - `levels`: per encoding (`{"gzip": 9}`); the defaults trade a little
+      size for speed: gzip 6, brotli 4, zstd 3.
+    - `content_types`: what's worth compressing: prefixes like `text/`, or
+      suffixes like `+json`.
+
+    Responses that already have a `Content-Encoding`, ask for no change
+    (`Cache-Control: no-transform`), or carry no body (204, 304) are left
+    alone. Compressed responses get `Vary: Accept-Encoding`.
+
+    Call it before the other hooks: after hooks run last-declared first,
+    so it then sees each response once the others have changed it.
+
+    Mind BREACH: compressing a response that contains both a secret (a
+    CSRF token) and something the client sent lets an attacker guess the
+    secret, over HTTPS too. Don't compress such pages, or change the
+    secret on every response.
+    """
+    chosen = {**{"gzip": 6, "br": 4, "zstd": 3}, **(levels or {})}
+    makers = {"gzip": _gzip, "br": _brotli, "zstd": _zstd}
+    unknown = [name for name in encodings if name not in makers]
+    if unknown:
+        raise ValueError(f"unknown encodings {unknown}: use zstd, br or gzip")
+    available = [encoder for name in encodings if (encoder := makers[name](chosen[name])) is not None]
+    prefixes = tuple(t for t in content_types if not t.startswith("+"))
+    suffixes = tuple(t for t in content_types if t.startswith("+"))
+
+    def pick(request: Request) -> _Encoder | None:
+        accepted = _accepted(request.headers.get("accept-encoding") or "")
+        anything = accepted.get("*", 0.0) > 0
+        best, best_q = None, 0.0
+        for encoder in available:  # in our order of preference, at the client's best q
+            q = accepted.get(encoder.name, accepted.get("*", 0.0) if anything else 0.0)
+            if q > best_q:
+                best, best_q = encoder, q
+        return best
+
+    @app.after_request
+    def compress_response(request: Request, response: Response) -> None:
+        from korvex.response import StreamingResponse
+
+        if response.status in (204, 304) or response.status < 200 or "Content-Encoding" in response.headers:
+            return
+        if "no-transform" in (response.headers.get("cache-control") or "").lower():
+            return
+        content_type = (response.headers.get("content-type") or "").split(";")[0].strip().lower()
+        if not (content_type.startswith(prefixes) or content_type.endswith(suffixes)):
+            return
+        streamed = isinstance(response, StreamingResponse)
+        if not streamed and len(response.body) < minimum_size:
+            return
+        encoder = pick(request)
+        # The answer depends on Accept-Encoding even when it's not compressed.
+        if "accept-encoding" not in (", ".join(response.headers.get_all("vary"))).lower():
+            response.headers.add("Vary", "Accept-Encoding")
+        if encoder is None:
+            return
+        response.headers.set("Content-Encoding", encoder.name)
+        response.headers.remove("Content-Length")  # the length changes
+        if isinstance(response, StreamingResponse):
+            response.chunks = _compressed(StreamingResponse(response.chunks), encoder)
+        else:
+            response.body = encoder.whole(response.body)
+
+
+async def _compressed(source: AsyncIterable[bytes], encoder: _Encoder) -> AsyncIterator[bytes]:
+    """`source`'s chunks, compressed piece by piece."""
+    piece, finish = encoder.stream()
+    async for chunk in source:
+        out = piece(chunk)
+        if out:
+            yield out
+    yield finish()
+
+
+# --- security headers ---
+
+
+def security_headers(
+    app: App,
+    *,
+    hsts: int | None = 31_536_000,
+    hsts_subdomains: bool = False,
+    hsts_preload: bool = False,
+    content_security_policy: str | None = None,
+    frame_options: str | None = "DENY",
+    content_type_options: bool = True,
+    referrer_policy: str | None = "strict-origin-when-cross-origin",
+    cross_origin_opener_policy: str | None = "same-origin",
+    permissions_policy: str | None = None,
+) -> None:
+    """Adds the usual security headers to every response, for deployments
+    without a proxy to do it. A response that sets one itself keeps its own.
+
+    - `hsts`: `Strict-Transport-Security` with this `max-age` (one year by
+      default), so browsers stick to HTTPS. Only on HTTPS requests
+      (`request.scheme`, which a trusted proxy sets): browsers ignore it
+      over HTTP. `hsts_subdomains` and `hsts_preload` add those directives;
+      only use them once every subdomain serves HTTPS.
+    - `content_security_policy`: off by default, since the right policy
+      depends on the pages: `"default-src 'self'"` is a strict start.
+      `/docs` (Swagger UI) loads its script and style from
+      cdn.jsdelivr.net, which a strict policy blocks.
+    - `frame_options`: `X-Frame-Options`, `DENY` so other sites can't put
+      the pages in a frame (clickjacking); `SAMEORIGIN` to allow your own.
+    - `content_type_options`: `X-Content-Type-Options: nosniff`, so
+      browsers trust `Content-Type` instead of guessing.
+    - `referrer_policy`, `cross_origin_opener_policy`, `permissions_policy`:
+      those headers, `None` to leave one out.
+    """
+    always = []
+    if frame_options:
+        always.append(("X-Frame-Options", frame_options))
+    if content_type_options:
+        always.append(("X-Content-Type-Options", "nosniff"))
+    if referrer_policy:
+        always.append(("Referrer-Policy", referrer_policy))
+    if cross_origin_opener_policy:
+        always.append(("Cross-Origin-Opener-Policy", cross_origin_opener_policy))
+    if content_security_policy:
+        always.append(("Content-Security-Policy", content_security_policy))
+    if permissions_policy:
+        always.append(("Permissions-Policy", permissions_policy))
+    transport = None
+    if hsts is not None:
+        if hsts < 0:
+            raise ValueError("hsts is a max-age in seconds, or None")
+        transport = f"max-age={hsts}" + ("; includeSubDomains" if hsts_subdomains else "") + ("; preload" if hsts_preload else "")
+
+    @app.after_request
+    def add_security_headers(request: Request, response: Response) -> None:
+        for name, value in always:
+            if name not in response.headers:
+                response.headers.set(name, value)
+        if transport is not None and request.scheme == "https" and "Strict-Transport-Security" not in response.headers:
+            response.headers.set("Strict-Transport-Security", transport)
