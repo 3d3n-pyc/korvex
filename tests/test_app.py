@@ -134,72 +134,6 @@ def test_missing_handler_is_a_logged_500(caplog):
     assert "no handler named 'health_check'" in caplog.text
 
 
-def test_middleware_short_circuits_before_the_handler_runs():
-    app = App()
-    handler_called = False
-
-    @app.get("/secret", middleware=["auth"])
-    def secret(request):
-        nonlocal handler_called
-        handler_called = True
-        return Response.text("secret")
-
-    @app.middleware("auth")
-    def auth(request):
-        return Response.text("Unauthorized", status=401)
-
-    status, _, _ = response_from(run_app(app, make_scope("GET", "/secret")))
-
-    assert status == 401
-    assert handler_called is False
-
-
-def test_middleware_returning_none_passes_through_to_handler():
-    app = App()
-
-    @app.get("/secret", middleware=["auth"])
-    def secret(request):
-        return Response.text("secret")
-
-    @app.middleware("auth")
-    def auth(request):
-        return None
-
-    status, _, body = response_from(run_app(app, make_scope("GET", "/secret")))
-
-    assert status == 200
-    assert body == b"secret"
-
-
-def test_async_middleware_is_supported():
-    app = App()
-
-    @app.get("/secret", middleware=["auth"])
-    def secret(request):
-        return Response.text("secret")
-
-    @app.middleware("auth")
-    async def auth(request):
-        return None
-
-    status, _, body = response_from(run_app(app, make_scope("GET", "/secret")))
-    assert status == 200
-    assert body == b"secret"
-
-
-def test_missing_middleware_is_a_logged_500(caplog):
-    app = App()
-
-    @app.get("/secret", middleware=["auth"])
-    def secret(request):
-        return Response.text("secret")
-
-    status, _, _ = response_from(run_app(app, make_scope("GET", "/secret")))
-
-    assert status == 500
-    assert "no middleware named 'auth'" in caplog.text
-
-
 def test_http_exception_becomes_its_response():
     app = App()
 
@@ -215,21 +149,6 @@ def test_http_exception_becomes_its_response():
 
 def test_http_exception_defaults_to_the_standard_reason():
     assert HTTPException(403).detail == "Forbidden"
-
-
-def test_http_exception_works_in_middleware():
-    app = App()
-
-    @app.get("/secret", middleware=["auth"])
-    def secret(request):
-        return Response.text("secret")
-
-    @app.middleware("auth")
-    def auth(request):
-        raise HTTPException(401)
-
-    status, _, body = response_from(run_app(app, make_scope("GET", "/secret")))
-    assert (status, body) == (401, b"Unauthorized")
 
 
 def test_custom_404_and_405_handlers():
@@ -422,52 +341,6 @@ def test_failing_shutdown_hook_is_reported():
         raise RuntimeError("could not flush")
 
     assert run_lifespan(app)[-1] == {"type": "lifespan.shutdown.failed", "message": "RuntimeError: could not flush"}
-
-
-def test_app_composes_with_route_groups():
-    app = App()
-    api = app.router.group("/api", middleware=["auth"])
-    api.get("/users", "list_users")
-
-    @app.handler("list_users")
-    def list_users(request):
-        return Response.text("users")
-
-    @app.middleware("auth")
-    def auth(request):
-        return None
-
-    status, _, body = response_from(run_app(app, make_scope("GET", "/api/users")))
-
-    assert status == 200
-    assert body == b"users"
-
-
-def test_app_group_registers_handlers_under_a_prefix_and_middleware():
-    app = App()
-    calls = []
-    api = app.group("/api", middleware=["auth"])
-    admin = api.group("/admin", middleware=["admin"])
-
-    @api.get("/users/{id:int}")
-    def get_user(request, id):
-        return Response.json({"id": id})
-
-    @admin.post("/stats", middleware=["audit"])
-    def stats(request):
-        return Response.text("stats")
-
-    for name in ["auth", "admin", "audit"]:
-        app.middleware(name)(lambda request, name=name: calls.append(name))
-
-    status, _, body = response_from(run_app(app, make_scope("GET", "/api/users/7")))
-    assert (status, json.loads(body), calls) == (200, {"id": 7}, ["auth"])
-
-    calls.clear()
-    status, _, body = response_from(run_app(app, make_scope("POST", "/api/admin/stats")))
-    assert (status, body, calls) == (200, b"stats", ["auth", "admin", "audit"])
-
-    assert repr(admin) == "AppGroup(prefix='/api/admin', middleware=['auth', 'admin'])"
 
 
 def form_app():
@@ -847,3 +720,114 @@ def test_path_params_are_filled_after_routing():
 
     run_app(app, make_scope("GET", "/users/7"))
     assert seen == [{}, {"id": 7}]
+
+
+
+def test_app_groups_register_under_a_prefix_with_their_dependencies():
+    from korvex import Depends
+
+    app = App()
+    calls = []
+    api = app.group("/api", dependencies=[Depends(lambda: calls.append("auth"))])
+    admin = api.group("/admin", dependencies=[Depends(lambda: calls.append("admin"))])
+
+    @api.get("/users/{id:int}")
+    def get_user(request, id):
+        return Response.json({"id": id})
+
+    @admin.post("/stats", dependencies=[Depends(lambda: calls.append("audit"))])
+    def stats(request):
+        return Response.text("stats")
+
+    status, _, body = response_from(run_app(app, make_scope("GET", "/api/users/7")))
+    assert (status, json.loads(body), calls) == (200, {"id": 7}, ["auth"])
+    calls.clear()
+    status, _, body = response_from(run_app(app, make_scope("POST", "/api/admin/stats")))
+    assert (status, body, calls) == (200, b"stats", ["auth", "admin", "audit"])  # outer group first
+    assert repr(admin).startswith("AppGroup(prefix='/api/admin', dependencies=[")
+
+
+def test_routes_on_the_router_itself_work_with_app_handler():
+    app = App()
+    app.router.group("/api").get("/users", "list_users")
+
+    @app.handler("list_users")
+    def list_users(request):
+        return Response.text("users")
+
+    assert response_from(run_app(app, make_scope("GET", "/api/users")))[::2] == (200, b"users")
+
+
+def test_router_middleware_names_are_refused_not_ignored(caplog):
+    # The App runs dependencies, not middleware: a route given a middleware
+    # name through app.router would otherwise lose what may be its guard.
+    app = App()
+    app.router.get("/admin", "admin", middleware=["auth"])
+
+    @app.handler("admin")
+    def admin(request):
+        return Response.text("secret")
+
+    status, _, body = response_from(run_app(app, make_scope("GET", "/admin")))
+    assert (status, body) == (500, b"Internal Server Error")
+    assert "use dependencies=" in caplog.text
+
+
+def test_abort_sends_its_response_from_a_dependency_handler_or_hook():
+    from typing import Optional
+
+    from korvex import Abort, Cookie, Depends
+
+    app = App()
+
+    def signed_in(session: Optional[str] = Cookie(None)) -> None:
+        if session is None:
+            raise Abort(Response.redirect("/login"))
+
+    @app.get("/account", dependencies=[Depends(signed_in)])
+    def account(request):
+        return Response.text("account")
+
+    @app.get("/teapot")
+    def teapot(request):
+        raise Abort(Response.text("short and stout", status=418))
+
+    @app.before_request
+    def closed(request):
+        if request.path == "/closed":
+            raise Abort(Response.text("closed for the day", status=503))
+
+    @app.after_request
+    def stamp(request, response):
+        response.headers.set("X-Stamp", "yes")
+
+    @app.exception_handler(Exception)
+    def everything(request, exc):  # an Abort isn't an error for exception handlers
+        return Response.text("handled", status=500)
+
+    def get(path, headers=()):
+        status, headers, body = response_from(run_app(app, make_scope("GET", path, headers=list(headers))))
+        return status, {k.lower(): v for k, v in headers}, body
+
+    status, headers, _ = get("/account")
+    assert (status, headers["location"], headers["x-stamp"]) == (302, "/login", "yes")  # after hooks still apply
+    assert get("/account", [("Cookie", "session=x")])[2] == b"account"
+    assert get("/teapot")[::2] == (418, b"short and stout")
+    assert get("/closed")[::2] == (503, b"closed for the day")
+
+
+def test_abort_in_a_websocket_dependency_refuses_the_connection():
+    from test_websocket import run_ws, ws_scope
+
+    from korvex import Abort, Depends
+
+    app = App()
+
+    def refuse():
+        raise Abort(Response.redirect("/login"))
+
+    @app.websocket("/ws", dependencies=[Depends(refuse)])
+    async def ws(socket):
+        await socket.accept()
+
+    assert run_ws(app, ws_scope("/ws")) == [{"type": "websocket.close", "code": 1000, "reason": ""}]

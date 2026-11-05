@@ -1,7 +1,7 @@
 """`App`: an ASGI application built on `Router`.
 
 Run it with any ASGI server (uvicorn, hypercorn, granian...). For each
-request, `App` matches the path, runs the route's middleware, calls the
+request, `App` matches the path, resolves the route's dependencies, calls the
 handler and sends its `Response`.
 """
 
@@ -19,7 +19,7 @@ from typing import Any, Optional, Union, overload
 from urllib.parse import parse_qs, unquote
 
 from korvex._core import MethodNotAllowed
-from korvex.errors import HTTPException, ValidationError
+from korvex.errors import Abort, HTTPException, ValidationError
 from korvex.response import Headers, JSONValue, Response, StreamingResponse
 from korvex.schema import Plan, Run, needs_plan, plan_for
 from korvex.router import RouteGroup, Router
@@ -31,7 +31,7 @@ Handler = Callable[..., Any]
 converted: `int` for `{id:int}`, `uuid.UUID` for `{id:uuid}`, else `str`.
 With a model return annotation, it can return the model instead."""
 
-Middleware = Callable[["Request"], Union[Optional[Response], Awaitable[Optional[Response]]]]
+BeforeHook = Callable[["Request"], Union[Optional[Response], Awaitable[Optional[Response]]]]
 """`(request) -> Response | None`, sync or async. Returning a `Response`
 sends it right away; returning `None` moves on to the next step."""
 
@@ -280,7 +280,6 @@ class _RouteDecorators:
         path: str,
         *,
         method: str = "GET",
-        middleware: Sequence[str] | None = None,
         dependencies: Sequence[Any] = (),
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
@@ -290,79 +289,72 @@ class _RouteDecorators:
         self,
         path: str,
         *,
-        middleware: Sequence[str] | None = None,
         dependencies: Sequence[Any] = (),
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="GET", middleware=middleware, dependencies=dependencies, max_body=max_body)
+        return self.route(path, method="GET", dependencies=dependencies, max_body=max_body)
 
     def post(
         self,
         path: str,
         *,
-        middleware: Sequence[str] | None = None,
         dependencies: Sequence[Any] = (),
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="POST", middleware=middleware, dependencies=dependencies, max_body=max_body)
+        return self.route(path, method="POST", dependencies=dependencies, max_body=max_body)
 
     def put(
         self,
         path: str,
         *,
-        middleware: Sequence[str] | None = None,
         dependencies: Sequence[Any] = (),
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="PUT", middleware=middleware, dependencies=dependencies, max_body=max_body)
+        return self.route(path, method="PUT", dependencies=dependencies, max_body=max_body)
 
     def patch(
         self,
         path: str,
         *,
-        middleware: Sequence[str] | None = None,
         dependencies: Sequence[Any] = (),
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="PATCH", middleware=middleware, dependencies=dependencies, max_body=max_body)
+        return self.route(path, method="PATCH", dependencies=dependencies, max_body=max_body)
 
     def delete(
         self,
         path: str,
         *,
-        middleware: Sequence[str] | None = None,
         dependencies: Sequence[Any] = (),
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="DELETE", middleware=middleware, dependencies=dependencies, max_body=max_body)
+        return self.route(path, method="DELETE", dependencies=dependencies, max_body=max_body)
 
     def head(
         self,
         path: str,
         *,
-        middleware: Sequence[str] | None = None,
         dependencies: Sequence[Any] = (),
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="HEAD", middleware=middleware, dependencies=dependencies, max_body=max_body)
+        return self.route(path, method="HEAD", dependencies=dependencies, max_body=max_body)
 
     def options(
         self,
         path: str,
         *,
-        middleware: Sequence[str] | None = None,
         dependencies: Sequence[Any] = (),
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="OPTIONS", middleware=middleware, dependencies=dependencies, max_body=max_body)
+        return self.route(path, method="OPTIONS", dependencies=dependencies, max_body=max_body)
 
 
 class AppGroup(_RouteDecorators):
-    """Registers handlers under a shared prefix, middleware and dependencies.
+    """Registers handlers under a shared prefix and dependencies.
 
-        api = app.group("/api", middleware=["timing"], dependencies=[Depends(signed_in)])
+        api = app.group("/api", dependencies=[Depends(signed_in)])
 
-        @api.get("/users")           # GET /api/users, after "timing" and signed_in
+        @api.get("/users")           # GET /api/users, after signed_in
         def list_users(request): ...
     """
 
@@ -378,20 +370,18 @@ class AppGroup(_RouteDecorators):
         path: str,
         *,
         method: str = "GET",
-        middleware: Sequence[str] | None = None,
         dependencies: Sequence[Any] = (),
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
         """Decorator: registers the function as the handler for `path`, under
-        this group's prefix. Its own `middleware` and `dependencies` run
-        after the group's."""
+        this group's prefix. Its own `dependencies` run after the group's."""
 
         def register(func: Handler) -> Handler:
             name = _route_name(func, self._app._handlers)
             full_path = self._routes.full_path(path)
             # Bad annotations fail here, at import.
             plan = self._app._plan(func, full_path, (*self._dependencies, *dependencies))
-            self._routes.route(path, name, method=method, middleware=middleware)
+            self._routes.route(path, name, method=method)
             self._app._handlers[name] = func
             self._app._plans[name] = plan
             if max_body is not None:
@@ -405,7 +395,7 @@ class AppGroup(_RouteDecorators):
         `path`, under this group's prefix. Its parameters and dependencies
         work as for HTTP handlers (no body), the group's dependencies run
         too, and one raising `HTTPException` refuses the connection (403).
-        Group middleware and app hooks don't run for WebSockets."""
+        App hooks don't run for WebSockets."""
 
         def register(func: WebSocketHandler) -> WebSocketHandler:
             name = _route_name(func, self._app._ws_handlers)
@@ -419,14 +409,13 @@ class AppGroup(_RouteDecorators):
         return register
 
     def group(
-        self, prefix: str = "", *, middleware: Sequence[str] | None = None, dependencies: Sequence[Any] = ()
+        self, prefix: str = "", *, dependencies: Sequence[Any] = ()
     ) -> AppGroup:
-        """Returns a nested group. Its `middleware` and `dependencies` run
-        after this group's."""
-        return AppGroup(self._app, self._routes.group(prefix, middleware=middleware), (*self._dependencies, *dependencies))
+        """Returns a nested group. Its `dependencies` run after this group's."""
+        return AppGroup(self._app, self._routes.group(prefix), (*self._dependencies, *dependencies))
 
     def __repr__(self) -> str:
-        return f"AppGroup(prefix={self._routes.prefix!r}, middleware={self._routes.middleware!r})"
+        return f"AppGroup(prefix={self._routes.prefix!r}, dependencies={list(self._dependencies)!r})"
 
 
 class App(_RouteDecorators):
@@ -454,12 +443,11 @@ class App(_RouteDecorators):
         `app.dependency_overrides[current_user] = lambda: test_user`."""
         self._root = AppGroup(self, self.router.group())
         self._handlers: dict[str, Handler] = {}
-        self._middleware: dict[str, Middleware] = {}
         self._on_startup: list[Hook] = []
         self._on_shutdown: list[Hook] = []
         self._exception_handlers: dict[int | type[Exception], ExceptionHandler] = {}
         self._body_limits: list[tuple[str, str, int]] = []  # (method, path, bytes), for the built-in server
-        self._before_request: list[Middleware] = []
+        self._before_request: list[BeforeHook] = []
         self._after_request: list[AfterHook] = []
 
     def route(
@@ -467,19 +455,18 @@ class App(_RouteDecorators):
         path: str,
         *,
         method: str = "GET",
-        middleware: Sequence[str] | None = None,
         dependencies: Sequence[Any] = (),
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
         """Decorator: registers the function as the handler for `path`."""
-        return self._root.route(path, method=method, middleware=middleware, dependencies=dependencies, max_body=max_body)
+        return self._root.route(path, method=method, dependencies=dependencies, max_body=max_body)
 
     def group(
-        self, prefix: str = "", *, middleware: Sequence[str] | None = None, dependencies: Sequence[Any] = ()
+        self, prefix: str = "", *, dependencies: Sequence[Any] = ()
     ) -> AppGroup:
         """Returns an `AppGroup` that registers handlers under `prefix`, with
-        `middleware` and `dependencies` for all of them."""
-        return self._root.group(prefix, middleware=middleware, dependencies=dependencies)
+        `dependencies` for all of them."""
+        return self._root.group(prefix, dependencies=dependencies)
 
     def websocket(self, path: str, *, dependencies: Sequence[Any] = ()) -> Callable[[WebSocketHandler], WebSocketHandler]:
         """Decorator: registers the function as the WebSocket handler for
@@ -548,15 +535,6 @@ class App(_RouteDecorators):
 
         return register
 
-    def middleware(self, name: str) -> Callable[[Middleware], Middleware]:
-        """Decorator: attaches a function to a middleware name used in routes."""
-
-        def register(func: Middleware) -> Middleware:
-            self._middleware[name] = func
-            return func
-
-        return register
-
     def static(self, prefix: str, directory: str | os.PathLike[str]) -> None:
         """Serves the files in `directory` under `prefix`:
         `app.static("/static", "public")` answers `/static/css/app.css` with
@@ -601,10 +579,10 @@ class App(_RouteDecorators):
         return _add_hook(self._on_shutdown, func)
 
     @overload
-    def before_request(self, func: Middleware) -> Middleware: ...
+    def before_request(self, func: BeforeHook) -> BeforeHook: ...
     @overload
-    def before_request(self, func: None = None) -> Callable[[Middleware], Middleware]: ...
-    def before_request(self, func: Middleware | None = None) -> Middleware | Callable[[Middleware], Middleware]:
+    def before_request(self, func: None = None) -> Callable[[BeforeHook], BeforeHook]: ...
+    def before_request(self, func: BeforeHook | None = None) -> BeforeHook | Callable[[BeforeHook], BeforeHook]:
         """Decorator: runs the function before every request, ahead of
         routing, so it sees unknown paths too. It gets the request
         (`path_params` not filled yet) and returns a `Response` to answer
@@ -665,7 +643,7 @@ class App(_RouteDecorators):
 
     async def _respond(self, scope: dict, receive: Callable, error: int = 0) -> Response:
         """The response to one request: before hooks, then the route (its
-        middleware and handler), then after hooks, with errors turned into
+        dependencies and handler), then after hooks, with errors turned into
         responses at each step. With `error`, the route is replaced by that
         HTTP error."""
         request = Request(scope, receive, {})
@@ -694,7 +672,7 @@ class App(_RouteDecorators):
         return response
 
     async def _dispatch(self, request: Request) -> Response:
-        """Routes the request and runs its middleware and handler."""
+        """Routes the request and runs its dependencies and handler."""
         try:
             found = self.router.match(request.path, method=request.method)
         except MethodNotAllowed as exc:
@@ -707,12 +685,14 @@ class App(_RouteDecorators):
 
         handler_name, path_params, middleware_names = found
         request.path_params = path_params
-        for name in middleware_names:
-            if name not in self._middleware:
-                raise LookupError(f"no middleware named {name!r}; register one with @app.middleware({name!r})")
-            early_response = await _call(self._middleware[name], request)
-            if early_response is not None:
-                return early_response
+        if middleware_names:
+            # Middleware names given to app.router directly: the App runs
+            # dependencies, not middleware. Refuse rather than serve the
+            # route without what may well be its guard.
+            raise LookupError(
+                f"route {request.path!r} has router middleware {list(middleware_names)!r}, which the App doesn't run: "
+                "use dependencies=[Depends(...)] on the route or its group instead"
+            )
 
         if handler_name not in self._handlers:
             raise LookupError(f"no handler named {handler_name!r}; register one with @app.handler({handler_name!r})")
@@ -816,8 +796,9 @@ class App(_RouteDecorators):
             if plan is not None and needs_plan(plan):
                 try:
                     arguments.update(await plan.bind(websocket, path_params, run))
-                except HTTPException as exc:  # a 422 too
-                    logger.info("WebSocket %s refused: %s %s", websocket.path, exc.status, exc.detail)
+                except (HTTPException, Abort) as exc:  # a 422 too
+                    status = exc.response.status if isinstance(exc, Abort) else exc.status
+                    logger.info("WebSocket %s refused: %s", websocket.path, status)
                     if run is not None:
                         await run.close(exc)
                     await websocket.close()  # before accept: the client gets a 403
@@ -849,7 +830,10 @@ class App(_RouteDecorators):
 
     async def _handle_error(self, request: Request, exc: Exception) -> Response:
         """Turns an exception into a response: the matching exception
-        handler's, the HTTPException's own, or a logged 500."""
+        handler's, the HTTPException's own, or a logged 500. An `Abort`
+        carries its own response."""
+        if isinstance(exc, Abort):
+            return exc.response
         handler = self._find_exception_handler(exc)
         if handler is not None:
             try:

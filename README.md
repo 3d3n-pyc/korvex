@@ -79,19 +79,17 @@ admin.get("/stats", "stats")                # GET /api/admin/stats, middleware (
 (uvicorn, hypercorn, granian...).
 
 ```python
-from korvex import App, Response
+from korvex import App, Depends, Header, HTTPException, Response
 
 app = App()
 
-@app.get("/users/{id:int}", middleware=["auth"])
+def signed_in(authorization: str = Header("")) -> None:
+    if not authorization:
+        raise HTTPException(401, "sign in first")  # stops here
+
+@app.get("/users/{id:int}", dependencies=[Depends(signed_in)])
 async def get_user(request, id):
     return Response.json({"id": id})
-
-@app.middleware("auth")
-def auth(request):
-    if request.headers.get("Authorization") is None:
-        return Response.text("Unauthorized", status=401)  # stops here
-    return None                                          # carries on
 ```
 
 ```sh
@@ -100,8 +98,9 @@ uvicorn mymodule:app
 ```
 
 - Handlers receive the `Request` plus path params as keyword arguments,
-  and return a `Response`. Middleware returns a `Response` to answer
-  early, or `None` to continue. Both can be sync or async.
+  and return a `Response`, sync or async. Checks shared by several routes
+  (signing in, permissions) are dependencies: see
+  [Dependencies](#dependencies).
 - `Request` has `method`, `path`, `headers`, `query_params`,
   `path_params`, `cookies`, `client` (`(host, port)`), `scheme`, and
   `await request.body()`,
@@ -123,16 +122,20 @@ uvicorn mymodule:app
   for unknown paths too), and returns a `Response` to answer right away or
   `None` to carry on. `@app.after_request` gets every response, errors
   included, and returns the one to send (or `None` to keep it).
-- `raise HTTPException(404, "user not found")` in a handler or middleware
-  answers with that error. `@app.exception_handler(404)` (a status) or
+- `raise HTTPException(404, "user not found")` in a handler, a dependency
+  or a before hook answers with that error; `raise Abort(response)` with
+  that exact response (a redirect to the sign-in page, say), past the
+  exception handlers. `@app.exception_handler(404)` (a status) or
   `@app.exception_handler(ValueError)` (an exception class) customizes the
   response. Any other exception gives a 500 and is logged to the `korvex`
   logger.
-- `app.group(prefix, middleware=[...])` works like `router.group()`, with
-  decorators: `api = app.group("/api")`, then `@api.get("/users")`.
-  Groups nest.
+- `app.group(prefix, dependencies=[...])` works like `router.group()`,
+  with decorators: `api = app.group("/api")`, then `@api.get("/users")`.
+  Groups nest; a group's dependencies run before its routes' own.
 - Routes registered on `app.router` directly are linked to a function
-  with `@app.handler("name")`.
+  with `@app.handler("name")`. The App doesn't run the router's middleware
+  names: a route that has some answers a 500, rather than run without
+  what may be its guard.
 - `@app.on_startup` and `@app.on_shutdown` run a function (sync or async)
   when the server starts and stops, for example to open and close a
   database pool. Shutdown hooks run in reverse order. If a startup hook
@@ -273,7 +276,7 @@ async def chat(ws, room, user: CurrentUser):  # no session: refused (403)
   opens (403); a handler can also `close()` before `accept()` to refuse.
 - They work the same under ASGI servers and in the built-in server. Groups
   support them (`api.websocket(...)`), group dependencies included; app
-  hooks and middleware don't run for them.
+  hooks don't run for them.
 
 ### Ready-made hooks
 

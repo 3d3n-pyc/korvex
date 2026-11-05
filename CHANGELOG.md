@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.10.0
+
+Breaking changes are listed with how to update.
+
+- **Removed: App middleware**, `@app.middleware(name)` and `middleware=[...]`
+  on `App` routes and groups. Dependencies do the same job, and also work
+  for WebSockets, take typed parameters, show in OpenAPI and can be
+  replaced in tests. To update: `middleware=["auth"]` becomes
+  `dependencies=[Depends(auth)]`; where the middleware returned a
+  response, raise `HTTPException` (an error) or `Abort(response)` (that
+  exact response). The standalone `Router` keeps its middleware names; a
+  route given some through `app.router` answers a 500 in an `App`, rather
+  than run without what may be its guard.
+- `Abort(response)`: raised in a dependency, a handler or a before hook,
+  sends that response as is, past the exception handlers. In a
+  WebSocket's dependencies, it refuses the connection.
+
 ## 0.9.0
 
 The built-in server, ready for production behind a reverse proxy.

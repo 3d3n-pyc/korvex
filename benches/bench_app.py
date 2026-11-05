@@ -1,5 +1,5 @@
 """Benchmark: korvex.App's full request-handling cost (match +
-middleware + handler + Response + ASGI send) vs an equivalent minimal
+dependencies + handler + Response + ASGI send) vs an equivalent minimal
 Starlette app, calling each directly via the ASGI protocol — no real
 socket or server involved, so this isolates in-process framework
 overhead the same way bench_router.py isolates routing alone.
@@ -67,16 +67,17 @@ def korvex_app() -> App:
 
 
 @pytest.fixture(scope="module")
-def korvex_app_with_middleware() -> App:
+def korvex_app_with_a_guard() -> App:
+    from korvex import Depends
+
     app = App()
 
-    @app.get("/users/{id:int}", middleware=["auth"])
+    def auth() -> None:
+        return None
+
+    @app.get("/users/{id:int}", dependencies=[Depends(auth)])
     def get_user(request, id):
         return Response.json({"id": id})
-
-    @app.middleware("auth")
-    def auth(request):
-        return None
 
     return app
 
@@ -93,8 +94,8 @@ def test_korvex_app(benchmark, korvex_app: App) -> None:
     benchmark(lambda: _run_asgi(korvex_app))
 
 
-def test_korvex_app_with_middleware(benchmark, korvex_app_with_middleware: App) -> None:
-    benchmark(lambda: _run_asgi(korvex_app_with_middleware))
+def test_korvex_app_with_a_guard(benchmark, korvex_app_with_a_guard: App) -> None:
+    benchmark(lambda: _run_asgi(korvex_app_with_a_guard))
 
 
 def test_starlette_app(benchmark, starlette_app: Starlette) -> None:
