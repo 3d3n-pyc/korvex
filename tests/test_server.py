@@ -171,6 +171,29 @@ def test_failing_startup_hook_prevents_serving():
         socket.create_connection(("127.0.0.1", port), timeout=0.5)
 
 
+def test_threads_each_start_and_serve():
+    port = free_port()
+    process = start(port, THREADS="3")
+    base = f"http://127.0.0.1:{port}"
+    names = set()
+    deadline = time.monotonic() + 10
+    while len(names) < 2 and time.monotonic() < deadline:  # the first loop ready may take them all at first
+        names.add(fetch(f"{base}/thread")[2])
+    assert fetch(f"{base}/users/7")[2] == b'{"id": 7}'
+    assert all(fetch(f"{base}/local")[2] == b"true" for _ in range(30))  # each loop finds its own in app.local
+    code, output = stop_and_collect(process)
+    assert code == 0
+    assert output.count("STARTED") == 3 and output.count("STOPPED") == 3  # each loop runs the hooks
+    assert len(names) >= 2 and all(name.startswith(b"korvex-loop-") for name in names)
+
+
+def test_a_thread_failing_to_start_stops_the_process():
+    port = free_port()
+    process = start(port, THREADS="2", FAIL_STARTUP="1")
+    output, _ = process.communicate(timeout=10)
+    assert process.returncode != 0 and "database unreachable" in output
+
+
 def stop_and_collect(process):
     process.send_signal(signal.SIGTERM)
     output, _ = process.communicate(timeout=10)
@@ -216,10 +239,10 @@ def test_worker_failing_to_start_stops_everything():
     assert "failed to start" in output
 
 
-@pytest.mark.parametrize("workers", ["1", "2"])
-def test_sigterm_lets_requests_in_progress_finish(workers):
+@pytest.mark.parametrize("workers, threads", [("1", "1"), ("2", "1"), ("1", "3")])
+def test_sigterm_lets_requests_in_progress_finish(workers, threads):
     port = free_port()
-    process = start(port, WORKERS=workers)
+    process = start(port, WORKERS=workers, THREADS=threads)
     base = f"http://127.0.0.1:{port}"
     with ThreadPoolExecutor(1) as pool:
         slow = pool.submit(fetch, f"{base}/slow")

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import re
+import sys
 
 import pytest
 
@@ -310,6 +311,8 @@ def test_compress_picks_the_best_encoding_the_client_takes():
     _, headers, body = get_with(app, "/big", "gzip, deflate")
     assert headers["content-encoding"] == "gzip" and headers["vary"] == "Accept-Encoding"
     assert gzip.decompress(body) == b"hello " * 200 and len(body) < 100
+    if not getattr(sys, "_is_gil_enabled", lambda: True)():
+        pytest.skip("brotli isn't in the defaults on free-threaded Python")
     brotli = pytest.importorskip("brotli")
     _, headers, body = get_with(app, "/big", "gzip;q=0.5, br")
     assert headers["content-encoding"] == "br" and brotli.decompress(body) == b"hello " * 200
@@ -352,6 +355,14 @@ def test_compress_zstd_on_python_3_14():
     app = compress_app(encodings=["zstd"])
     _, headers, body = get_with(app, "/big", "zstd")
     assert headers["content-encoding"] == "zstd" and zstd.decompress(body) == b"hello " * 200
+
+
+def test_compress_leaves_brotli_out_on_free_threaded_python(monkeypatch):
+    import korvex.middleware
+
+    monkeypatch.setattr(korvex.middleware, "_gil_disabled", lambda: True)
+    app = compress_app()
+    assert get_with(app, "/big", "br, gzip")[1]["content-encoding"] == "gzip"  # br isn't offered
 
 
 def test_compress_rejects_unknown_encodings():
@@ -492,7 +503,7 @@ def test_redis_store_is_shared_and_atomic_across_clients():
 
 
 def test_redis_store_fails_open_or_closed(caplog):
-    redis = pytest.importorskip("redis")
+    pytest.importorskip("redis")
     import redis.asyncio
 
     from korvex.middleware import RedisStore

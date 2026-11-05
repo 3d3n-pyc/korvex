@@ -2,7 +2,7 @@
 
 Where Korvex is going. Versions are a rough order, not promises.
 
-## Where it stands (0.11)
+## Where it stands (0.12)
 
 - **Fast.** On one CPU core, Korvex serves the most requests per second of
   the frameworks tested, with the least memory. Its built-in server serves
@@ -16,8 +16,9 @@ Where Korvex is going. Versions are a rough order, not promises.
   (models too) as parameters, and dependencies, which guard routes,
   groups and WebSockets; custom route constraints and host-based
   routing; an OpenAPI document and Swagger UI; a built-in server with
-  workers, graceful shutdown, size limits, timeouts, backpressure and
-  WebSocket pings; and a deployment guide.
+  workers, threads (in parallel on free-threaded Python), graceful
+  shutdown, size limits, timeouts, backpressure and WebSocket pings; and a
+  deployment guide.
 - **Young.** Alpha, one maintainer, no known production use yet.
 
 Two rules hold for everything below:
@@ -50,20 +51,12 @@ development, or a platform whose load balancer doesn't do everything.
 
 ## Until 1.0
 
-Everything left is done before 1.0, while no one runs Korvex in
-production: an API can still change for free now, and won't after. Until
-then, a version may break things; each break is listed in the changelog
-with how to update.
-
-The versions go from what shapes the API to what only adds to it.
-
-### 0.12: more than one core per worker
-
-- **Free-threaded Python (3.14t)**: wheels built for it (the `abi3` wheels
-  don't cover it), and the Rust and Python sides checked for real
-  parallel threads.
-- **Benchmarks with several workers and with a real database**
-  (PostgreSQL), in `benches/` like the others.
+What was planned before 1.0 is done: the API's open questions (0.10),
+ready-made middleware (0.11), and more than one core per worker (0.12).
+What's left is what 1.0 itself asks for, below. Until then, a version may
+still break things, each break listed in the changelog with how to
+update: no one runs Korvex in production yet, and an API changes for
+free now, not after.
 
 ## 1.0
 

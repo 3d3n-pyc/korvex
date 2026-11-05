@@ -12,6 +12,8 @@ import inspect
 import json
 import logging
 import os
+import threading
+import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from email.message import Message
 from inspect import isawaitable
@@ -50,6 +52,58 @@ annotated with the class the handler is registered for."""
 logger = logging.getLogger("korvex")
 
 
+
+
+class LoopLocal:
+    """Attributes kept per event loop: `app.local`. What a startup hook
+    opens for its loop (a connection pool, a client) goes there, and the
+    handlers and dependencies running on that loop find it:
+
+        @app.on_startup
+        async def connect():
+            app.local.pool = await asyncpg.create_pool(DATABASE_URL)
+
+        @app.on_shutdown
+        async def disconnect():
+            await app.local.pool.close()
+
+        async def db():                        # a dependency
+            async with app.local.pool.acquire() as connection:
+                yield connection
+
+    With `threads=`, each loop runs the hooks, and a module-level global
+    would end up holding one loop's pool for all of them: asyncio objects
+    only work on the loop that made them. With one loop, it's simply an
+    attribute. Use it from a running loop only."""
+
+    __slots__ = ("_by_loop", "_lock")
+    _by_loop: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, Any]]
+    _lock: threading.Lock
+
+    def __init__(self) -> None:
+        # Set past __setattr__, which stores attributes per loop.
+        object.__setattr__(self, "_by_loop", weakref.WeakKeyDictionary())
+        object.__setattr__(self, "_lock", threading.Lock())
+
+    def _values(self) -> dict[str, Any]:
+        loop = asyncio.get_running_loop()  # outside a loop: RuntimeError, as asyncio does
+        with self._lock:
+            return self._by_loop.setdefault(loop, {})
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self._values()[name]
+        except KeyError:
+            raise AttributeError(f"app.local has no {name!r} on this event loop (set it in a startup hook)") from None
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        self._values()[name] = value
+
+    def __delattr__(self, name: str) -> None:
+        try:
+            del self._values()[name]
+        except KeyError:
+            raise AttributeError(name) from None
 
 
 class UploadedFile:
@@ -505,6 +559,8 @@ class App(_RouteDecorators):
         # Handler name -> the host parameters its function takes (None: all,
         # it has **kwargs). Dependencies get them all, handlers what they ask.
         self._host_args: dict[str, frozenset[str] | None] = {}
+        self.local = LoopLocal()
+        """Attributes per event loop, for what startup hooks open: see `LoopLocal`."""
         self._dependency_plans: dict[tuple, Plan] = {}  # (function, pattern, websocket) -> its plan
         self.dependency_overrides: dict[Callable[..., Any], Callable[..., Any]] = {}
         """`{dependency: replacement}`: the replacement is called instead,
@@ -1071,12 +1127,19 @@ class App(_RouteDecorators):
         access_log: bool = False,
         ws_ping_interval: float = 20.0,
         forwarded_host: bool = False,
+        threads: int = 1,
     ) -> None:
         """Serves the app with Korvex's built-in server until Ctrl+C or
         SIGTERM. Linux and macOS only; on Windows, use an ASGI server.
 
         - `workers` processes share the port, each running the startup and
           shutdown hooks. About 3 per 4 CPU cores works best.
+        - `threads` event loops per worker, each in its own thread, each
+          running the startup and shutdown hooks like a worker does: keep
+          what they open in `app.local`, one per loop. With a free-threaded
+          Python (3.14t), they run in parallel: one process uses several
+          cores and shares its memory. With the GIL, they take turns on one
+          core.
         - On stop, requests in progress get up to `graceful_timeout` seconds.
         - Request bodies over `max_body` bytes get a 413 (a route's own
           `max_body` overrides it); clients get `timeout` seconds to send
@@ -1113,6 +1176,7 @@ class App(_RouteDecorators):
                 ws_ping_interval,
                 forwarded_host,
                 tuple(self.router.constraints()),
+                threads,
             ),
         )
 

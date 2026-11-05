@@ -41,3 +41,26 @@ jobs:
 
       - name: Run Python tests
         run: uv run pytest
+
+  free-threaded:
+    # Python 3.14t, without the GIL. -W error::RuntimeWarning fails the run
+    # if any module turns the GIL back on, which would undo the point.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Build and install
+        run: |
+          uv python install 3.14t
+          uv venv --python 3.14t .venv-ft
+          VIRTUAL_ENV=.venv-ft uv pip install -e . pytest msgspec pydantic openapi-spec-validator redis
+
+      - name: Run Python tests
+        run: .venv-ft/bin/python -m pytest -W error::RuntimeWarning

@@ -139,12 +139,57 @@ jobs:
           name: wheels-sdist
           path: dist
 
+  free-threaded:
+    # Wheels for free-threaded Python (3.14t): the abi3 wheels above don't
+    # cover it. Each is tested with -W error::RuntimeWarning, which fails if
+    # a module turns the GIL back on; aarch64 Linux is built only (testing
+    # it would mean emulating a free-threaded Python too).
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, target: x86_64, test: true }
+          - { runner: ubuntu-22.04, target: aarch64, test: false }
+          - { runner: macos-15-intel, target: x86_64, test: true }
+          - { runner: macos-latest, target: aarch64, test: true }
+          - { runner: windows-latest, target: x64, test: true }
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python3 .github/scripts/set_version_from_tag.py
+      - uses: actions/setup-python@v6
+        id: python
+        with:
+          python-version: 3.14t
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          # On Linux the build runs in a manylinux container, which has its own 3.14t.
+          args: --release --out dist -i ${{ runner.os == 'Linux' && 'python3.14t' || steps.python.outputs.python-path }}
+          manylinux: ${{ runner.os == 'Linux' && 'auto' || '' }}
+      - name: Test wheel
+        if: matrix.test
+        shell: bash
+        run: |
+          "${{ steps.python.outputs.python-path }}" -m venv test-env
+          bin=test-env/bin; [ -d test-env/Scripts ] && bin=test-env/Scripts
+          $bin/python -m pip install --quiet dist/*.whl pytest msgspec pydantic
+          $bin/python -c "import sys; assert not sys._is_gil_enabled(), 'the GIL is on'"
+          $bin/pytest tests/ -v -W error::RuntimeWarning
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-free-threaded-${{ runner.os }}-${{ matrix.target }}
+          path: dist
+
   publish:
     name: Publish to PyPI
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [linux, macos, windows, sdist]
+    needs: [linux, macos, windows, sdist, free-threaded]
     environment: pypi
     permissions:
       id-token: write # PyPI trusted publishing

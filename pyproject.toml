@@ -38,6 +38,7 @@ module-name = "korvex._core"
 
 [dependency-groups]
 dev = [
+    "asyncpg>=0.32.0",
     "blacksheep>=2.4.2",
     "brotli>=1.2.1",
     "django>=4.2.30",

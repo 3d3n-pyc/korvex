@@ -8,12 +8,16 @@ on an App:
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import math
 import re
+import sys
+import threading
 import time
 import uuid
+import weakref
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Hashable, Sequence
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Protocol
@@ -174,14 +178,20 @@ class MemoryStore:
     each has its own: a client can get up to `requests` x workers.
 
     Uses GCRA (a token bucket kept as one timestamp per key): up to
-    `requests` at once, then one every `per / requests` seconds."""
+    `requests` at once, then one every `per / requests` seconds. Safe with
+    several threads (`threads=` on free-threaded Python): one at a time."""
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
         self._next_free: dict[Hashable, float] = {}  # key -> when its allowance is fully back
         self._calls = 0
+        self._lock = threading.Lock()  # read, decide, write: as one step
 
     def hit(self, key: Hashable, requests: int, per: float) -> Decision:
+        with self._lock:
+            return self._hit(key, requests, per)
+
+    def _hit(self, key: Hashable, requests: int, per: float) -> Decision:
         now = self._clock()
         interval = per / requests
         full_back = max(self._next_free.get(key, now), now)
@@ -235,7 +245,9 @@ class RedisStore:
 
     - `client`: a URL, or a `redis.asyncio.Redis` you made yourself (TLS,
       a password, Sentinel...). Connections open on first use, so creating
-      the store at import time is fine with several workers.
+      the store at import time is fine with several workers. From a URL,
+      each event loop (`threads=`) gets its own client; one you made
+      belongs to one loop.
     - `prefix`: put before each key, to keep them apart from your own.
     - `fail_open`: if Redis can't be reached, let requests through (the
       default, so an outage of Redis isn't one of the app) or refuse them
@@ -245,20 +257,39 @@ class RedisStore:
     """
 
     def __init__(self, client: Any = "redis://localhost:6379/0", *, prefix: str = "korvex:ratelimit:", fail_open: bool = True) -> None:
+        self._url: str | None = None
+        self.client = None
         if isinstance(client, str):
             try:
-                import redis.asyncio
+                import redis.asyncio  # noqa: F401
             except ImportError:
                 raise ImportError("RedisStore needs the redis package: pip install korvex[redis]") from None
-            client = redis.asyncio.Redis.from_url(client)
-        self.client = client
+            self._url = client
+        else:
+            self.client = client
+            self._given = client.register_script(_REDIS_GCRA)
         self._prefix = prefix
         self._fail_open = fail_open
-        self._script = client.register_script(_REDIS_GCRA)
+        # Event loop -> its script: a redis.asyncio client's connections
+        # belong to the loop that opened them.
+        self._scripts: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+        self._scripts_lock = threading.Lock()  # loops in several threads: threads=N
+
+    def _script(self) -> Any:
+        if self._url is None:
+            return self._given
+        loop = asyncio.get_running_loop()
+        with self._scripts_lock:
+            script = self._scripts.get(loop)
+            if script is None:
+                import redis.asyncio
+
+                script = self._scripts[loop] = redis.asyncio.Redis.from_url(self._url).register_script(_REDIS_GCRA)
+        return script
 
     async def hit(self, key: Hashable, requests: int, per: float) -> Decision:
         try:
-            allowed, remaining, retry_after, reset = await self._script(keys=[f"{self._prefix}{key}"], args=[requests, repr(float(per))])
+            allowed, remaining, retry_after, reset = await self._script()(keys=[f"{self._prefix}{key}"], args=[requests, repr(float(per))])
         except Exception:  # a connection error, a timeout...: Redis isn't answering
             logger.exception("rate limit store unreachable; %s the request", "allowing" if self._fail_open else "refusing")
             if self._fail_open:
@@ -411,6 +442,11 @@ def _zstd(level: int) -> _Encoder | None:
     return _Encoder("zstd", lambda data: zstd.compress(data, level=level), stream)
 
 
+def _gil_disabled() -> bool:
+    """Whether this is a free-threaded Python running without the GIL."""
+    return not getattr(sys, "_is_gil_enabled", lambda: True)()
+
+
 def _accepted(header: str) -> dict[str, float]:
     """`Accept-Encoding: gzip, br;q=0.8, *;q=0` -> `{"gzip": 1.0, "br": 0.8, "*": 0.0}`."""
     accepted: dict[str, float] = {}
@@ -433,7 +469,7 @@ def compress(
     app: App,
     *,
     minimum_size: int = 500,
-    encodings: Sequence[str] = ("zstd", "br", "gzip"),
+    encodings: Sequence[str] | None = None,
     levels: dict[str, int] | None = None,
     content_types: Sequence[str] = COMPRESSIBLE,
 ) -> None:
@@ -441,9 +477,12 @@ def compress(
     without a proxy to do it.
 
     - `encodings`: in order of preference, among those the client accepts
-      (`Accept-Encoding`). `gzip` always works; `br` needs the `brotli`
-      package (`pip install korvex[brotli]`), `zstd` Python 3.14 or later.
-      Those not available are skipped.
+      (`Accept-Encoding`); `("zstd", "br", "gzip")` by default. `gzip`
+      always works; `br` needs the `brotli` package (`pip install
+      korvex[brotli]`), `zstd` Python 3.14 or later. Those not available
+      are skipped. On a free-threaded Python, `br` is left out of the
+      default: the `brotli` package turns the GIL back on for the whole
+      process when imported. Ask for it explicitly to use it anyway.
     - `minimum_size`: smaller bodies are sent as they are (compressing them
       gains little). Streamed responses are compressed whatever their size,
       each piece flushed as it goes, so a live stream isn't held back.
@@ -464,6 +503,8 @@ def compress(
     secret, over HTTPS too. Don't compress such pages, or change the
     secret on every response.
     """
+    if encodings is None:
+        encodings = ("zstd", "gzip") if _gil_disabled() else ("zstd", "br", "gzip")
     chosen = {**{"gzip": 6, "br": 4, "zstd": 3}, **(levels or {})}
     makers = {"gzip": _gzip, "br": _brotli, "zstd": _zstd}
     unknown = [name for name in encodings if name not in makers]

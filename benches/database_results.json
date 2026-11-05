@@ -1,0 +1,23 @@
+{
+  "korvex, built-in server": {
+    "connections": 200,
+    "requests_per_second": 21379.667090526407,
+    "p99_ms": 32.422935,
+    "failed": 0,
+    "peak_rss_mb": 133.21484375
+  },
+  "korvex on uvicorn": {
+    "connections": 200,
+    "requests_per_second": 23523.51741766639,
+    "p99_ms": 23.482144,
+    "failed": 0,
+    "peak_rss_mb": 169.84375
+  },
+  "fastapi on uvicorn": {
+    "connections": 200,
+    "requests_per_second": 15355.583465255937,
+    "p99_ms": 41.626780000000004,
+    "failed": 0,
+    "peak_rss_mb": 228.56640625
+  }
+}

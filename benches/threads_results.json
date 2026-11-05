@@ -1,0 +1,65 @@
+{
+  "3.14t, 1 worker, 1 thread": {
+    "connections": 200,
+    "requests_per_second": 71095.51848171906,
+    "p99_ms": 4.610463,
+    "failed": 0,
+    "peak_rss_mb": 38.7109375
+  },
+  "3.14t, 1 worker, 2 threads": {
+    "connections": 200,
+    "requests_per_second": 98838.83644006393,
+    "p99_ms": 3.7905740000000003,
+    "failed": 0,
+    "peak_rss_mb": 43.30859375
+  },
+  "3.14t, 1 worker, 3 threads": {
+    "connections": 200,
+    "requests_per_second": 111316.62891453084,
+    "p99_ms": 4.598271,
+    "failed": 0,
+    "peak_rss_mb": 45.859375
+  },
+  "3.14t, 1 worker, 4 threads": {
+    "connections": 200,
+    "requests_per_second": 103378.3637310237,
+    "p99_ms": 6.025373,
+    "failed": 0,
+    "peak_rss_mb": 49.11328125
+  },
+  "3.14t, 2 workers, 1 thread": {
+    "connections": 200,
+    "requests_per_second": 119674.31674653987,
+    "p99_ms": 3.0876240000000004,
+    "failed": 0,
+    "peak_rss_mb": 97.91015625
+  },
+  "3.14t, 4 workers, 1 thread": {
+    "connections": 200,
+    "requests_per_second": 116183.0425593322,
+    "p99_ms": 4.069571,
+    "failed": 0,
+    "peak_rss_mb": 158.765625
+  },
+  "GIL, 1 worker, 1 thread": {
+    "connections": 200,
+    "requests_per_second": 59301.25253654728,
+    "p99_ms": 4.940571,
+    "failed": 0,
+    "peak_rss_mb": 32.125
+  },
+  "GIL, 1 worker, 2 threads": {
+    "connections": 200,
+    "requests_per_second": 58653.38747827487,
+    "p99_ms": 2.454396,
+    "failed": 0,
+    "peak_rss_mb": 32.63671875
+  },
+  "GIL, 4 workers, 1 thread": {
+    "connections": 200,
+    "requests_per_second": 98303.58801407156,
+    "p99_ms": 4.586135,
+    "failed": 0,
+    "peak_rss_mb": 123.84765625
+  }
+}

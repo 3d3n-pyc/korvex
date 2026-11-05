@@ -380,6 +380,7 @@ or, from Python, `app.run(workers=3)`. The same options exist in both:
 | `--host`, `--port` | `127.0.0.1`, `8000` | Address to listen on. |
 | `--uds PATH` | | Listen on a Unix socket instead, for a proxy on the same machine. |
 | `--workers N` | `1` | Processes sharing the port. About 3 per 4 CPU cores works best. A worker that crashes is restarted. |
+| `--threads N` | `1` | Event loops per worker, each in its own thread. On free-threaded Python (3.14t) they run in parallel, sharing the process's memory; with the GIL they take turns on one core. Each runs the startup and shutdown hooks, like a worker: keep what they open in `app.local` (below). |
 | `--graceful-timeout S` | `30` | On Ctrl+C or SIGTERM, seconds requests in progress get to finish. |
 | `--max-body BYTES` | 1 MiB | Larger request bodies get a 413, larger WebSocket messages close the connection. A route can set its own: `@app.post("/upload", max_body=50_000_000)`. |
 | `--timeout S` | `30` | Seconds a client gets to send the headers, then the body (408 after that). |
@@ -387,6 +388,22 @@ or, from Python, `app.run(workers=3)`. The same options exist in both:
 | `--forwarded-host` | off | Also believe the host they forward for the `Host` header: `X-Forwarded-Host`, or `Forwarded`'s `host` when there's no `X-Forwarded-For` or `-Proto`. Only if the proxy sets the header it uses itself (nginx passes a client's `X-Forwarded-Host` on as is), and a proxy that uses `Forwarded` must also strip a client's `X-Forwarded-*`. |
 | `--access-log` | off | Log each request. |
 | `--ws-ping-interval S` | `20` | Seconds between pings on open WebSockets; a client silent until the next ping is closed (1011). `0` turns them off. |
+
+With threads, a module-level global set in a startup hook would hold one
+loop's connection pool for all of them, and asyncio objects only work on
+the loop that made them. `app.local` keeps attributes per event loop:
+
+```python
+@app.on_startup
+async def connect():
+    app.local.pool = await asyncpg.create_pool(DATABASE_URL)   # this loop's pool
+
+@app.get("/users/{id:int}")
+async def get_user(request, id):
+    row = await app.local.pool.fetchrow("SELECT ... WHERE id = $1", id)
+```
+
+With one loop, it's simply an attribute, under any server.
 
 How it works: a Rust thread per worker reads each request in full, without
 touching Python, then hands it to the asyncio loop, which runs your
@@ -553,6 +570,56 @@ run on the same machine:
   without them pays nothing.
 
 Reproduce with `uv run pytest benches/bench_dependencies.py --benchmark-only`.
+
+### Threads on free-threaded Python
+
+The built-in server on the same 4 cores as above, the same app and load
+(200 connections), with more threads or more workers. One run:
+
+| Python, workers, threads | Requests/s | p99 | Memory |
+|---|---|---|---|
+| 3.14t, 1 worker, 1 thread | 71,096 | 4.6 ms | 39 MiB |
+| 3.14t, 1 worker, 2 threads | 98,839 | 3.8 ms | 43 MiB |
+| **3.14t, 1 worker, 3 threads** | **111,317** | 4.6 ms | **46 MiB** |
+| 3.14t, 1 worker, 4 threads | 103,378 | 6.0 ms | 49 MiB |
+| 3.14t, 2 workers, 1 thread | 119,674 | 3.1 ms | 98 MiB |
+| 3.14t, 4 workers, 1 thread | 116,183 | 4.1 ms | 159 MiB |
+| 3.14 (GIL), 1 worker, 1 thread | 59,301 | 4.9 ms | 32 MiB |
+| 3.14 (GIL), 1 worker, 2 threads | 58,653 | 2.5 ms | 33 MiB |
+| 3.14 (GIL), 4 workers, 1 thread | 98,304 | 4.6 ms | 124 MiB |
+
+- On 3.14t, 3 threads serve 57% more than one, within 4% of 4 workers,
+  with a third of the memory. Past 3, they don't gain: each loop has its
+  Rust thread too, so 4 of them already keep 8 threads busy on 4 cores.
+- With the GIL, threads don't help: use workers.
+- Workers still serve the most; threads are for when memory counts (one
+  copy of the app, its caches and connection pools per process).
+- `compress()` leaves brotli out on 3.14t: the `brotli` package turns the
+  GIL back on for the whole process. CI checks that nothing else does.
+
+Reproduce with `KORVEX_FT_PYTHON=/path/to/3.14t/python uv run python
+benches/threads.py` (see the file for the setup).
+
+### With a database
+
+Each request reads one row from PostgreSQL through an asyncpg pool, then
+answers with JSON: the least a real API does. PostgreSQL gets 2 cores of
+its own, the server 4, each server 3 workers. Two runs:
+
+| Server | Requests/s | p99 | Memory |
+|---|---|---|---|
+| Korvex, built-in server | 21,660 / 21,380 | 37.7 / 32.4 ms | 133 MiB |
+| Korvex on uvicorn | 22,035 / 23,524 | 30.9 / 23.5 ms | 170 MiB |
+| FastAPI on uvicorn | 13,407 / 15,356 | 41.7 / 41.6 ms | 229 MiB |
+
+- The database sets the pace: Korvex's two servers serve about the same,
+  uvicorn a little more in the second run, and the built-in server's lead
+  of the tests above is gone. It still uses the least memory.
+- FastAPI serves 35 to 40% less: its own cost per request comes on top of
+  the database's.
+
+Reproduce with `uv run python benches/database.py` (needs podman or
+docker for PostgreSQL, and oha).
 
 ## Development
 

@@ -24,6 +24,7 @@ if os.environ.get("STATIC_DIR"):
 def startup():
     if os.environ.get("FAIL_STARTUP"):
         raise ConnectionError("database unreachable")
+    app.local.opened_on = asyncio.get_running_loop()  # like a connection pool, one per loop
     print("STARTED", flush=True)
 
 
@@ -78,6 +79,18 @@ async def slow(request):
 @app.get("/pid")
 def pid(request):
     return Response.text(str(os.getpid()))
+
+
+@app.get("/local")
+def local(request):
+    return Response.json(app.local.opened_on is asyncio.get_running_loop())
+
+
+@app.get("/thread")
+def thread(request):
+    import threading
+
+    return Response.text(threading.current_thread().name)
 
 
 @app.get("/crash")
@@ -172,6 +185,7 @@ if __name__ == "__main__":
     app.run(
         port=int(sys.argv[1]),
         workers=int(os.environ.get("WORKERS", "1")),
+        threads=int(os.environ.get("THREADS", "1")),
         graceful_timeout=float(os.environ.get("GRACE", "30")),
         max_body=int(os.environ.get("MAX_BODY", str(1024 * 1024))),
         timeout=float(os.environ.get("TIMEOUT", "30")),
