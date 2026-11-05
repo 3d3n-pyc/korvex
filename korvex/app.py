@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mappin
 from email.message import Message
 from inspect import isawaitable
 from pathlib import Path
-from typing import Any, Optional, Union, cast, overload
+from typing import Any, Optional, Union, overload
 from urllib.parse import parse_qs, unquote
 
 from korvex._core import MethodNotAllowed
@@ -214,7 +214,7 @@ class WebSocket(Request):
     async def send_bytes(self, data: bytes) -> None:
         await self._send({"type": "websocket.send", "bytes": data})
 
-    async def send_json(self, data: JSONValue) -> None:
+    async def send_json(self, data: Any) -> None:
         await self.send_text(json.dumps(data))
 
     async def close(self, code: int = 1000, reason: str = "") -> None:
@@ -441,7 +441,7 @@ class App(_RouteDecorators):
         from korvex import openapi
 
         def serve_openapi(request: Request) -> Response:
-            return Response.json(cast(JSONValue, self.openapi(title=title, version=version, description=description)))
+            return Response.json(self.openapi(title=title, version=version, description=description))
 
         self.router.route(openapi_path, "korvex.openapi")
         self._handlers["korvex.openapi"] = serve_openapi
@@ -712,7 +712,7 @@ class App(_RouteDecorators):
                 logger.exception("exception handler failed for %s %s", request.method, request.path)
                 return Response.text("Internal Server Error", status=500)
         if isinstance(exc, ValidationError):
-            return Response.json(cast(JSONValue, {"detail": exc.errors}), status=422, headers=exc.headers)
+            return Response.json({"detail": exc.errors}, status=422, headers=exc.headers)
         if isinstance(exc, HTTPException):
             return Response.text(exc.detail, status=exc.status, headers=exc.headers)
         logger.exception("unhandled error in %s %s", request.method, request.path, exc_info=exc)

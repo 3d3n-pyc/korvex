@@ -8,7 +8,7 @@ import mimetypes
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator
 from http.cookies import SimpleCookie
-from typing import Literal, Optional, Union
+from typing import Any, Literal, Optional, Union
 from urllib.parse import quote
 
 # `Union` rather than `|`: this line runs at import time, and `|` between
@@ -92,8 +92,10 @@ class Response:
         return cls._with_type(text, "text/plain; charset=utf-8", status, headers)
 
     @classmethod
-    def json(cls, data: JSONValue, *, status: int = 200, headers: Iterable[tuple[str, str]] = ()) -> Response:
-        """An `application/json` response (unless `headers` sets Content-Type)."""
+    def json(cls, data: Any, *, status: int = 200, headers: Iterable[tuple[str, str]] = ()) -> Response:
+        """An `application/json` response (unless `headers` sets Content-Type).
+        `data` is anything `json.dumps` takes. (Typed `Any`, not `JSONValue`:
+        type checkers reject a `dict[str, list[dict]]` as a `JSONValue`.)"""
         return cls._with_type(json.dumps(data), "application/json", status, headers)
 
     @classmethod
