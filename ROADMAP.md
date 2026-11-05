@@ -45,23 +45,51 @@ timeouts; the app adds rate limiting per user or API key and request
 IDs. That also helps where there's no full proxy in front: local
 development, or a platform whose load balancer doesn't do everything.
 
-## Later
+## Until 1.0
 
-- Free-threaded Python (3.14t), to let one worker use several cores.
-- A shared rate limit store (Redis), so the limit holds across workers and
-  machines.
-- WebSockets: a way for app hooks to see the handshake (dependencies
-  already can).
-- Optional middleware for security headers and response compression,
-  for deployments without a proxy.
-- Validation: a model filled from form fields, and dependencies
-  available to middleware.
-- More route syntax: custom constraints, host-based routing.
-- Benchmarks with several workers and with a real database.
+Everything left is done before 1.0, while no one runs Korvex in
+production: an API can still change for free now, and won't after. Until
+then, a version may break things; each break is listed in the changelog
+with how to update.
+
+The versions go from what shapes the API to what only adds to it.
+
+### 0.10: the API's last open questions
+
+- **Dependencies in middleware.** Route middleware (`@app.middleware`,
+  `middleware=[...]`) and route dependencies (`dependencies=[...]`) now do
+  the same job. Settle it: one way to guard a group of routes, the other
+  kept for what only it can do, or deprecated.
+- **App hooks see the WebSocket handshake**, as dependencies already do.
+- **Custom route constraints**, beyond `int` and `uuid` (`{slug:slug}`, a
+  regex, a function), without making the router any less opaque: the
+  router still only gets a method and a path, and gives back a name.
+- **Host-based routing**: routes for `api.example.com` apart from
+  `example.com`, as a layer on top of the router.
+- **A model filled from form fields**, like a JSON body.
+
+### 0.11: ready-made middleware
+
+- **Response compression** (gzip, and brotli or zstd when installed), for
+  deployments without a proxy to do it.
+- **Security headers**: `Strict-Transport-Security`, `Content-Security-Policy`,
+  `X-Content-Type-Options` and the like, with safe defaults.
+- **A shared rate limit store on Redis**, so a limit holds across workers
+  and machines (`redis` as an optional dependency).
+
+### 0.12: more than one core per worker
+
+- **Free-threaded Python (3.14t)**: wheels built for it (the `abi3` wheels
+  don't cover it), and the Rust and Python sides checked for real
+  parallel threads.
+- **Benchmarks with several workers and with a real database**
+  (PostgreSQL), in `benches/` like the others.
 
 ## 1.0
 
-- An API that stays stable, with deprecations announced in advance.
-- A documentation site.
+- An API that stays stable, with deprecations announced in advance: a
+  deprecated feature warns for at least two minor versions before it goes.
+- A documentation site, built from the README, the deployment guide and
+  the examples.
 - A built-in server that's solid in production behind a reverse proxy.
 - At least a few projects running it in production.
