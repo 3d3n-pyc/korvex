@@ -178,6 +178,9 @@ async def create(request, body: UserIn, notify: bool = False) -> UserOut:
 `app.openapi(title=..., version=...)` describes the API as an OpenAPI 3.1
 document: paths, typed path and query parameters, request and response
 models, and each handler's docstring (its first line as the summary).
+`app.docs(title=..., version=...)` serves it at `/openapi.json`, with
+Swagger UI at `/docs` to try the API from a browser (loaded from a CDN;
+`docs_path=None` leaves it out).
 
 ### WebSockets
 

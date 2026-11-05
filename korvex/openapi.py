@@ -4,6 +4,8 @@ See App.openapi() and App.docs()."""
 
 from __future__ import annotations
 
+import html
+import json
 import re
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -105,3 +107,28 @@ def _unique(name: str, used: set[str]) -> str:
 
 def _jsonable(value: Any) -> Any:
     return str(value) if isinstance(value, uuid.UUID) else value
+
+
+# Swagger UI from a CDN, major version pinned; App.docs(docs_path=None) skips it.
+_SWAGGER_UI = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
+</head>
+<body>
+<div id="swagger-ui"></div>
+<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>SwaggerUIBundle({{url: {url}, dom_id: "#swagger-ui"}});</script>
+</body>
+</html>
+"""
+
+
+def swagger_ui(title: str, openapi_url: str) -> str:
+    """The docs page. The title is HTML-escaped and the URL JSON-encoded
+    (with `</` broken up), so neither can inject markup or script."""
+    url = json.dumps(openapi_url).replace("</", "<\\/")
+    return _SWAGGER_UI.format(title=html.escape(title), url=url)

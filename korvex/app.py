@@ -424,6 +424,34 @@ class App(_RouteDecorators):
 
         return openapi.build(self, title=title, version=version, description=description)
 
+    def docs(
+        self,
+        *,
+        title: str = "API",
+        version: str = "0.1.0",
+        description: str | None = None,
+        openapi_path: str = "/openapi.json",
+        docs_path: str | None = "/docs",
+    ) -> None:
+        """Serves the OpenAPI document at `openapi_path` (recomputed on each
+        call, so it follows route changes) and Swagger UI at `docs_path`
+        (loaded from a CDN; `None` to leave it out)."""
+        from korvex import openapi
+
+        def serve_openapi(request: Request) -> Response:
+            return Response.json(cast(JSONValue, self.openapi(title=title, version=version, description=description)))
+
+        self.router.route(openapi_path, "korvex.openapi")
+        self._handlers["korvex.openapi"] = serve_openapi
+        if docs_path is not None:
+            page = openapi.swagger_ui(title, openapi_path)
+
+            def serve_docs(request: Request) -> Response:
+                return Response(page, headers=[("Content-Type", "text/html; charset=utf-8")])
+
+            self.router.route(docs_path, "korvex.docs")
+            self._handlers["korvex.docs"] = serve_docs
+
     def handler(self, name: str) -> Callable[[Handler], Handler]:
         """Decorator: attaches a function to a handler name already
         registered on `app.router` (e.g. through a route group)."""

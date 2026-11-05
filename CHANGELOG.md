@@ -9,6 +9,8 @@
   (`ValidationError`, customizable with `@app.exception_handler(422)`).
 - `app.openapi(title=..., version=...)`: an OpenAPI 3.1 document built
   from the routes, typed parameters, models and docstrings.
+- `app.docs()`: serves the document at `/openapi.json` and Swagger UI at
+  `/docs`.
 - `HTTPException` moves to `korvex.errors`; `from korvex import
   HTTPException` works as before.
 
