@@ -1,7 +1,10 @@
 """Signing in and out with a regular HTML form and a session cookie, and
-the "session" middleware that guards the API."""
+`current_user`, the dependency that guards the API and the WebSocket."""
 
-from korvex import App, HTTPException, Request, Response
+from collections.abc import Awaitable, Callable
+from typing import Optional
+
+from korvex import App, Cookie, Form, HTTPException, Request, Response
 
 from taskboard.config import Settings
 from taskboard.services.auth import AuthService
@@ -9,21 +12,29 @@ from taskboard.services.auth import AuthService
 COOKIE = "session"
 
 
-def register(app: App, auth: AuthService, settings: Settings) -> None:
-    @app.middleware("session")
-    async def require_session(request: Request) -> None:
-        if await auth.user(request.cookies.get(COOKIE)) is None:
+CurrentUser = Callable[..., Awaitable[str]]
+
+
+def register(app: App, auth: AuthService, settings: Settings) -> CurrentUser:
+    """Registers the routes, and returns the `current_user` dependency for
+    the other route modules: `dependencies=[Depends(current_user)]`."""
+
+    async def current_user(token: Optional[str] = Cookie(None, alias=COOKIE)) -> str:
+        """Who is signed in; a 401 for anyone else. HTTP routes and the
+        WebSocket depend on it alike."""
+        user = await auth.user(token)
+        if user is None:
             raise HTTPException(401, "sign in first")
+        return user
 
     @app.post("/login")
-    async def login(request: Request) -> Response:
+    async def login(request: Request, password: str = Form("")) -> Response:
         """Sign in
 
         A form with a `password` field. Sets the session cookie and goes back
         to the app (303), with `?login=failed` if the password is wrong.
         """
-        password = (await request.form()).get("password", [""])[0]
-        token = await auth.login(password) if isinstance(password, str) else None
+        token = await auth.login(password)
         if token is None:
             return Response.redirect("/?login=failed", status=303)
         response = Response.redirect("/", status=303)
@@ -40,21 +51,23 @@ def register(app: App, auth: AuthService, settings: Settings) -> None:
         return response
 
     @app.post("/logout")
-    async def logout(request: Request) -> Response:
+    async def logout(request: Request, token: Optional[str] = Cookie(None, alias=COOKIE)) -> Response:
         """Sign out
 
         Ends the session on the server too, not just in the browser.
         """
-        await auth.logout(request.cookies.get(COOKIE))
+        await auth.logout(token)
         response = Response.redirect("/", status=303)
         response.delete_cookie(COOKIE)
         return response
 
     @app.get("/api/me")
-    async def me(request: Request) -> Response:
+    async def me(request: Request, token: Optional[str] = Cookie(None, alias=COOKIE)) -> Response:
         """Who is signed in
 
         `{"user": "admin"}`, or `{"user": null}`. Open to everyone: the page
         asks it first, to show the app or the sign-in screen.
         """
-        return Response.json({"user": await auth.user(request.cookies.get(COOKIE))})
+        return Response.json({"user": await auth.user(token)})
+
+    return current_user

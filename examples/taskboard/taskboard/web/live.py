@@ -1,17 +1,17 @@
 """Live updates: each open page keeps a WebSocket on /live and gets every
 change as it happens (from any window or device), plus how many pages are
-open. Signed-in users only."""
+open. Signed-in users only: the same `current_user` dependency as the
+API refuses anyone else before the connection opens (a 403)."""
 
 import asyncio
 import logging
 from typing import Optional
 
 import msgspec
-from korvex import App, WebSocket
+from korvex import App, Depends, WebSocket
 
-from taskboard.services.auth import AuthService
 from taskboard.services.events import EventBus, Message
-from taskboard.web.auth import COOKIE
+from taskboard.web.auth import CurrentUser
 
 log = logging.getLogger(__name__)
 
@@ -22,13 +22,9 @@ class Presence(msgspec.Struct, frozen=True, tag_field="event", tag="presence"):
     open: int
 
 
-def register(app: App, events: EventBus, auth: AuthService) -> None:
-    @app.websocket("/live")
+def register(app: App, events: EventBus, current_user: CurrentUser) -> None:
+    @app.websocket("/live", dependencies=[Depends(current_user)])
     async def live(ws: WebSocket) -> None:
-        # App hooks and middleware don't run for WebSockets: check here.
-        if await auth.user(ws.cookies.get(COOKIE)) is None:
-            await ws.close(1008)  # before accept(): the handshake gets a 403
-            return
         await ws.accept()
         queue = events.subscribe()
         events.publish(Presence(events.listeners))

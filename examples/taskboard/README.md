@@ -51,7 +51,7 @@ taskboard/
     schemas.py       what clients send, validated by Korvex (422 otherwise)
     lists.py         /api/lists routes
     tasks.py         /api/tasks routes, and the export
-    auth.py          /login, /logout, /api/me, and the "session" middleware
+    auth.py          /login, /logout, /api/me, and current_user, the guard
     live.py          the /live WebSocket
     pages.py         the page, its static files, /health
     hooks.py         timing, request IDs, CORS, rate limiting
@@ -134,8 +134,8 @@ Both answer with the same 422 format, so the page shows both alike.
   sees them. Only a SHA-256 of each token is stored. Signing out ends the
   session on the server, not just in the browser. The cookie is HttpOnly
   and SameSite=Lax; set `TASKBOARD_SECURE_COOKIES=true` behind HTTPS.
-  The WebSocket checks the session too: app middleware doesn't run for
-  WebSockets.
+  One dependency, `current_user` in `web/auth.py`, guards the `/api`
+  groups and the WebSocket alike (`dependencies=[Depends(current_user)]`).
 - **Live updates through an event bus.** Services publish events; each
   open page has its own bounded queue, and one that stops reading is cut
   off (closed with 1013) instead of slowing the others. It reconnects and
