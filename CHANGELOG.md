@@ -6,6 +6,7 @@
   request, under ASGI and in the built-in server. Before hooks run ahead
   of routing and can answer right away; after hooks see every response,
   errors included, in reverse order.
+- `korvex.middleware.cors(app, ...)`: CORS, preflight requests included.
 
 ## 0.5.0
 

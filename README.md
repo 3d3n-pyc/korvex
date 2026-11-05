@@ -139,6 +139,22 @@ uvicorn mymodule:app
   raises, the server doesn't start. Both `@app.on_startup` and
   `@app.on_startup()` work.
 
+### Ready-made hooks
+
+`korvex.middleware` registers hooks for common jobs:
+
+```python
+from korvex.middleware import cors
+
+cors(app, allow_origins=["https://example.com"], allow_credentials=True)
+```
+
+- `cors(app, allow_origins=..., allow_methods=..., allow_headers=...,
+  allow_credentials=False, expose_headers=(), max_age=600)` lets browsers
+  call the app from other origins. Preflight requests are answered before
+  routing; every response to an allowed origin, errors included, gets the
+  CORS headers.
+
 More in [`examples/`](examples/). To put it in production (behind nginx or
 Caddy, in Docker, on AWS Lambda or Vercel), see the
 [deployment guide](docs/deployment.md).
