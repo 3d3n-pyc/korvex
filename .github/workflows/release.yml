@@ -15,11 +15,15 @@ permissions:
 
 jobs:
   linux:
-    runs-on: ubuntu-22.04
+    # aarch64 on GitHub's native ARM runners: built and tested like x86_64,
+    # where emulating it under QEMU took minutes (and once hung in apt-get).
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       matrix:
-        target: [x86_64, aarch64]
+        include:
+          - { runner: ubuntu-22.04, target: x86_64 }
+          - { runner: ubuntu-24.04-arm, target: aarch64 }
     steps:
       - uses: actions/checkout@v7
       - name: Set version from tag
@@ -31,29 +35,13 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist
           manylinux: auto
-      # aarch64 is cross-compiled on an x86_64 runner, so it's tested under QEMU.
       # Tests call the venv's `pytest`, not `python -m pytest`, which would
       # import the source `korvex/` folder instead of the installed wheel.
       - name: Test wheel
-        if: matrix.target == 'x86_64'
         run: |
           python3 -m venv test-env
           test-env/bin/pip install --quiet dist/*.whl pytest msgspec pydantic
           test-env/bin/pytest tests/ -v
-      - name: Test wheel (emulated aarch64)
-        if: matrix.target == 'aarch64'
-        uses: uraimo/run-on-arch-action@v3
-        with:
-          arch: aarch64
-          distro: ubuntu22.04
-          githubToken: ${{ github.token }}
-          install: |
-            apt-get update -q -y
-            apt-get install -q -y python3 python3-venv python3-pip
-          run: |
-            python3 -m venv test-env
-            test-env/bin/pip install --quiet dist/*.whl pytest msgspec pydantic
-            test-env/bin/pytest tests/ -v
       - uses: actions/upload-artifact@v7
         with:
           name: wheels-linux-${{ matrix.target }}
@@ -142,15 +130,14 @@ jobs:
   free-threaded:
     # Wheels for free-threaded Python (3.14t): the abi3 wheels above don't
     # cover it. Each is tested with -W error::RuntimeWarning, which fails if
-    # a module turns the GIL back on; aarch64 Linux is built only (testing
-    # it would mean emulating a free-threaded Python too).
+    # a module turns the GIL back on.
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       matrix:
         include:
           - { runner: ubuntu-22.04, target: x86_64, test: true }
-          - { runner: ubuntu-22.04, target: aarch64, test: false }
+          - { runner: ubuntu-24.04-arm, target: aarch64, test: true }
           - { runner: macos-15-intel, target: x86_64, test: true }
           - { runner: macos-latest, target: aarch64, test: true }
           - { runner: windows-latest, target: x64, test: true }
