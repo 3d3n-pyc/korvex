@@ -1,0 +1,23 @@
+[project]
+name = "taskboard"
+version = "1.0.0"
+description = "A shared task board, built on Korvex"
+requires-python = ">=3.9"
+dependencies = ["korvex>=0.7", "msgspec>=0.18"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["taskboard*"]
+
+[tool.setuptools.package-data]
+taskboard = ["static/*", "static/css/*", "static/js/*", "static/js/ui/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

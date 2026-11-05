@@ -5,6 +5,11 @@ Read them in order, each builds on the previous one:
 1. [basic_router.py](basic_router.py): the router alone, calling handlers by hand.
 2. [route_groups.py](route_groups.py): shared prefixes and middleware.
 3. [asgi_app.py](asgi_app.py): a real web API served with uvicorn.
+4. [taskboard/](taskboard/): a complete todo list, laid out like a real
+   project. Several lists, due dates, drag and drop, search, keyboard
+   shortcuts and live updates, over a validated JSON API with Swagger UI,
+   sign-in, SQLite with migrations, and its own tests. Its README explains
+   the layers and the choices behind them.
 
 [deploy/](deploy/) holds ready-to-copy deployment files (Dockerfile,
 Caddy and nginx configurations over TCP or a Unix socket, AWS Lambda
@@ -18,3 +23,6 @@ uv run python examples/basic_router.py
 uv run python examples/route_groups.py
 uv run --with uvicorn uvicorn examples.asgi_app:app --reload
 ```
+
+The taskboard is a project of its own: see [its README](taskboard/README.md)
+to run it and its tests.

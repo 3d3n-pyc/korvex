@@ -230,7 +230,8 @@ cors(app, allow_origins=["https://example.com"], allow_credentials=True)
   Counters live in each worker's memory, so with 3 workers a client can
   get up to 3 times the limit; `store=` takes a shared store instead.
 
-More in [`examples/`](examples/). To put it in production (behind nginx or
+More in [`examples/`](examples/), up to a [complete app](examples/taskboard/)
+laid out like a real project. To put it in production (behind nginx or
 Caddy, in Docker, on AWS Lambda or Vercel), see the
 [deployment guide](docs/deployment.md).
 
