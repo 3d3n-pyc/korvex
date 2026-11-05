@@ -20,10 +20,12 @@ src/
   method.rs   HTTP methods
   server.rs   the built-in server (Unix only): HTTP in a Rust thread, handed to asyncio
   proxy.rs    trusted X-Forwarded-* headers
+  websocket.rs WebSockets in the built-in server
 korvex/
   router.py   Router (wraps the Rust one) and RouteGroup
   app.py      App and Request (ASGI)
   response.py Response and Headers
+  middleware.py ready-made hooks: cors(), request_id(), rate_limit()
   serve.py    App.run(): one process, or a supervisor and its workers
   cli.py      the `korvex run` command
 tests/        Python tests (Rust tests live next to the code)
@@ -34,7 +36,7 @@ benches/      comparisons with other frameworks:
   plot.py          draws the charts in docs/
 ```
 
-Only `lib.rs` and `server.rs` use PyO3; keep `tree`, `path`, `method` and
+Only `lib.rs`, `server.rs` and `websocket.rs` use PyO3; keep `tree`, `path`, `method` and
 `proxy` plain Rust.
 
 ## Before opening a PR
