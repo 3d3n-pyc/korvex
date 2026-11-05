@@ -6,15 +6,16 @@ from datetime import date
 from typing import Optional
 
 import msgspec
-from korvex import App, Request, Response
+from korvex import App, Depends, Request, Response
 
 from taskboard.domain import Task
 from taskboard.services.tasks import TaskService
+from taskboard.web.auth import CurrentUser
 from taskboard.web.schemas import NewTask, TaskChanges
 
 
-def register(app: App, tasks: TaskService) -> None:
-    api = app.group("/api", middleware=["session"])
+def register(app: App, tasks: TaskService, current_user: CurrentUser) -> None:
+    api = app.group("/api", dependencies=[Depends(current_user)])
 
     @api.get("/tasks")
     async def find_tasks(

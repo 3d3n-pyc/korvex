@@ -2,16 +2,17 @@
 
 import uuid
 
-from korvex import App, Request, Response
+from korvex import App, Depends, Request, Response
 
 from taskboard.domain import TaskList
 from taskboard.services.lists import ListService
 from taskboard.services.tasks import TaskService
+from taskboard.web.auth import CurrentUser
 from taskboard.web.schemas import ListChanges, NewList, TaskOrder
 
 
-def register(app: App, lists: ListService, tasks: TaskService) -> None:
-    api = app.group("/api", middleware=["session"])
+def register(app: App, lists: ListService, tasks: TaskService, current_user: CurrentUser) -> None:
+    api = app.group("/api", dependencies=[Depends(current_user)])
 
     @api.get("/lists")
     async def list_lists(request: Request) -> list[TaskList]:

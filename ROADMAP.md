@@ -2,7 +2,7 @@
 
 Where Korvex is going. Versions are a rough order, not promises.
 
-## Where it stands (0.7)
+## Where it stands (0.8)
 
 - **Fast.** On one CPU core, Korvex serves the most requests per second of
   the frameworks tested, with the least memory. Its built-in server serves
@@ -11,9 +11,10 @@ Where Korvex is going. Versions are a rough order, not promises.
   with typed path parameters, startup and shutdown hooks, error handling,
   cookies and forms, streaming, files and static directories, WebSockets,
   app-wide hooks, CORS, request IDs and rate limiting; validation from
-  type annotations with msgspec or pydantic; an OpenAPI document and
-  Swagger UI; a built-in server with workers, graceful shutdown, size
-  limits and timeouts; and a deployment guide.
+  type annotations with msgspec or pydantic, headers, cookies and forms
+  as parameters, and dependencies; an OpenAPI document and Swagger UI; a
+  built-in server with workers, graceful shutdown, size limits and
+  timeouts; and a deployment guide.
 - **Young.** Alpha, one maintainer, no known production use yet.
 
 Two rules hold for everything below:
@@ -55,11 +56,11 @@ development, or a platform whose load balancer doesn't do everything.
 - A shared rate limit store (Redis), so the limit holds across workers and
   machines.
 - WebSockets: backpressure on outgoing messages, idle timeouts, and a way
-  for app hooks to see the handshake.
+  for app hooks to see the handshake (dependencies already can).
 - Optional middleware for security headers and response compression,
   for deployments without a proxy.
-- Validation: headers, cookies and form fields as parameters, and
-  dependencies shared between handlers.
+- Validation: a model filled from form fields, and dependencies
+  available to middleware.
 - More route syntax: custom constraints, host-based routing.
 - Benchmarks with several workers and with a real database.
 - A performance check in CI that fails when a change makes Korvex slower.

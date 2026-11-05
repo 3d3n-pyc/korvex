@@ -10,8 +10,8 @@ from taskboard.web import auth, errors, hooks, lists, live, pages, tasks
 def register(app: App, services: Services) -> None:
     hooks.install(app, services.settings)
     errors.install(app)
-    auth.register(app, services.auth, services.settings)  # first: it defines the "session" middleware
-    lists.register(app, services.lists, services.tasks)
-    tasks.register(app, services.tasks)
-    live.register(app, services.events, services.auth)
+    current_user = auth.register(app, services.auth, services.settings)  # the guard for the others
+    lists.register(app, services.lists, services.tasks, current_user)
+    tasks.register(app, services.tasks, current_user)
+    live.register(app, services.events, current_user)
     pages.register(app, services.db)

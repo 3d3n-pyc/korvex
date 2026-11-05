@@ -176,9 +176,80 @@ async def create(request, body: UserIn, notify: bool = False) -> UserOut:
   without them costs nothing extra, and one that can't be understood fails
   at import.
 
+Headers, cookies and form fields are read the same way, with `Header()`,
+`Cookie()` and `Form()` as the default (or in `Annotated[...]`):
+
+```python
+from korvex import Cookie, Form, Header, Query, UploadedFile
+
+@app.post("/photos")
+async def upload(
+    request,
+    title: str = Form(),                         # a form field, urlencoded or multipart
+    photo: UploadedFile = Form(),                # a file from a multipart form
+    x_client: str = Header("web"),               # the X-Client header
+    theme: str = Cookie("light"),                # the theme cookie
+    page_size: int = Query(20, alias="page-size"),
+):
+    ...
+```
+
+- `x_client` reads `X-Client`: underscores become hyphens, case doesn't
+  matter. `alias=` gives the exact name.
+- Their errors say where: `["header", "x-client"]`, `["form", "title"]`.
+- An empty form field counts as missing, except for `str`.
+
+### Dependencies
+
+`Depends(func)` gives a parameter the value `func` returns. `func` takes
+parameters the way a handler does (query, headers, cookies, body, path,
+other dependencies), plus the request if it asks for it:
+
+```python
+from typing import Annotated, Optional
+from korvex import Cookie, Depends, HTTPException
+
+async def current_user(session: Optional[str] = Cookie(None)) -> User:
+    user = await users.by_session(session)
+    if user is None:
+        raise HTTPException(401, "sign in first")
+    return user
+
+CurrentUser = Annotated[User, Depends(current_user)]
+
+async def database():
+    connection = await pool.acquire()
+    try:
+        yield connection                     # the handler runs here
+    finally:
+        await pool.release(connection)
+
+@app.get("/tasks")
+async def tasks(request, user: CurrentUser, db=Depends(database)) -> list[Task]:
+    return await db.tasks_of(user.id)
+
+api = app.group("/api", dependencies=[Depends(current_user)])  # checks every route in it
+```
+
+- A dependency can be sync or async, and stop the request by raising
+  `HTTPException`. Within one request it runs once, however many
+  parameters ask for it (`Depends(func, cache=False)` runs it each time).
+- One that `yield`s is torn down when the handler is done (for a streamed
+  response, once the stream is sent). An error from the handler is raised
+  at the `yield`, so `try`/`except`/`finally` work there; the error still
+  gets its usual response.
+- `dependencies=[...]` on a route, a group or a WebSocket runs them for
+  what they check rather than what they return. A group's run before its
+  routes' own.
+- In tests, `app.dependency_overrides[current_user] = lambda: test_user`
+  replaces one everywhere.
+- Validation errors from dependencies and from the handler come in one
+  422.
+
 `app.openapi(title=..., version=...)` describes the API as an OpenAPI 3.1
-document: paths, typed path and query parameters, request and response
-models, and each handler's docstring (its first line as the summary).
+document: paths, typed parameters (path, query, headers, cookies, those of
+dependencies included), JSON and form bodies, response models, and each
+handler's docstring (its first line as the summary).
 `app.docs(title=..., version=...)` serves it at `/openapi.json`, with
 Swagger UI at `/docs` to try the API from a browser (loaded from a CDN;
 `docs_path=None` leaves it out).
@@ -187,21 +258,22 @@ Swagger UI at `/docs` to try the API from a browser (loaded from a CDN;
 
 ```python
 @app.websocket("/ws/{room}")
-async def chat(ws, room):
-    if ws.cookies.get("session") is None:
-        await ws.close(code=1008)  # before accept: refuses it (403)
-        return
+async def chat(ws, room, user: CurrentUser):  # no session: refused (403)
     await ws.accept()
     async for message in ws:  # text or bytes, until the client leaves
-        await ws.send_text(f"{room}: {message}")
+        await ws.send_text(f"{user.name} in {room}: {message}")
 ```
 
 - A `WebSocket` has the handshake's `headers`, `cookies`, `query_params`,
   `path_params`, `client` and `scheme`; `accept(subprotocol=...)`,
   `receive()` (raises `WebSocketDisconnect`), `receive_text/bytes/json`,
   `send_text/bytes/json` and `close(code)`.
+- Parameters and dependencies work as for HTTP handlers, without a body.
+  A dependency raising `HTTPException` refuses the connection before it
+  opens (403); a handler can also `close()` before `accept()` to refuse.
 - They work the same under ASGI servers and in the built-in server. Groups
-  support them (`api.websocket(...)`); app hooks don't run for them.
+  support them (`api.websocket(...)`), group dependencies included; app
+  hooks and middleware don't run for them.
 
 ### Ready-made hooks
 
@@ -388,9 +460,32 @@ in-process (no server). Median time per request:
 - Validating is faster than not validating here: msgspec and pydantic
   decode and encode JSON in compiled code, `request.json()` and
   `Response.json()` use Python's `json` module.
-- Handlers without annotations take the same time as in 0.6.
+- Handlers without annotations take the same time as in 0.6, validated
+  ones the same as in 0.7 (measured side by side).
 
 Reproduce with `uv run pytest benches/bench_validation.py --benchmark-only`.
+
+### Dependencies
+
+One GET whose handler gets the user from a header and opens then closes a
+session, run through the app in-process. Median time per request, from one
+run on the same machine:
+
+| Handler | Time |
+|---|---|
+| Korvex, the handler does it itself | 20.4 µs |
+| **Korvex, two dependencies (one with `yield`) and `Header()`** | **27.5 µs** |
+| FastAPI, the same dependencies, async | 100.5 µs |
+| FastAPI, the same dependencies, sync | 433 µs |
+
+- FastAPI runs sync dependencies in a thread pool, which keeps a blocking
+  one from stopping the event loop but costs a lot. Korvex calls them on
+  the loop, like sync handlers: keep blocking work out of them, or make
+  them async.
+- Dependencies are worked out when the route is registered; a handler
+  without them pays nothing.
+
+Reproduce with `uv run pytest benches/bench_dependencies.py --benchmark-only`.
 
 ## Development
 

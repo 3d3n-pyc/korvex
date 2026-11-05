@@ -26,7 +26,9 @@ korvex/
   app.py      App and Request (ASGI)
   response.py Response and Headers
   errors.py   HTTPException and ValidationError
-  schema.py   validation from a handler's annotations (msgspec or pydantic)
+  params.py   Header(), Cookie(), Query(), Form() and Depends()
+  schema.py   validation from a handler's annotations (msgspec or pydantic),
+              and resolving dependencies
   openapi.py  the OpenAPI document and the Swagger UI page
   middleware.py ready-made hooks: cors(), request_id(), rate_limit()
   serve.py    App.run(): one process, or a supervisor and its workers
@@ -36,6 +38,7 @@ benches/      comparisons with other frameworks:
   bench_router.py  route matching alone
   bench_app.py     the App's own cost per request, against Starlette
   bench_validation.py  validation from annotations, against FastAPI
+  bench_dependencies.py  dependencies, against FastAPI
   load_test.py     frameworks on the same server under load (apps in benches/load/)
   servers.py       servers on the same CPU cores, built-in one included
   plot.py          draws the charts in docs/

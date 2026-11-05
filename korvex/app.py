@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, unquote
 from korvex._core import MethodNotAllowed
 from korvex.errors import HTTPException, ValidationError
 from korvex.response import Headers, JSONValue, Response, StreamingResponse
-from korvex.schema import Plan, needs_plan, plan_for
+from korvex.schema import Plan, Run, needs_plan, plan_for
 from korvex.router import RouteGroup, Router
 
 # `Union`/`Optional` rather than `|`: these lines run at import time, and
@@ -71,7 +71,7 @@ FormData = dict[str, list[Union[str, UploadedFile]]]
 class Request:
     """An incoming HTTP request."""
 
-    __slots__ = ("method", "path", "headers", "query_params", "path_params", "client", "scheme", "_receive", "_cookies")
+    __slots__ = ("method", "path", "headers", "query_params", "path_params", "client", "scheme", "_receive", "_cookies", "_body", "_form")
 
     def __init__(self, scope: dict, receive: Callable[[], Awaitable[dict]], path_params: Mapping[str, Any]) -> None:
         self.method: str = scope.get("method", "GET")  # a WebSocket handshake is a GET
@@ -86,6 +86,8 @@ class Request:
         self.path_params = path_params
         self._receive = receive
         self._cookies: dict[str, str] | None = None
+        self._body: bytes | None = None
+        self._form: FormData | None = None
 
     @property
     def cookies(self) -> dict[str, str]:
@@ -100,14 +102,16 @@ class Request:
         return self._cookies
 
     async def body(self) -> bytes:
-        """Reads the whole request body."""
-        chunks = []
-        more_body = True
-        while more_body:
-            message = await self._receive()
-            chunks.append(message.get("body", b""))
-            more_body = message.get("more_body", False)
-        return b"".join(chunks)
+        """Reads the whole request body (once: later calls get it again)."""
+        if self._body is None:
+            chunks = []
+            more_body = True
+            while more_body:
+                message = await self._receive()
+                chunks.append(message.get("body", b""))
+                more_body = message.get("more_body", False)
+            self._body = b"".join(chunks)
+        return self._body
 
     async def json(self) -> JSONValue:
         """Reads the body and parses it as JSON. A body that isn't valid
@@ -122,6 +126,11 @@ class Request:
         order. Files from a `multipart/form-data` form are `UploadedFile`s.
         Any other content type is answered with a 415 error, and text that
         can't be decoded with a 400."""
+        if self._form is None:
+            self._form = await self._read_form()
+        return self._form
+
+    async def _read_form(self) -> FormData:
         content_type = Message()
         content_type["content-type"] = self.headers.get("content-type") or ""
         kind = content_type.get_content_type()
@@ -259,8 +268,10 @@ WebSocketHandler = Callable[..., Awaitable[None]]
 
 class _RouteDecorators:
     """`@get(path)` and friends, for any class with a `route()` decorator.
-    `max_body` (bytes) raises or lowers the built-in server's body size
-    limit for that route; ASGI servers ignore it."""
+    `dependencies` (`[Depends(func), ...]`) run before the handler, for
+    what they check rather than what they return. `max_body` (bytes)
+    raises or lowers the built-in server's body size limit for that route;
+    ASGI servers ignore it."""
 
     __slots__ = ()
 
@@ -270,60 +281,97 @@ class _RouteDecorators:
         *,
         method: str = "GET",
         middleware: Sequence[str] | None = None,
+        dependencies: Sequence[Any] = (),
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
         raise NotImplementedError
 
     def get(
-        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+        self,
+        path: str,
+        *,
+        middleware: Sequence[str] | None = None,
+        dependencies: Sequence[Any] = (),
+        max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="GET", middleware=middleware, max_body=max_body)
+        return self.route(path, method="GET", middleware=middleware, dependencies=dependencies, max_body=max_body)
 
     def post(
-        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+        self,
+        path: str,
+        *,
+        middleware: Sequence[str] | None = None,
+        dependencies: Sequence[Any] = (),
+        max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="POST", middleware=middleware, max_body=max_body)
+        return self.route(path, method="POST", middleware=middleware, dependencies=dependencies, max_body=max_body)
 
     def put(
-        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+        self,
+        path: str,
+        *,
+        middleware: Sequence[str] | None = None,
+        dependencies: Sequence[Any] = (),
+        max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="PUT", middleware=middleware, max_body=max_body)
+        return self.route(path, method="PUT", middleware=middleware, dependencies=dependencies, max_body=max_body)
 
     def patch(
-        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+        self,
+        path: str,
+        *,
+        middleware: Sequence[str] | None = None,
+        dependencies: Sequence[Any] = (),
+        max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="PATCH", middleware=middleware, max_body=max_body)
+        return self.route(path, method="PATCH", middleware=middleware, dependencies=dependencies, max_body=max_body)
 
     def delete(
-        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+        self,
+        path: str,
+        *,
+        middleware: Sequence[str] | None = None,
+        dependencies: Sequence[Any] = (),
+        max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="DELETE", middleware=middleware, max_body=max_body)
+        return self.route(path, method="DELETE", middleware=middleware, dependencies=dependencies, max_body=max_body)
 
     def head(
-        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+        self,
+        path: str,
+        *,
+        middleware: Sequence[str] | None = None,
+        dependencies: Sequence[Any] = (),
+        max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="HEAD", middleware=middleware, max_body=max_body)
+        return self.route(path, method="HEAD", middleware=middleware, dependencies=dependencies, max_body=max_body)
 
     def options(
-        self, path: str, *, middleware: Sequence[str] | None = None, max_body: int | None = None
+        self,
+        path: str,
+        *,
+        middleware: Sequence[str] | None = None,
+        dependencies: Sequence[Any] = (),
+        max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="OPTIONS", middleware=middleware, max_body=max_body)
+        return self.route(path, method="OPTIONS", middleware=middleware, dependencies=dependencies, max_body=max_body)
 
 
 class AppGroup(_RouteDecorators):
-    """Registers handlers under a shared prefix and middleware.
+    """Registers handlers under a shared prefix, middleware and dependencies.
 
-        api = app.group("/api", middleware=["auth"])
+        api = app.group("/api", middleware=["timing"], dependencies=[Depends(signed_in)])
 
-        @api.get("/users")           # GET /api/users, middleware ("auth",)
+        @api.get("/users")           # GET /api/users, after "timing" and signed_in
         def list_users(request): ...
     """
 
-    __slots__ = ("_app", "_routes")
+    __slots__ = ("_app", "_routes", "_dependencies")
 
-    def __init__(self, app: App, routes: RouteGroup) -> None:
+    def __init__(self, app: App, routes: RouteGroup, dependencies: Sequence[Any] = ()) -> None:
         self._app = app
         self._routes = routes
+        self._dependencies = tuple(dependencies)
 
     def route(
         self,
@@ -331,39 +379,51 @@ class AppGroup(_RouteDecorators):
         *,
         method: str = "GET",
         middleware: Sequence[str] | None = None,
+        dependencies: Sequence[Any] = (),
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
         """Decorator: registers the function as the handler for `path`, under
-        this group's prefix. Its own `middleware` runs after the group's."""
+        this group's prefix. Its own `middleware` and `dependencies` run
+        after the group's."""
 
         def register(func: Handler) -> Handler:
-            name = f"{func.__module__}.{func.__qualname__}"
-            plan = plan_for(func, self._routes.full_path(path))  # bad annotations fail here, at import
+            name = _route_name(func, self._app._handlers)
+            full_path = self._routes.full_path(path)
+            # Bad annotations fail here, at import.
+            plan = self._app._plan(func, full_path, (*self._dependencies, *dependencies))
             self._routes.route(path, name, method=method, middleware=middleware)
             self._app._handlers[name] = func
             self._app._plans[name] = plan
             if max_body is not None:
-                self._app._body_limits.append((method, self._routes.full_path(path), max_body))
+                self._app._body_limits.append((method, full_path, max_body))
             return func
 
         return register
 
-    def websocket(self, path: str) -> Callable[[WebSocketHandler], WebSocketHandler]:
+    def websocket(self, path: str, *, dependencies: Sequence[Any] = ()) -> Callable[[WebSocketHandler], WebSocketHandler]:
         """Decorator: registers the function as the WebSocket handler for
-        `path`, under this group's prefix. Group middleware and app hooks
-        don't run for WebSockets: check who connects in the handler."""
+        `path`, under this group's prefix. Its parameters and dependencies
+        work as for HTTP handlers (no body), the group's dependencies run
+        too, and one raising `HTTPException` refuses the connection (403).
+        Group middleware and app hooks don't run for WebSockets."""
 
         def register(func: WebSocketHandler) -> WebSocketHandler:
-            name = f"{func.__module__}.{func.__qualname__}"
-            self._app._ws_router.route(self._routes.full_path(path), name)
+            name = _route_name(func, self._app._ws_handlers)
+            full_path = self._routes.full_path(path)
+            plan = self._app._plan(func, full_path, (*self._dependencies, *dependencies), websocket=True)
+            self._app._ws_router.route(full_path, name)
             self._app._ws_handlers[name] = func
+            self._app._ws_plans[name] = plan
             return func
 
         return register
 
-    def group(self, prefix: str = "", *, middleware: Sequence[str] | None = None) -> AppGroup:
-        """Returns a nested group. Its `middleware` runs after this group's."""
-        return AppGroup(self._app, self._routes.group(prefix, middleware=middleware))
+    def group(
+        self, prefix: str = "", *, middleware: Sequence[str] | None = None, dependencies: Sequence[Any] = ()
+    ) -> AppGroup:
+        """Returns a nested group. Its `middleware` and `dependencies` run
+        after this group's."""
+        return AppGroup(self._app, self._routes.group(prefix, middleware=middleware), (*self._dependencies, *dependencies))
 
     def __repr__(self) -> str:
         return f"AppGroup(prefix={self._routes.prefix!r}, middleware={self._routes.middleware!r})"
@@ -386,6 +446,12 @@ class App(_RouteDecorators):
         self._ws_router = Router()  # WebSocket routes: a path can have both
         self._ws_handlers: dict[str, WebSocketHandler] = {}
         self._plans: dict[str, Plan] = {}  # what each handler's annotations ask for
+        self._ws_plans: dict[str, Plan] = {}
+        self._dependency_plans: dict[tuple, Plan] = {}  # (function, pattern, websocket) -> its plan
+        self.dependency_overrides: dict[Callable[..., Any], Callable[..., Any]] = {}
+        """`{dependency: replacement}`: the replacement is called instead,
+        wherever the dependency is used. For tests:
+        `app.dependency_overrides[current_user] = lambda: test_user`."""
         self._root = AppGroup(self, self.router.group())
         self._handlers: dict[str, Handler] = {}
         self._middleware: dict[str, Middleware] = {}
@@ -402,20 +468,38 @@ class App(_RouteDecorators):
         *,
         method: str = "GET",
         middleware: Sequence[str] | None = None,
+        dependencies: Sequence[Any] = (),
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
         """Decorator: registers the function as the handler for `path`."""
-        return self._root.route(path, method=method, middleware=middleware, max_body=max_body)
+        return self._root.route(path, method=method, middleware=middleware, dependencies=dependencies, max_body=max_body)
 
-    def group(self, prefix: str = "", *, middleware: Sequence[str] | None = None) -> AppGroup:
-        """Returns an `AppGroup` that registers handlers under `prefix`."""
-        return self._root.group(prefix, middleware=middleware)
+    def group(
+        self, prefix: str = "", *, middleware: Sequence[str] | None = None, dependencies: Sequence[Any] = ()
+    ) -> AppGroup:
+        """Returns an `AppGroup` that registers handlers under `prefix`, with
+        `middleware` and `dependencies` for all of them."""
+        return self._root.group(prefix, middleware=middleware, dependencies=dependencies)
 
-    def websocket(self, path: str) -> Callable[[WebSocketHandler], WebSocketHandler]:
+    def websocket(self, path: str, *, dependencies: Sequence[Any] = ()) -> Callable[[WebSocketHandler], WebSocketHandler]:
         """Decorator: registers the function as the WebSocket handler for
-        `path`; it gets a `WebSocket` and the path params. App hooks don't
-        run for WebSockets: check who connects in the handler."""
-        return self._root.websocket(path)
+        `path`; it gets a `WebSocket`, the path params, and parameters and
+        dependencies as HTTP handlers do (no body). A dependency raising
+        `HTTPException` refuses the connection (403). App hooks don't run
+        for WebSockets."""
+        return self._root.websocket(path, dependencies=dependencies)
+
+    def _plan(self, func: Callable, pattern: str, dependencies: Sequence[Any] = (), *, websocket: bool = False) -> Plan:
+        return plan_for(func, pattern, dependencies=dependencies, websocket=websocket, cache=self._dependency_plans)
+
+    def _dependency_plan(self, func: Callable, pattern: str, websocket: bool) -> Plan:
+        """The plan of a dependency override, worked out on first use."""
+        key = (func, pattern, websocket)
+        plan = self._dependency_plans.get(key)
+        if plan is None:
+            plan = plan_for(func, pattern, websocket=websocket, handler=False, cache=self._dependency_plans)
+            self._dependency_plans[key] = plan
+        return plan
 
     def openapi(self, *, title: str = "API", version: str = "0.1.0", description: str | None = None) -> dict:
         """An OpenAPI 3.1 description of the app's routes: paths, typed path
@@ -561,15 +645,23 @@ class App(_RouteDecorators):
 
         response = await self._respond(scope, receive)
         head = scope["method"] == "HEAD"
+        if isinstance(response, StreamingResponse):
+            await self._send_stream(response, send, head, scope["path"])
+            return
         await send({"type": "http.response.start", "status": response.status, "headers": _raw_headers(response, head)})
-        if head:  # same headers as GET, no body
+        # HEAD: same headers as GET, no body.
+        await send({"type": "http.response.body", "body": b"" if head else response.body})
+
+    @staticmethod
+    async def _send_stream(response: StreamingResponse, send: Callable, head: bool, path: str) -> None:
+        try:
+            await send({"type": "http.response.start", "status": response.status, "headers": _raw_headers(response, head)})
+            if not head:
+                async for chunk in response:
+                    await send({"type": "http.response.body", "body": chunk, "more_body": True})
             await send({"type": "http.response.body", "body": b""})
-        elif isinstance(response, StreamingResponse):
-            async for chunk in response:
-                await send({"type": "http.response.body", "body": chunk, "more_body": True})
-            await send({"type": "http.response.body", "body": b""})
-        else:
-            await send({"type": "http.response.body", "body": response.body})
+        finally:
+            await _finish(response, path)  # sent or not, what waited for it runs
 
     async def _respond(self, scope: dict, receive: Callable) -> Response:
         """The response to one request: before hooks, then the route (its
@@ -593,6 +685,8 @@ class App(_RouteDecorators):
                 logger.exception("after_request hook failed for %s %s", request.method, request.path)
                 return Response.text("Internal Server Error", status=500)
             if changed is not None:
+                if changed is not response and isinstance(response, StreamingResponse):
+                    await _finish(response, request.path)  # replaced: it won't be sent
                 response = changed
         return response
 
@@ -623,8 +717,22 @@ class App(_RouteDecorators):
         plan = self._plan_of(handler_name)
         if not needs_plan(plan):  # no annotations to act on: called as before, at no cost
             return await _call(handler, request, **path_params)
-        arguments = {**path_params, **await plan.bind(request, path_params)}
-        return plan.respond(await _call(handler, request, **arguments))
+        if not plan.dependencies:
+            arguments = {**path_params, **await plan.bind(request, path_params, None)}
+            return plan.respond(await _call(handler, request, **arguments))
+        run = Run(self.dependency_overrides, self._dependency_plan)
+        try:
+            arguments = {**path_params, **await plan.bind(request, path_params, run)}
+            response = plan.respond(await _call(handler, request, **arguments))
+        except BaseException as exc:
+            await run.close(exc)  # raised at the yields; still answered as usual
+            raise
+        if run.open:
+            if isinstance(response, StreamingResponse):
+                response._on_close.append(run.close)  # once the stream is sent
+            else:
+                await run.close()
+        return response
 
     def _plan_of(self, handler_name: str) -> Plan:
         """The handler's plan. Handlers attached with @app.handler get theirs
@@ -632,7 +740,7 @@ class App(_RouteDecorators):
         plan = self._plans.get(handler_name)
         if plan is None:
             pattern = next((path for path, _, name, _ in self.router.routes() if name == handler_name), "")
-            plan = self._plans[handler_name] = plan_for(self._handlers[handler_name], pattern)
+            plan = self._plans[handler_name] = self._plan(self._handlers[handler_name], pattern)
         return plan
 
     async def _serve_websocket(
@@ -685,21 +793,52 @@ class App(_RouteDecorators):
 
     async def _websocket(self, scope: dict, receive: Callable, send: Callable) -> None:
         """Runs a WebSocket connection: its handler, or a refusal (403) for
-        an unknown path. Whatever the handler leaves open gets closed."""
+        an unknown path or a dependency raising HTTPException. Whatever the
+        handler leaves open gets closed."""
         found = self._ws_router.match(scope["path"])
         websocket = WebSocket(scope, receive, send, found[1] if found else {})
         if found is None or found[0] not in self._ws_handlers:
             await websocket.close()  # before accept: the client gets a 403
             return
+        name, path_params = found[0], found[1]
+        handler = self._ws_handlers[name]
+        plan = self._ws_plans.get(name)
+        run = Run(self.dependency_overrides, self._dependency_plan) if plan is not None and plan.dependencies else None
         try:
-            await self._ws_handlers[found[0]](websocket, **found[1])
-        except WebSocketDisconnect:
-            pass  # the client left; nothing more to do
-        except Exception:
+            arguments: dict[str, Any] = dict(path_params)
+            if plan is not None and needs_plan(plan):
+                try:
+                    arguments.update(await plan.bind(websocket, path_params, run))
+                except HTTPException as exc:  # a 422 too
+                    logger.info("WebSocket %s refused: %s %s", websocket.path, exc.status, exc.detail)
+                    if run is not None:
+                        await run.close(exc)
+                    await websocket.close()  # before accept: the client gets a 403
+                    return
+            await handler(websocket, **arguments)
+        except WebSocketDisconnect as exc:
+            if run is not None:
+                await self._close_quietly(run, exc, websocket.path)
+        except Exception as exc:
             logger.exception("unhandled error in WebSocket %s", websocket.path)
+            if run is not None:
+                await self._close_quietly(run, exc, websocket.path)
             await websocket.close(1011 if websocket._accepted else 1000)  # 1011: server error
             return
+        else:
+            if run is not None:
+                await self._close_quietly(run, None, websocket.path)
         await websocket.close()
+
+    @staticmethod
+    async def _close_quietly(run: Run, error: BaseException | None, where: str) -> None:
+        """Tears dependencies down when there's no response left to change:
+        a teardown error is logged."""
+        try:
+            await run.close(error)
+        except Exception as raised:
+            if raised is not error:
+                logger.exception("dependency teardown failed for %s", where)
 
     async def _handle_error(self, request: Request, exc: Exception) -> Response:
         """Turns an exception into a response: the matching exception
@@ -818,8 +957,11 @@ class App(_RouteDecorators):
                         break  # the client is gone
             finally:
                 responder.end_stream()
+                await _finish(response, path)
         else:
             responder.respond(response.status, raw_headers, response.body)
+        if head and isinstance(response, StreamingResponse):
+            await _finish(response, path)
         return response.status
 
     def __repr__(self) -> str:
@@ -869,6 +1011,30 @@ def _start_task(loop: asyncio.AbstractEventLoop, coroutine: Any) -> asyncio.Task
     if _eager_task_factory is not None:
         return _eager_task_factory(loop, coroutine)
     return loop.create_task(coroutine)
+
+
+def _route_name(func: Callable[..., Any], taken: Mapping[str, Any]) -> str:
+    """The handler name a route is registered under: the function's own,
+    `module.qualname`, with `#2`, `#3`... once that's taken. Each route gets
+    its own name, so its own plan (dependencies included) and its own
+    function, even when one function serves two routes (stacked decorators)
+    or a factory registers functions of the same name in several groups."""
+    base = f"{func.__module__}.{func.__qualname__}"
+    name, n = base, 2
+    while name in taken:
+        name, n = f"{base}#{n}", n + 1
+    return name
+
+
+async def _finish(response: StreamingResponse, path: str) -> None:
+    """Runs what waits for a streamed response to be sent (the teardown of
+    its handler's dependencies). The response is gone: errors are logged."""
+    callbacks, response._on_close = response._on_close, []
+    for callback in callbacks:
+        try:
+            await callback()
+        except Exception:
+            logger.exception("dependency teardown failed for %s", path)
 
 
 async def _call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:

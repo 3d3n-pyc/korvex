@@ -161,3 +161,53 @@ def test_docs_page_can_be_left_out():
     app.docs(docs_path=None, openapi_path="/spec.json")
     assert response_from(run_app(app, make_scope("GET", "/docs")))[0] == 404
     assert response_from(run_app(app, make_scope("GET", "/spec.json")))[0] == 200
+
+
+def test_dependencies_headers_cookies_and_forms_are_described():
+    from typing import Annotated
+
+    from korvex import Cookie, Depends, Form, Header, UploadedFile
+
+    app = App()
+
+    def current_user(session: str = Cookie(), x_tenant: str = Header("main")) -> str:
+        return session
+
+    def paging(limit: int = 20) -> int:
+        return limit
+
+    def note_id(id: int) -> int:  # reads {id:int}: Rust checked it already
+        return id
+
+    @app.get("/notes/{id:int}", dependencies=[Depends(current_user)])
+    def note(request, n: int = Depends(note_id), limit: Annotated[int, Depends(paging)] = 0, user: str = Depends(current_user)):
+        pass
+
+    @app.get("/plain/{id:int}")
+    def plain(request, n: int = Depends(note_id)):
+        pass
+
+    @app.post("/upload")
+    def upload(request, title: str = Form(), tags: list[str] = Form([]), file: UploadedFile = Form()):
+        pass
+
+    @app.post("/login")
+    def login(request, password: str = Form(), remember: bool = Form(False)):
+        pass
+
+    doc = app.openapi()
+    validator.validate(doc)
+    params = {(p["in"], p["name"]): p for p in doc["paths"]["/notes/{id}"]["get"]["parameters"]}
+    assert set(params) == {("path", "id"), ("cookie", "session"), ("header", "x-tenant"), ("query", "limit")}
+    assert params[("header", "x-tenant")]["schema"] == {"type": "string", "default": "main"}
+    assert params[("cookie", "session")]["required"] is True
+    assert "422" not in doc["paths"]["/plain/{id}"]["get"]["responses"]
+
+    upload_body = doc["paths"]["/upload"]["post"]["requestBody"]
+    assert upload_body["required"] is True
+    schema = upload_body["content"]["multipart/form-data"]["schema"]
+    assert schema["properties"]["file"] == {"type": "string", "format": "binary"}
+    assert schema["properties"]["tags"] == {"type": "array", "items": {"type": "string"}}
+    assert schema["required"] == ["title", "file"]
+    login_form = doc["paths"]["/login"]["post"]["requestBody"]["content"]["application/x-www-form-urlencoded"]["schema"]
+    assert login_form["properties"]["remember"] == {"type": "boolean", "default": False}
