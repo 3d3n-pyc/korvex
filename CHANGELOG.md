@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.12.0
+
+More than one core per worker.
+
+- `threads=N` (`korvex run --threads N`): N event loops per worker, each
+  in its own thread with its own server on the socket, each running the
+  startup and shutdown hooks. On free-threaded Python (3.14t) they run in
+  parallel: with 4 cores, 3 threads serve 57% more than one, within 4% of
+  4 workers, with a third of the memory. With the GIL they take turns on
+  one core, and a warning says so.
+- Wheels for free-threaded Python 3.14t (cp314t), built and tested by the
+  Release workflow; CI runs the tests on 3.14t and fails if anything turns
+  the GIL back on.
+- `MemoryStore` is safe with several threads; a `RedisStore` made from a
+  URL opens one client per event loop.
+- `compress()` leaves brotli out of its default encodings on
+  free-threaded Python: the `brotli` package turns the GIL back on.
+- Benchmarks: `benches/threads.py` (threads and workers, with and without
+  the GIL) and `benches/database.py` (each request reads PostgreSQL).
+
 ## 0.11.0
 
 Ready-made middleware, for deployments without a proxy.

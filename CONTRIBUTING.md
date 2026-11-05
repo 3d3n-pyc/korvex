@@ -40,6 +40,8 @@ benches/      comparisons with other frameworks:
   bench_validation.py  validation from annotations, against FastAPI
   bench_dependencies.py  dependencies, against FastAPI
   perf_check.py    the check CI runs on pull requests: slower than the base?
+  threads.py       the built-in server with more threads or workers, 3.14t and GIL
+  database.py      a request that reads PostgreSQL, Korvex and FastAPI (apps in benches/db/)
   load_test.py     frameworks on the same server under load (apps in benches/load/)
   servers.py       servers on the same CPU cores, built-in one included
   plot.py          draws the charts in docs/
