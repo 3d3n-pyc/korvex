@@ -22,6 +22,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, NamedTuple
 
 from korvex import _core
+from korvex.middleware import current_request_id
 
 if TYPE_CHECKING:
     from korvex.app import App
@@ -145,7 +146,12 @@ def _logged(serve_one: Callable[..., Awaitable[int]]) -> Callable[..., Awaitable
         status = await serve_one(method, path, query, headers, body, client, scheme, responder)
         target = f"{path}?{query.decode('latin-1')}" if query else path
         host = client[0] if client else "-"
-        access_logger.info('%s "%s %s" %d %.1fms', host, method, target, status, (time.perf_counter() - started) * 1000)
+        duration = (time.perf_counter() - started) * 1000
+        request_id = current_request_id()
+        if request_id is None:
+            access_logger.info('%s "%s %s" %d %.1fms', host, method, target, status, duration)
+        else:
+            access_logger.info('%s "%s %s" %d %.1fms %s', host, method, target, status, duration, request_id)
         return status
 
     return serve_logged

@@ -9,8 +9,11 @@ import sys
 from pathlib import Path
 
 from korvex import App, HTTPException, Response
+from korvex.middleware import request_id
 
 app = App()
+if os.environ.get("REQUEST_ID"):
+    request_id(app)
 if os.environ.get("STATIC_DIR"):
     app.static("/static", Path(os.environ["STATIC_DIR"]))
 

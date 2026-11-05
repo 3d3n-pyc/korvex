@@ -1,9 +1,13 @@
 """Tests for korvex.middleware: CORS, request IDs, rate limiting."""
 
+import asyncio
+import logging
+import re
+
 from test_app import make_scope, response_from, run_app
 
 from korvex import App, HTTPException, Response
-from korvex.middleware import cors
+from korvex.middleware import RequestIdFilter, cors, current_request_id, request_id
 
 SITE = "https://site.example"
 
@@ -90,3 +94,73 @@ def test_plain_options_requests_still_reach_the_routes():
         return Response.text("custom options")
 
     assert call(app, "OPTIONS", "/data", Origin=SITE)[2] == b"custom options"  # no Access-Control-Request-Method
+
+
+def id_app(**options):
+    app = App()
+
+    @app.get("/")
+    async def home(request):
+        return Response.text(current_request_id() or "none")
+
+    request_id(app, **options)
+    return app
+
+
+def test_request_id_is_generated_and_sent_back():
+    status, headers, body = call(id_app(), "GET", "/")
+    assert status == 200
+    assert re.fullmatch(r"[0-9a-f]{32}", headers["X-Request-ID"])
+    assert body.decode() == headers["X-Request-ID"]  # what the handler saw
+
+
+def test_incoming_request_id_is_reused_when_safe():
+    assert call(id_app(), "GET", "/", X_Request_ID="abc-123")[1]["X-Request-ID"] == "abc-123"
+    for unsafe in ["evil\\nINJECTED", "x" * 201, "a b"]:
+        assert call(id_app(), "GET", "/", X_Request_ID=unsafe)[1]["X-Request-ID"] != unsafe
+    assert call(id_app(trust_incoming=False), "GET", "/", X_Request_ID="abc-123")[1]["X-Request-ID"] != "abc-123"
+
+
+def test_request_ids_dont_leak_between_concurrent_requests():
+    app = App()
+
+    @app.get("/")
+    async def slow(request):
+        before = current_request_id()
+        await asyncio.sleep(0.01)  # the other request runs meanwhile
+        return Response.text(f"{before} {current_request_id()}")
+
+    request_id(app)
+
+    async def one(rid):
+        sent = []
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(message):
+            sent.append(message)
+
+        await app(make_scope("GET", "/", headers=[("X-Request-ID", rid)]), receive, send)
+        return sent[1]["body"].decode()
+
+    async def both():
+        return await asyncio.gather(one("first"), one("second"))
+
+    assert asyncio.run(both()) == ["first first", "second second"]
+
+
+def test_request_id_filter_adds_the_id_to_log_records(caplog):
+    app = App()
+    log = logging.getLogger("myapp")
+
+    @app.get("/")
+    def home(request):
+        log.warning("inside")
+        return Response.text("ok")
+
+    request_id(app)
+    caplog.handler.addFilter(RequestIdFilter())
+    _, headers, _ = call(app, "GET", "/", X_Request_ID="trace-42")
+    log.warning("outside")
+    assert [(r.getMessage(), r.request_id) for r in caplog.records] == [("inside", "trace-42"), ("outside", "-")]

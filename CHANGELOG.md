@@ -7,6 +7,10 @@
   of routing and can answer right away; after hooks see every response,
   errors included, in reverse order.
 - `korvex.middleware.cors(app, ...)`: CORS, preflight requests included.
+- `korvex.middleware.request_id(app)`: an ID per request, sent back in
+  `X-Request-ID`, available through `current_request_id()`, added to log
+  records by `RequestIdFilter` and shown in the built-in server's access
+  logs.
 
 ## 0.5.0
 

@@ -154,6 +154,11 @@ cors(app, allow_origins=["https://example.com"], allow_credentials=True)
   call the app from other origins. Preflight requests are answered before
   routing; every response to an allowed origin, errors included, gets the
   CORS headers.
+- `request_id(app, header="X-Request-ID", trust_incoming=True)` gives
+  every request an ID (the incoming one if it's safe, a new one
+  otherwise) and sends it back. `current_request_id()` returns it anywhere
+  in your code, `RequestIdFilter` adds it to log records
+  (`%(request_id)s`), and the built-in server's access logs show it.
 
 More in [`examples/`](examples/). To put it in production (behind nginx or
 Caddy, in Docker, on AWS Lambda or Vercel), see the

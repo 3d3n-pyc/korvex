@@ -377,3 +377,12 @@ def test_command_line_explains_a_wrong_target(target, message):
     command = [sys.executable, "-m", "korvex", "run", target, "--app-dir", str(SERVER_APP.parent)]
     result = subprocess.run(command, capture_output=True, text=True, timeout=10, cwd=SERVER_APP.parent)
     assert result.returncode != 0 and message in result.stderr
+
+
+def test_access_log_shows_the_request_id():
+    port = free_port()
+    process = start(port, ACCESS_LOG="1", REQUEST_ID="1")
+    _, headers, _ = fetch(f"http://127.0.0.1:{port}/users/1")
+    _, output = stop_and_collect(process)
+    line = next(line for line in output.splitlines() if '"GET /users/1" 200' in line)
+    assert line.endswith(headers["x-request-id"])
