@@ -45,6 +45,7 @@ class Config(NamedTuple):
     uds: str | None
     access_log: bool
     ws_ping_interval: float = 20.0
+    forwarded_host: bool = False
 
 
 def run(app: App, host: str, port: int, *, workers: int, graceful_timeout: float, config: Config) -> None:
@@ -114,6 +115,7 @@ async def serve(app: App, fd: int, graceful_timeout: float, config: Config) -> N
         config.body_limits,
         config.trusted_proxies,
         config.ws_ping_interval,
+        config.forwarded_host,
     )
     handle = _logged(app._serve_one) if config.access_log else app._serve_one
     stopping = asyncio.Event()

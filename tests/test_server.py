@@ -325,13 +325,27 @@ def test_trusted_proxy_headers_set_client_and_scheme(server):
     assert json.loads(body)["client"][0] == "127.0.0.1"
 
 
-def test_forwarded_and_x_forwarded_host_from_a_trusted_proxy(server):
+def test_a_clients_own_forwarded_and_x_forwarded_host_are_not_believed(server):
+    # Behind nginx or Caddy, which set X-Forwarded-For but pass these on as
+    # the client wrote them: neither may choose the address or the host.
     base, _ = server
-    headers = {"X-Forwarded-Host": "shop.example"}
-    assert json.loads(fetch(f"{base}/client", headers=headers)[2])["host"] == "shop.example"
-    headers = {"Forwarded": 'for="[2001:db8::1]:4711";proto=https;host=shop.example', "X-Forwarded-For": "198.51.100.1"}
+    port = base.rsplit(":", 1)[1]
+    headers = {"X-Forwarded-For": "203.0.113.9", "Forwarded": "for=6.6.6.6;host=evil.example", "X-Forwarded-Host": "evil.example"}
     result = json.loads(fetch(f"{base}/client", headers=headers)[2])
-    assert result == {"client": ["2001:db8::1", 4711], "scheme": "https", "host": "shop.example"}
+    assert result == {"client": ["203.0.113.9", 0], "scheme": "http", "host": f"127.0.0.1:{port}"}
+
+
+def test_forwarded_and_the_forwarded_host_when_the_proxy_sets_them():
+    port = free_port()
+    process = start(port, FORWARDED_HOST="1")
+    try:
+        base = f"http://127.0.0.1:{port}"
+        assert json.loads(fetch(f"{base}/client", headers={"X-Forwarded-Host": "shop.example"})[2])["host"] == "shop.example"
+        headers = {"Forwarded": 'for="[2001:db8::1]:4711";proto=https;host=shop.example'}  # no X-Forwarded-*: read
+        result = json.loads(fetch(f"{base}/client", headers=headers)[2])
+        assert result == {"client": ["2001:db8::1", 4711], "scheme": "https", "host": "shop.example"}
+    finally:
+        process.kill()
 
 
 def test_proxy_headers_from_untrusted_addresses_are_ignored():

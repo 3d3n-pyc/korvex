@@ -1,11 +1,18 @@
 //! Who the client really is, behind a reverse proxy.
 //!
 //! A proxy connects to the server itself, so the connection's address is
-//! the proxy's; it passes what the client used in headers: the standard
-//! `Forwarded` (RFC 7239), or the older `X-Forwarded-For`, `-Proto` and
-//! `-Host`. Those headers are only believed when the connection comes from
-//! a trusted proxy: anyone else could write them to pretend to be someone
-//! else. `Forwarded`, when present, wins over the `X-Forwarded-*` ones.
+//! the proxy's; it passes what the client used in headers: `X-Forwarded-For`,
+//! `-Proto` and `-Host`, or the standard `Forwarded` (RFC 7239). Those
+//! headers are only believed when the connection comes from a trusted
+//! proxy: anyone else could write them to pretend to be someone else.
+//!
+//! A proxy only rewrites the headers it sets, and passes the others on as
+//! the client sent them. nginx, Caddy and Traefik set `X-Forwarded-For` and
+//! leave `Forwarded` alone; nginx leaves `X-Forwarded-Host` alone too. So:
+//! - `Forwarded` is only read when there's no `X-Forwarded-For` or
+//!   `-Proto`: otherwise, it may well be the client's own;
+//! - the forwarded host is only believed when the app says its proxy sets
+//!   it (`forwarded_host`), as Django and Werkzeug do.
 
 use std::net::{IpAddr, SocketAddr};
 
@@ -24,14 +31,19 @@ const X_FORWARDED_HOST: HeaderName = HeaderName::from_static("x-forwarded-host")
 pub struct Trusted {
     all: bool,
     addresses: Vec<IpAddr>,
+    /// Whether their forwarded host is believed: only if they set it.
+    host: bool,
 }
 
 impl Trusted {
-    /// From addresses like `"127.0.0.1"`, or `"*"` to trust everyone.
-    pub fn parse(items: &[String]) -> Result<Self, String> {
+    /// From addresses like `"127.0.0.1"`, or `"*"` to trust everyone;
+    /// `host` if those proxies set `X-Forwarded-Host` (or `Forwarded`'s
+    /// `host`) themselves.
+    pub fn parse(items: &[String], host: bool) -> Result<Self, String> {
         let mut trusted = Self {
             all: false,
             addresses: Vec::new(),
+            host,
         };
         for item in items {
             if item == "*" {
@@ -81,11 +93,18 @@ pub fn resolve(peer: Option<SocketAddr>, headers: &HeaderMap, trusted: &Trusted)
     if peer.is_some_and(|address| !trusted.trusts(address.ip())) {
         return resolved;
     }
-    let elements = forwarded(headers);
-    if elements.is_empty() {
+    if headers.contains_key(X_FORWARDED_FOR) || headers.contains_key(X_FORWARDED_PROTO) {
         resolve_x_forwarded(headers, trusted, &mut resolved);
     } else {
-        resolve_forwarded(&elements, trusted, &mut resolved);
+        let elements = forwarded(headers);
+        if elements.is_empty() {
+            resolve_x_forwarded(headers, trusted, &mut resolved); // X-Forwarded-Host alone
+        } else {
+            resolve_forwarded(&elements, trusted, &mut resolved);
+        }
+    }
+    if !trusted.host {
+        resolved.host = None;
     }
     resolved
 }
@@ -270,17 +289,31 @@ fn unquote(value: &str) -> String {
 mod tests {
     use super::*;
 
-    fn trusted(items: &[&str]) -> Trusted {
-        Trusted::parse(&items.iter().map(ToString::to_string).collect::<Vec<_>>()).unwrap()
+    fn trusted(items: &[&str], host: bool) -> Trusted {
+        Trusted::parse(
+            &items.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            host,
+        )
+        .unwrap()
     }
 
-    fn resolved(peer: &str, headers: &[(&'static str, &str)], trust: &[&str]) -> Resolved {
+    fn resolved_with(
+        peer: &str,
+        headers: &[(&'static str, &str)],
+        trust: &[&str],
+        host: bool,
+    ) -> Resolved {
         let mut map = HeaderMap::new();
         for (name, value) in headers {
             map.append(*name, value.parse().unwrap());
         }
         let peer = (!peer.is_empty()).then(|| peer.parse().unwrap());
-        resolve(peer, &map, &trusted(trust))
+        resolve(peer, &map, &trusted(trust, host))
+    }
+
+    /// With the forwarded host believed, to test it with the rest.
+    fn resolved(peer: &str, headers: &[(&'static str, &str)], trust: &[&str]) -> Resolved {
+        resolved_with(peer, headers, trust, true)
     }
 
     #[allow(clippy::unnecessary_wraps)] // reads better at the call sites, next to `None`
@@ -418,7 +451,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_trusted_addresses() {
-        assert!(Trusted::parse(&["not-an-ip".to_string()]).is_err());
+        assert!(Trusted::parse(&["not-an-ip".to_string()], false).is_err());
     }
 
     #[test]
@@ -459,15 +492,39 @@ mod tests {
     }
 
     #[test]
-    fn forwarded_wins_over_the_x_forwarded_headers() {
+    fn forwarded_is_ignored_next_to_x_forwarded_headers() {
+        // The proxy set X-Forwarded-For; Forwarded came from the client, untouched.
         let headers = [
             ("x-forwarded-for", "198.51.100.1"),
-            ("forwarded", "for=203.0.113.9"),
+            ("forwarded", "for=6.6.6.6;proto=https;host=evil.example"),
         ];
         assert_eq!(
-            resolved("127.0.0.1:1", &headers, &["127.0.0.1"]).client,
-            client("203.0.113.9", 0)
+            resolved("127.0.0.1:1", &headers, &["127.0.0.1"]),
+            plain(client("198.51.100.1", 0), "http")
         );
+        let headers = [("x-forwarded-proto", "http"), ("forwarded", "for=6.6.6.6")];
+        assert_eq!(
+            resolved("127.0.0.1:1", &headers, &["127.0.0.1"]).client,
+            client("127.0.0.1", 1)
+        );
+    }
+
+    #[test]
+    fn the_forwarded_host_is_only_believed_when_asked() {
+        let headers = [
+            ("x-forwarded-for", "203.0.113.9"),
+            ("x-forwarded-host", "evil.example"),
+        ];
+        assert_eq!(
+            resolved_with("127.0.0.1:1", &headers, &["127.0.0.1"], false).host,
+            None
+        );
+        let headers = [("forwarded", "for=203.0.113.9;host=evil.example")];
+        assert_eq!(
+            resolved_with("127.0.0.1:1", &headers, &["127.0.0.1"], false).host,
+            None
+        );
+        assert_eq!(resolved_with("", &headers, &[], false).host, None); // a Unix socket too
     }
 
     #[test]

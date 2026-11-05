@@ -897,6 +897,7 @@ class App(_RouteDecorators):
         forwarded_allow_ips: Sequence[str] = ("127.0.0.1", "::1"),
         access_log: bool = False,
         ws_ping_interval: float = 20.0,
+        forwarded_host: bool = False,
     ) -> None:
         """Serves the app with Korvex's built-in server until Ctrl+C or
         SIGTERM. Linux and macOS only; on Windows, use an ASGI server.
@@ -910,8 +911,10 @@ class App(_RouteDecorators):
         - `uds` listens on a Unix socket at that path instead of host:port,
           for a reverse proxy on the same machine.
         - From `forwarded_allow_ips` (`"*"` for any) or a Unix socket,
-          `Forwarded` or `X-Forwarded-For`, `-Proto` and `-Host` set
-          `request.client`, `request.scheme` and the `Host` header.
+          `X-Forwarded-For` and `-Proto` (or `Forwarded`, when neither is
+          there) set `request.client` and `request.scheme`. With
+          `forwarded_host`, for a proxy that sets `X-Forwarded-Host` itself,
+          the host they forward replaces the `Host` header too.
         - `access_log` logs each request to the `korvex.access` logger.
         - Open WebSockets get a ping every `ws_ping_interval` seconds, and
           are closed (1011) if the client stays silent until the next one;
@@ -928,7 +931,14 @@ class App(_RouteDecorators):
             workers=workers,
             graceful_timeout=graceful_timeout,
             config=serve.Config(
-                max_body, timeout, list(self._body_limits), list(forwarded_allow_ips), uds, access_log, ws_ping_interval
+                max_body,
+                timeout,
+                list(self._body_limits),
+                list(forwarded_allow_ips),
+                uds,
+                access_log,
+                ws_ping_interval,
+                forwarded_host,
             ),
         )
 

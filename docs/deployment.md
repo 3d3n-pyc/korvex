@@ -34,9 +34,12 @@ korvex run main:app --workers 3 --uds /run/korvex/korvex.sock
   running as another user can connect; restrict access with the
   permissions of its directory (`/run/korvex` here). Keep the path short:
   macOS allows 104 characters.
-- Requests coming through the socket are trusted, so `request.client`,
-  `request.scheme` and the `Host` header are the client's, from the
-  proxy's `Forwarded` or `X-Forwarded-For`, `-Proto` and `-Host`.
+- Requests coming through the socket are trusted, so `request.client` and
+  `request.scheme` are the client's, from the proxy's `X-Forwarded-For`
+  and `X-Forwarded-Proto`. The `Host` header is the one nginx sets
+  (`proxy_set_header Host $host`) or Caddy passes on. `--forwarded-host`
+  would read `X-Forwarded-Host` instead: only for a proxy that sets it,
+  which this nginx configuration doesn't (it would pass a client's on).
 - WebSockets get a ping every 20 seconds (`--ws-ping-interval`), which also
   keeps them open through nginx's 60-second `proxy_read_timeout`; a client
   that stopped answering is closed.

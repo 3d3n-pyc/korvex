@@ -171,4 +171,5 @@ if __name__ == "__main__":
         forwarded_allow_ips=os.environ.get("FORWARDED_ALLOW", "127.0.0.1,::1").split(","),
         access_log=bool(os.environ.get("ACCESS_LOG")),
         ws_ping_interval=float(os.environ.get("WS_PING", "20")),
+        forwarded_host=bool(os.environ.get("FORWARDED_HOST")),
     )

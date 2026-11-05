@@ -173,7 +173,7 @@ pub struct Shared {
     timeout: Duration,
     /// How often open WebSocket connections get a ping; `None` for never.
     pub ws_ping_interval: Option<Duration>,
-    /// Proxies whose `X-Forwarded-*` headers are believed.
+    /// Proxies whose forwarding headers are believed.
     pub trusted: Trusted,
     /// The next ID for a WebSocket or a streamed response.
     pub next_id: AtomicU64,
@@ -224,12 +224,14 @@ impl Server {
     /// worker processes share one socket. Request bodies are limited to
     /// `max_body` bytes, unless `body_limits` (`(method, pattern, bytes)`)
     /// sets a route's own; clients get `timeout` seconds to send the
-    /// headers, then the body. `X-Forwarded-*` headers are believed from
-    /// the `trusted` proxy addresses (`"*"` for all) and Unix sockets. Open
-    /// WebSocket connections get a ping every `ws_ping_interval` seconds (0: never),
+    /// headers, then the body. Forwarding headers are believed from the
+    /// `trusted` proxy addresses (`"*"` for all) and Unix sockets, the
+    /// forwarded host only with `forwarded_host`. Open WebSocket
+    /// connections get a ping every `ws_ping_interval` seconds (0: never),
     /// and are closed if the client stays silent until the next one.
     #[new]
     #[allow(clippy::needless_pass_by_value)] // PyO3 hands over owned values
+    #[allow(clippy::too_many_arguments)] // one per App.run() option it serves
     fn new(
         fd: RawFd,
         unix: bool,
@@ -238,8 +240,9 @@ impl Server {
         body_limits: Vec<(String, String, u64)>,
         trusted: Vec<String>,
         ws_ping_interval: f64,
+        forwarded_host: bool,
     ) -> PyResult<Self> {
-        let trusted = Trusted::parse(&trusted).map_err(PyValueError::new_err)?;
+        let trusted = Trusted::parse(&trusted, forwarded_host).map_err(PyValueError::new_err)?;
         let mut limits = Node::default();
         for (method, pattern, bytes) in body_limits {
             let parsed = Method::parse(&method)
