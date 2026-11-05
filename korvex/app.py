@@ -588,6 +588,54 @@ class App(_RouteDecorators):
             raise LookupError(f"no handler named {handler_name!r}; register one with @app.handler({handler_name!r})")
         return await _call(self._handlers[handler_name], request, **path_params)
 
+    async def _serve_websocket(
+        self,
+        path: str,
+        query_string: bytes,
+        headers: list,
+        client: tuple[str, int] | None,
+        scheme: str,
+        connection: Any,
+        incoming: asyncio.Queue,
+    ) -> None:
+        """Runs a WebSocket from the built-in server through the same code
+        as under ASGI: it speaks ASGI messages over the Rust connection."""
+        offered = next((v.decode("latin-1") for k, v in headers if k == b"sec-websocket-protocol"), "")
+        scope = {
+            "type": "websocket",
+            "path": unquote(path),
+            "query_string": query_string,
+            "headers": headers,
+            "client": client,
+            "scheme": scheme,
+            "subprotocols": [p.strip() for p in offered.split(",") if p.strip()],
+        }
+        connected = False
+
+        async def receive() -> dict:
+            nonlocal connected
+            if not connected:
+                connected = True
+                return {"type": "websocket.connect"}
+            return await incoming.get()
+
+        async def send(message: dict) -> None:
+            kind = message["type"]
+            if kind == "websocket.accept":
+                connection.accept(message.get("subprotocol"), message.get("headers") or [])
+            elif kind == "websocket.send":
+                if message.get("text") is not None:
+                    connection.send_text(message["text"])
+                else:
+                    connection.send_bytes(message.get("bytes") or b"")
+            elif kind == "websocket.close":
+                connection.close(message.get("code", 1000), message.get("reason") or "")
+
+        try:
+            await self._websocket(scope, receive, send)
+        finally:
+            connection.finish()
+
     async def _websocket(self, scope: dict, receive: Callable, send: Callable) -> None:
         """Runs a WebSocket connection: its handler, or a refusal (403) for
         an unknown path. Whatever the handler leaves open gets closed."""

@@ -113,13 +113,30 @@ async def serve(app: App, fd: int, graceful_timeout: float, config: Config) -> N
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stopping.set)
     tasks: set[asyncio.Task] = set()
+    websockets: dict[int, asyncio.Queue] = {}  # connection id -> its incoming messages
+
+    def start(coroutine: Awaitable) -> asyncio.Task:
+        task = _start_task(loop, coroutine)
+        if not task.done():  # the loop only keeps weak references to tasks
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
+        return task
 
     def take_requests() -> None:
-        for request in server.take():
-            task = _start_task(loop, handle(*request))
-            if not task.done():  # the loop only keeps weak references to tasks
-                tasks.add(task)
-                task.add_done_callback(tasks.discard)
+        for kind, *event in server.take():
+            if kind == "http":
+                start(handle(*event))
+            elif kind == "ws":
+                path, query, headers, client, scheme, connection = event
+                queue: asyncio.Queue = asyncio.Queue()
+                websockets[connection.id] = queue
+                task = start(app._serve_websocket(path, query, headers, client, scheme, connection, queue))
+                task.add_done_callback(lambda _, id=connection.id: websockets.pop(id, None))
+            elif kind == "ws_message" and event[0] in websockets:
+                key = "text" if isinstance(event[1], str) else "bytes"
+                websockets[event[0]].put_nowait({"type": "websocket.receive", key: event[1]})
+            elif kind == "ws_closed" and event[0] in websockets:
+                websockets[event[0]].put_nowait({"type": "websocket.disconnect", "code": event[1]})
 
     loop.add_reader(server.fileno(), take_requests)
     try:

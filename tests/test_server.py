@@ -396,3 +396,115 @@ def test_rate_limit_in_the_built_in_server():
         assert statuses == [200, 200, 200, 429]
     finally:
         process.kill()
+
+
+class WebSocketClient:
+    """A minimal WebSocket client (RFC 6455), so the tests need nothing
+    beyond the standard library."""
+
+    def __init__(self, port, path, protocols=()):
+        import base64
+
+        self.sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+        key = base64.b64encode(os.urandom(16)).decode()
+        extra = f"Sec-WebSocket-Protocol: {', '.join(protocols)}\r\n" if protocols else ""
+        self.sock.sendall(
+            f"GET {path} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n{extra}\r\n".encode()
+        )
+        head = b""
+        while b"\r\n\r\n" not in head:
+            chunk = self.sock.recv(1)
+            if not chunk:
+                break
+            head += chunk
+        self.status = int(head.split(b" ")[1])
+        self.headers = {
+            name.strip().lower(): value.strip()
+            for name, _, value in (line.decode().partition(":") for line in head.split(b"\r\n")[1:] if line)
+        }
+
+    def send(self, opcode, payload):
+        mask = os.urandom(4)
+        length = len(payload)
+        header = bytes([0x80 | opcode])
+        if length < 126:
+            header += bytes([0x80 | length])
+        elif length < 65536:
+            header += bytes([0x80 | 126]) + length.to_bytes(2, "big")
+        else:
+            header += bytes([0x80 | 127]) + length.to_bytes(8, "big")
+        self.sock.sendall(header + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+
+    def send_text(self, text):
+        self.send(1, text.encode())
+
+    def send_bytes(self, data):
+        self.send(2, data)
+
+    def recv(self):
+        """(opcode, payload), or (None, b"") once the connection is closed."""
+
+        def exactly(n):
+            data = b""
+            while len(data) < n:
+                chunk = self.sock.recv(n - len(data))
+                if not chunk:
+                    raise EOFError
+                data += chunk
+            return data
+
+        try:
+            first, second = exactly(2)
+            length = second & 0x7F
+            if length == 126:
+                length = int.from_bytes(exactly(2), "big")
+            elif length == 127:
+                length = int.from_bytes(exactly(8), "big")
+            return first & 0x0F, exactly(length)
+        except (EOFError, ConnectionResetError):
+            return None, b""
+
+    def close(self, code=1000):
+        self.send(8, code.to_bytes(2, "big"))
+        self.sock.close()
+
+
+def test_websocket_echo_on_the_built_in_server(server):
+    _, process = server
+    port = int(server[0].rsplit(":", 1)[1])
+    client = WebSocketClient(port, "/ws/lobby?token=secret", protocols=["chat"])
+    assert client.status == 101 and client.headers["sec-websocket-protocol"] == "chat"
+    client.send_text("hello")
+    assert client.recv() == (1, b"lobby: hello")
+    client.send_bytes(b"abc")
+    assert client.recv() == (2, b"cba")
+    client.close()
+
+
+def test_websocket_refusals_on_the_built_in_server(server):
+    port = int(server[0].rsplit(":", 1)[1])
+    assert WebSocketClient(port, "/ws/lobby").status == 403  # no token: the handler refused
+    assert WebSocketClient(port, "/no-such-socket").status == 403
+
+
+def test_websocket_messages_over_max_body_end_the_connection(strict_server):
+    client = WebSocketClient(strict_server, "/ws/x?token=secret")
+    assert client.status == 101
+    client.send_text("x" * 2000)  # the limit is 1,000 bytes
+    opcode, payload = client.recv()
+    assert opcode in (8, None)  # closed, not echoed
+
+
+def test_sigterm_closes_websockets_with_1001():
+    port = free_port()
+    process = start(port)
+    client = WebSocketClient(port, "/ws/lobby?token=secret")
+    client.send_text("hi")
+    assert client.recv() == (1, b"lobby: hi")
+    process.send_signal(signal.SIGTERM)
+    opcode, payload = client.recv()
+    assert (opcode, int.from_bytes(payload[:2], "big")) == (8, 1001)  # going away
+    output, _ = process.communicate(timeout=10)
+    assert process.returncode == 0
+    assert "WS CLOSED" in output and "STOPPED" in output  # the handler saw the disconnect
