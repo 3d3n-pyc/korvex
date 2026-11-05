@@ -75,6 +75,9 @@ def _listen_unix(path: str) -> socket.socket:
         os.unlink(path)
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     listener.bind(path)
+    # Let a proxy running as another user (nginx's, say) connect, as uvicorn
+    # does; restrict access with the directory's permissions if needed.
+    os.chmod(path, 0o666)
     listener.listen(2048)
     return listener
 

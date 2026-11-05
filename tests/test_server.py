@@ -319,6 +319,7 @@ def test_unix_socket(tmp_path):
             self.sock.connect(path)
 
     process = start(0, UDS=path)
+    assert os.stat(path).st_mode & 0o777 == 0o666  # a proxy running as another user can connect
     connection = UnixConnection("localhost", timeout=5)
     connection.request("GET", "/client", headers={"X-Forwarded-For": "203.0.113.9"})
     response = connection.getresponse()
