@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `@app.before_request` and `@app.after_request`: hooks around every
+  request, under ASGI and in the built-in server. Before hooks run ahead
+  of routing and can answer right away; after hooks see every response,
+  errors included, in reverse order.
+
 ## 0.5.0
 
 A built-in server, written in Rust, to run an App without an ASGI server

@@ -83,6 +83,12 @@ def test_routes_with_typed_params(server):
     assert headers["content-type"] == "application/json"
 
 
+def test_after_request_hooks_apply_to_the_built_in_server(server):
+    base, _ = server
+    assert fetch(f"{base}/users/1")[1]["x-powered-by"] == "korvex"
+    assert fetch(f"{base}/missing")[1]["x-powered-by"] == "korvex"
+
+
 def test_not_found_and_method_not_allowed(server):
     base, _ = server
     assert fetch(f"{base}/users/abc")[0] == 404

@@ -36,6 +36,10 @@ sends it right away; returning `None` moves on to the next step."""
 Hook = Callable[[], Union[None, Awaitable[None]]]
 """`() -> None`, sync or async, run when the server starts or stops."""
 
+AfterHook = Callable[["Request", Response], Union[Optional[Response], Awaitable[Optional[Response]]]]
+"""`(request, response) -> Response | None`, sync or async. Returns the
+response to send, or `None` to keep it as it is."""
+
 ExceptionHandler = Callable[["Request", Exception], Union[Response, Awaitable[Response]]]
 """`(request, exception) -> Response`, sync or async."""
 
@@ -259,6 +263,8 @@ class App(_RouteDecorators):
         self._on_shutdown: list[Hook] = []
         self._exception_handlers: dict[int | type[Exception], ExceptionHandler] = {}
         self._body_limits: list[tuple[str, str, int]] = []  # (method, path, bytes), for the built-in server
+        self._before_request: list[Middleware] = []
+        self._after_request: list[AfterHook] = []
 
     def route(
         self,
@@ -337,6 +343,28 @@ class App(_RouteDecorators):
         Works with or without parentheses."""
         return _add_hook(self._on_shutdown, func)
 
+    @overload
+    def before_request(self, func: Middleware) -> Middleware: ...
+    @overload
+    def before_request(self, func: None = None) -> Callable[[Middleware], Middleware]: ...
+    def before_request(self, func: Middleware | None = None) -> Middleware | Callable[[Middleware], Middleware]:
+        """Decorator: runs the function before every request, ahead of
+        routing, so it sees unknown paths too. It gets the request
+        (`path_params` not filled yet) and returns a `Response` to answer
+        right away, or `None` to carry on. Hooks run in the order declared."""
+        return _add_hook(self._before_request, func)  # type: ignore[arg-type]
+
+    @overload
+    def after_request(self, func: AfterHook) -> AfterHook: ...
+    @overload
+    def after_request(self, func: None = None) -> Callable[[AfterHook], AfterHook]: ...
+    def after_request(self, func: AfterHook | None = None) -> AfterHook | Callable[[AfterHook], AfterHook]:
+        """Decorator: runs the function on every response, errors included.
+        It gets the request and the response, and returns the response to
+        send, or `None` to keep it. Hooks run in reverse order, like layers:
+        the first declared sees the response last."""
+        return _add_hook(self._after_request, func)  # type: ignore[arg-type]
+
     def exception_handler(self, key: int | type[Exception]) -> Callable[[ExceptionHandler], ExceptionHandler]:
         """Decorator: answers errors with the function's `Response`. `key` is
         an HTTP status (`404`, also used for unknown paths) or an exception
@@ -368,34 +396,54 @@ class App(_RouteDecorators):
             await send({"type": "http.response.body", "body": response.body})
 
     async def _respond(self, scope: dict, receive: Callable) -> Response:
-        request = None
+        """The response to one request: before hooks, then the route (its
+        middleware and handler), then after hooks, with errors turned into
+        responses at each step."""
+        request = Request(scope, receive, {})
         try:
-            try:
-                found = self.router.match(scope["path"], method=scope["method"])
-            except MethodNotAllowed as exc:
-                if scope["method"] == "HEAD" and "GET" in exc.allowed:
-                    found = self.router.match(scope["path"], method="GET")  # HEAD is GET without the body
-                else:
-                    raise HTTPException(405, headers=[("Allow", ", ".join(exc.allowed))]) from None
-            if found is None:
-                raise HTTPException(404)
-
-            handler_name, path_params, middleware_names = found
-            request = Request(scope, receive, path_params)
-
-            for name in middleware_names:
-                if name not in self._middleware:
-                    raise LookupError(f"no middleware named {name!r}; register one with @app.middleware({name!r})")
-                early_response = await _call(self._middleware[name], request)
-                if early_response is not None:
-                    return early_response
-
-            if handler_name not in self._handlers:
-                raise LookupError(f"no handler named {handler_name!r}; register one with @app.handler({handler_name!r})")
-            return await _call(self._handlers[handler_name], request, **path_params)
+            response = None
+            for hook in self._before_request:
+                response = await _call(hook, request)
+                if response is not None:
+                    break
+            if response is None:
+                response = await self._dispatch(request)
         except Exception as exc:
-            # Unknown paths fail before the request is built: build it now.
-            return await self._handle_error(request or Request(scope, receive, {}), exc)
+            response = await self._handle_error(request, exc)
+        for hook in reversed(self._after_request):
+            try:
+                changed = await _call(hook, request, response)
+            except Exception:
+                logger.exception("after_request hook failed for %s %s", request.method, request.path)
+                return Response.text("Internal Server Error", status=500)
+            if changed is not None:
+                response = changed
+        return response
+
+    async def _dispatch(self, request: Request) -> Response:
+        """Routes the request and runs its middleware and handler."""
+        try:
+            found = self.router.match(request.path, method=request.method)
+        except MethodNotAllowed as exc:
+            if request.method == "HEAD" and "GET" in exc.allowed:
+                found = self.router.match(request.path, method="GET")  # HEAD is GET without the body
+            else:
+                raise HTTPException(405, headers=[("Allow", ", ".join(exc.allowed))]) from None
+        if found is None:
+            raise HTTPException(404)
+
+        handler_name, path_params, middleware_names = found
+        request.path_params = path_params
+        for name in middleware_names:
+            if name not in self._middleware:
+                raise LookupError(f"no middleware named {name!r}; register one with @app.middleware({name!r})")
+            early_response = await _call(self._middleware[name], request)
+            if early_response is not None:
+                return early_response
+
+        if handler_name not in self._handlers:
+            raise LookupError(f"no handler named {handler_name!r}; register one with @app.handler({handler_name!r})")
+        return await _call(self._handlers[handler_name], request, **path_params)
 
     async def _handle_error(self, request: Request, exc: Exception) -> Response:
         """Turns an exception into a response: the matching exception
@@ -571,7 +619,7 @@ async def _call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     return await result if isawaitable(result) else result
 
 
-def _add_hook(hooks: list[Hook], func: Hook | None) -> Hook | Callable[[Hook], Hook]:
+def _add_hook(hooks: list, func: Callable | None) -> Any:
     """Registers `func` (`@app.on_startup`), or returns a decorator that
     will (`@app.on_startup()`)."""
     if func is None:

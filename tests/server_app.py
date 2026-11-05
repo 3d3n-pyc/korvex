@@ -27,6 +27,11 @@ def shutdown():
     print("STOPPED", flush=True)
 
 
+@app.after_request
+def powered_by(request, response):
+    response.headers.set("X-Powered-By", "korvex")
+
+
 @app.get("/users/{id:int}")
 def get_user(request, id):
     return Response.json({"id": id})

@@ -119,6 +119,10 @@ uvicorn mymodule:app
 - `HEAD` requests are answered by the `GET` route, without the body.
 - Unknown paths get a 404; known paths with the wrong method get a 405
   with an `Allow` header.
+- `@app.before_request` runs before every request, ahead of routing (so
+  for unknown paths too), and returns a `Response` to answer right away or
+  `None` to carry on. `@app.after_request` gets every response, errors
+  included, and returns the one to send (or `None` to keep it).
 - `raise HTTPException(404, "user not found")` in a handler or middleware
   answers with that error. `@app.exception_handler(404)` (a status) or
   `@app.exception_handler(ValueError)` (an exception class) customizes the
