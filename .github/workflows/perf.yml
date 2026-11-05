@@ -1,0 +1,44 @@
+name: Performance
+
+# Fails a pull request that makes Korvex more than 10% slower than its base
+# branch on any case of benches/perf_check.py. Both versions are built and
+# measured in the same job, alternating, so they see the same machine.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Build the pull request and its base
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git worktree add "$RUNNER_TEMP/base" "$BASE"
+          uvx maturin build --release -o "$RUNNER_TEMP/wheels-head"
+          (cd "$RUNNER_TEMP/base" && uvx maturin build --release -o "$RUNNER_TEMP/wheels-base")
+          for side in head base; do
+            uv venv --python 3.13 "$RUNNER_TEMP/venv-$side"
+            uv pip install --python "$RUNNER_TEMP/venv-$side/bin/python" "$RUNNER_TEMP"/wheels-$side/*.whl msgspec
+          done
+
+      - name: Compare
+        run: |
+          python3 benches/perf_check.py compare \
+            --base "$RUNNER_TEMP/venv-base/bin/python" \
+            --head "$RUNNER_TEMP/venv-head/bin/python"
