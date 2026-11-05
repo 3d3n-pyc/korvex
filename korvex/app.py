@@ -26,9 +26,10 @@ from korvex.router import RouteGroup, Router
 
 # `Union`/`Optional` rather than `|`: these lines run at import time, and
 # `|` between types needs Python 3.10+.
-Handler = Callable[..., Union[Response, Awaitable[Response]]]
+Handler = Callable[..., Any]
 """`(request, **path_params) -> Response`, sync or async. Path params come
-converted: `int` for `{id:int}`, `uuid.UUID` for `{id:uuid}`, else `str`."""
+converted: `int` for `{id:int}`, `uuid.UUID` for `{id:uuid}`, else `str`.
+With a model return annotation, it can return the model instead."""
 
 Middleware = Callable[["Request"], Union[Optional[Response], Awaitable[Optional[Response]]]]
 """`(request) -> Response | None`, sync or async. Returning a `Response`
@@ -41,8 +42,9 @@ AfterHook = Callable[["Request", Response], Union[Optional[Response], Awaitable[
 """`(request, response) -> Response | None`, sync or async. Returns the
 response to send, or `None` to keep it as it is."""
 
-ExceptionHandler = Callable[["Request", Exception], Union[Response, Awaitable[Response]]]
-"""`(request, exception) -> Response`, sync or async."""
+ExceptionHandler = Callable[["Request", Any], Union[Response, Awaitable[Response]]]
+"""`(request, exception) -> Response`, sync or async. The exception can be
+annotated with the class the handler is registered for."""
 
 logger = logging.getLogger("korvex")
 
