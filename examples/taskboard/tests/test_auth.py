@@ -1,8 +1,9 @@
 """Signing in, and what it guards."""
 
 import pytest
-from client import Client
 from conftest import PASSWORD
+from korvex import WebSocketDisconnect
+from korvex.testing import TestClient
 
 from taskboard.app import create_app
 from taskboard.config import Settings
@@ -16,7 +17,7 @@ def test_the_api_needs_a_session(anonymous):
 
 
 def test_live_updates_need_a_session(anonymous):
-    with pytest.raises(AssertionError, match="websocket.close"):
+    with pytest.raises(WebSocketDisconnect):  # refused: closed before being accepted
         with anonymous.websocket("/live"):
             pass
 
@@ -43,15 +44,15 @@ def test_sign_in_and_out(anonymous):
 
 
 def test_sessions_survive_a_restart(settings):
-    with Client(create_app(settings)) as first:
+    with TestClient(create_app(settings)) as first:
         first.post("/login", form={"password": PASSWORD})
         token = first.cookies["session"]
-    with Client(create_app(settings)) as second:
+    with TestClient(create_app(settings)) as second:
         second.cookies["session"] = token
         assert second.get("/api/lists").status == 200
 
 
 def test_secure_cookies_behind_https(tmp_path):
     settings = Settings(data_dir=str(tmp_path), admin_password=PASSWORD, secure_cookies=True)
-    with Client(create_app(settings)) as client:
+    with TestClient(create_app(settings)) as client:
         assert "Secure" in client.post("/login", form={"password": PASSWORD}).headers["set-cookie"]

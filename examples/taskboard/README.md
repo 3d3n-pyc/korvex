@@ -67,8 +67,7 @@ taskboard/
     js/ui/           the sidebar, the task list, the details panel, overlays
     js/dragdrop.js, shortcuts.js, live.js, dates.js, dom.js
 tests/
-  client.py          a test client: the app in-process, with lifespan,
-                     cookies and WebSockets
+  conftest.py        the app started in Korvex's TestClient, signed in or not
   test_services.py   the rules, on the services alone
   test_api.py        the API through the whole app
   test_auth.py       signing in, and what it guards

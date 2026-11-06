@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.13.0
+
+What everyone expects from a framework: a test client, reverse URLs and
+a richer OpenAPI.
+
+- `korvex.testing`: `TestClient(app)` runs the app in-process, with its
+  lifespan (`with TestClient(app) as client:` runs the startup and
+  shutdown hooks), cookies, headers, query strings, JSON, forms and
+  multipart files, streamed responses (`client.stream()` to read one as
+  it comes) and WebSockets (`client.websocket()`). An error the app
+  answers with a 500 is raised in the test with its traceback, and a
+  request that gets no answer within `timeout` fails instead of hanging.
+  `AsyncTestClient` does the same in `async` tests. No dependency: it
+  speaks ASGI directly, to any ASGI app. The taskboard example uses it,
+  in place of the client it wrote for itself.
+
 ## 0.12.0
 
 More than one core per worker.

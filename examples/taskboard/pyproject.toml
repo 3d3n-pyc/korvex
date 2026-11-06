@@ -3,7 +3,7 @@ name = "taskboard"
 version = "1.0.0"
 description = "A shared task board, built on Korvex"
 requires-python = ">=3.9"
-dependencies = ["korvex>=0.8", "msgspec>=0.18"]
+dependencies = ["korvex>=0.13", "msgspec>=0.18"]
 
 [project.optional-dependencies]
 test = ["pytest>=8"]

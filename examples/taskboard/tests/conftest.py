@@ -3,7 +3,7 @@ from collections.abc import Awaitable, Iterator
 from typing import Callable
 
 import pytest
-from client import Client
+from korvex.testing import TestClient
 
 from taskboard.app import build_services, create_app
 from taskboard.config import Settings
@@ -19,21 +19,21 @@ def settings(tmp_path) -> Settings:
 
 
 @pytest.fixture
-def anonymous(settings: Settings) -> Iterator[Client]:
+def anonymous(settings: Settings) -> Iterator[TestClient]:
     """The app, started, seen by someone who hasn't signed in."""
-    with Client(create_app(settings)) as client:
+    with TestClient(create_app(settings)) as client:
         yield client
 
 
 @pytest.fixture
-def client(anonymous: Client) -> Client:
+def client(anonymous: TestClient) -> TestClient:
     """The app, started, seen by someone signed in."""
     assert anonymous.post("/login", form={"password": PASSWORD}).status == 303
     return anonymous
 
 
 @pytest.fixture
-def inbox(client: Client) -> dict:
+def inbox(client: TestClient) -> dict:
     """The list created on first start."""
     return client.get("/api/lists").json()[0]
 

@@ -358,6 +358,45 @@ cors(app, allow_origins=["https://example.com"], allow_credentials=True)
 Behind a reverse proxy, let it compress and add headers instead: it does
 both well, and the app does less.
 
+### Testing
+
+`korvex.testing` runs the app in-process, without a server:
+
+```python
+from korvex.testing import TestClient
+
+def test_tasks():
+    with TestClient(app) as client:              # startup hooks, then shutdown
+        assert client.post("/login", form={"password": "s3cret"}).status == 303
+        response = client.get("/api/tasks", query={"done": "false"})
+        assert response.json() == []             # the session cookie was sent back
+
+        with client.websocket("/live") as ws:
+            assert ws.receive_json()["event"] == "presence"
+```
+
+- `get()`, `post()`, `put()`, `patch()`, `delete()`, `head()`, `options()`
+  take `query=`, `headers=`, `cookies=`, and a body as `json=`, `form=`
+  (with `files={"doc": ("a.pdf", data, "application/pdf")}` for a
+  multipart form) or raw `body=`. A response has `status`, `headers`,
+  `body`, `text` and `json()`.
+- Within `with`, the app's lifespan runs: startup hooks on entry (so
+  `app.local` is filled), shutdown hooks on exit. Every request runs on
+  the same event loop.
+- Cookies the app sets are kept in `client.cookies` and sent back (Secure
+  ones over https only). `follow_redirects=True` follows a redirect.
+- A full URL (`client.get("https://acme.example.com/")`) sets the scheme
+  and the host, for `app.host()` routes.
+- `client.stream("GET", "/events")` gives the response before its body,
+  read with `iter_bytes()`; leaving the block stops the stream, as a
+  client going away would.
+- An error the app answers with a 500 is raised in the test, with its
+  traceback (`raise_server_errors=False` gets the 500). A request or a
+  WebSocket message that doesn't come within `timeout` (5 seconds) raises
+  `TimeoutError` instead of hanging the test.
+- In `async` tests, `AsyncTestClient` does the same, awaited:
+  `async with AsyncTestClient(app) as client: await client.get("/")`.
+
 More in [`examples/`](examples/), up to a [complete app](examples/taskboard/)
 laid out like a real project. To put it in production (behind nginx or
 Caddy, in Docker, on AWS Lambda or Vercel), see the

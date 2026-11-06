@@ -31,6 +31,7 @@ korvex/
               and resolving dependencies
   openapi.py  the OpenAPI document and the Swagger UI page
   middleware.py ready-made hooks: cors(), request_id(), rate_limit()
+  testing.py  TestClient and AsyncTestClient: the app in-process, for tests
   serve.py    App.run(): one process, or a supervisor and its workers
   cli.py      the `korvex run` command
 tests/        Python tests (Rust tests live next to the code)
