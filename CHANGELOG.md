@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+Inside, nothing a user sees changes: every import works as before.
+
+- The code is reorganized: `korvex.requests` (Request, WebSocket,
+  UploadedFile), `korvex.routing` (the decorators, AppGroup, hosts) and
+  `korvex.app` (the App) instead of one 1,750-line module;
+  `korvex.middleware` is a package with a module per hook; the App keeps
+  one record per route. Requests are 1 to 2% faster.
+- Ruff, pyright and coverage are configured in `pyproject.toml`, and CI
+  runs them, with the tests on Python 3.9 to 3.14 and 3.14t.
+- New: SECURITY.md (private reports through GitHub), a code of conduct,
+  issue and pull request templates, Dependabot, pre-commit hooks.
+
 ## 0.13.0
 
 What everyone expects from a framework: a test client, reverse URLs and
