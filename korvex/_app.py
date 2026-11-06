@@ -22,7 +22,7 @@ from korvex._errors import Abort, HTTPException, ValidationError
 from korvex._requests import Request, WebSocket, WebSocketDisconnect
 from korvex._response import Response, StreamingResponse
 from korvex._routing import (
-    AppGroup,
+    Group,
     Handler,
     WebSocketHandler,
     _check_name_type,
@@ -131,7 +131,7 @@ class App(_RouteDecorators):
         """`{dependency: replacement}`: the replacement is called instead,
         wherever the dependency is used. For tests:
         `app.dependency_overrides[current_user] = lambda: test_user`."""
-        self._root = AppGroup(self, self._router.group())
+        self._root = Group(self, self._router.group())
         self._on_startup: list[Hook] = []
         self._on_shutdown: list[Hook] = []
         self._exception_handlers: dict[int | type[Exception], ExceptionHandler] = {}
@@ -180,8 +180,8 @@ class App(_RouteDecorators):
         deprecated: bool = False,
         responses: Mapping[int | str, Any] | None = None,
         include_in_schema: bool = True,
-    ) -> AppGroup:
-        """Returns an `AppGroup` that registers handlers under `prefix`, with
+    ) -> Group:
+        """Returns an `Group` that registers handlers under `prefix`, with
         `dependencies` for all of them, and the OpenAPI options (`tags`,
         `deprecated`, `responses`, `include_in_schema`) their own add to."""
         return self._root.group(
@@ -202,7 +202,7 @@ class App(_RouteDecorators):
         deprecated: bool = False,
         responses: Mapping[int | str, Any] | None = None,
         include_in_schema: bool = True,
-    ) -> AppGroup:
+    ) -> Group:
         """Returns a group whose routes only answer for requests to that
         host (its `Host` header, without the port):
 
@@ -229,7 +229,7 @@ class App(_RouteDecorators):
             found = _Host(pattern, self._router.constraints())
             self._hosts.append(found)
             self._hosts.sort(key=lambda h: bool(h.params))  # stable: literal hosts first, in order
-        return AppGroup(
+        return Group(
             self, found.router.group(), dependencies, found, _Docs(tags, deprecated, responses, include_in_schema)
         )
 

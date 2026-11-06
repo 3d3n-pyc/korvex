@@ -12,12 +12,12 @@ from korvex._errors import Abort, HTTPException, ValidationError
 from korvex._params import Cookie, Depends, Form, Header, Query
 from korvex._requests import Request, UploadedFile, WebSocket, WebSocketDisconnect
 from korvex._response import Headers, Response
-from korvex._routing import AppGroup
+from korvex._routing import Group
 
 __all__ = [
     "Abort",
     "App",
-    "AppGroup",
+    "Group",
     "Cookie",
     "Depends",
     "Form",

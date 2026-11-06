@@ -28,6 +28,10 @@ each thing. Breaking changes are listed with how to update.
   named". To update: declare the route with `@app.get(...)` and the
   others (`app.get(path)(func)` registers a function you already have).
 
+- **`AppGroup` is now `Group`**: what `app.group()` and `app.host()`
+  return. With `RouteGroup` gone from `korvex`, there's one kind of group
+  left. To update: rename it in type annotations.
+
 ### Inside
 
 - The code is reorganized: the App's module split in three, the

@@ -1,5 +1,5 @@
 """Registering routes on an `App`: the `get`/`post`/... decorators, groups
-(`AppGroup`), hosts, and the checks their options go through."""
+(`Group`), hosts, and the checks their options go through."""
 
 from __future__ import annotations
 
@@ -301,7 +301,7 @@ class _Docs:
         return merged
 
 
-class AppGroup(_RouteDecorators):
+class Group(_RouteDecorators):
     """Registers handlers under a shared prefix and dependencies, and
     OpenAPI's `tags`, `deprecated`, `responses` and `include_in_schema`
     for all of them.
@@ -420,15 +420,15 @@ class AppGroup(_RouteDecorators):
         deprecated: bool = False,
         responses: Mapping[int | str, Any] | None = None,
         include_in_schema: bool = True,
-    ) -> AppGroup:
+    ) -> Group:
         """Returns a nested group. Its `dependencies` run after this
         group's; its OpenAPI options add to this group's."""
         docs = self._docs.merge(_Docs(tags, deprecated, responses, include_in_schema))
-        return AppGroup(self._app, self._routes.group(prefix), (*self._dependencies, *dependencies), self._host, docs)
+        return Group(self._app, self._routes.group(prefix), (*self._dependencies, *dependencies), self._host, docs)
 
     def __repr__(self) -> str:
         host = f", host={self._host.pattern!r}" if self._host else ""
-        return f"AppGroup(prefix={self._routes.prefix!r}{host}, dependencies={list(self._dependencies)!r})"
+        return f"Group(prefix={self._routes.prefix!r}{host}, dependencies={list(self._dependencies)!r})"
 
 
 class _Host:

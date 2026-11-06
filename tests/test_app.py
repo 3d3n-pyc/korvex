@@ -671,7 +671,7 @@ def test_app_groups_register_under_a_prefix_with_their_dependencies():
     calls.clear()
     status, _, body = response_from(run_app(app, make_scope("POST", "/api/admin/stats")))
     assert (status, body, calls) == (200, b"stats", ["auth", "admin", "audit"])  # outer group first
-    assert repr(admin).startswith("AppGroup(prefix='/api/admin', dependencies=[")
+    assert repr(admin).startswith("Group(prefix='/api/admin', dependencies=[")
 
 
 def test_abort_sends_its_response_from_a_dependency_handler_or_hook():
