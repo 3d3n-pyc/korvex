@@ -2,13 +2,19 @@
 
 ## Setup
 
+You need [uv](https://docs.astral.sh/uv/) and a Rust toolchain
+([rustup](https://rustup.rs/)).
+
 ```sh
 git clone https://github.com/3d3n-pyc/korvex
 cd korvex
-uv run maturin develop --release
+uv sync                                # Python, the tools, and Korvex built from source
+uv run maturin develop --release       # after changing Rust code
+uv run pre-commit install              # optional: lint and format before each commit
 ```
 
-Rebuild with the same command after changing Rust code.
+`uv sync --group bench` adds the frameworks and servers the benchmarks
+compare.
 
 ## Layout
 
@@ -59,13 +65,23 @@ Only `lib.rs`, `server.rs` and `websocket.rs` use PyO3; keep `tree`, `path`, `me
 ## Before opening a PR
 
 ```sh
-cargo fmt
-cargo clippy --all-targets -- -D warnings
-cargo test
+cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test
+uv run ruff check . && uv run ruff format .
+uv run pyright
 uv run pytest
 ```
 
-CI runs the same checks. New behavior needs a test.
+CI runs the same checks, the tests on Python 3.9 to 3.14 and on
+free-threaded 3.14t, and a performance check against the base branch
+(more than 10% slower on any case fails). New behavior needs a test;
+`korvex.testing.TestClient` drives the app, and `tests/support.py` has
+helpers for the tests that need raw ASGI messages.
+
+Coverage, the built-in server's subprocesses included:
+
+```sh
+uv run coverage run -m pytest && uv run coverage combine && uv run coverage report
+```
 
 msgspec and pydantic stay optional: import them only where a model of
 theirs is being used, never at the top of a module.
