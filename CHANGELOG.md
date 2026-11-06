@@ -16,6 +16,11 @@ each thing. Breaking changes are listed with how to update.
   update: import from `korvex` (`from korvex.app import App` becomes
   `from korvex import App`).
 
+- **The standalone router moves to `korvex.router`.** `Router`,
+  `RouteGroup` and `MethodNotAllowed` sat in `korvex` next to `App`,
+  though an app never uses them. To update:
+  `from korvex.router import Router`.
+
 ### Inside
 
 - The code is reorganized: the App's module split in three, the

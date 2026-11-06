@@ -1,4 +1,8 @@
-"""`Router` and `RouteGroup`: registering routes.
+"""The standalone router: `Router`, `RouteGroup` and `MethodNotAllowed`.
+
+It maps a path and a method to a handler *name*, and never calls your
+code: for building your own framework on top, or routing outside HTTP.
+`App` uses it inside; an app doesn't need it.
 
 Matching happens in Rust (`korvex._core.Router`). This module adds a
 lookup cache, the `get`/`post`/... shortcuts and route groups on top.
@@ -9,7 +13,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from functools import lru_cache
 
+from korvex._core import MethodNotAllowed
 from korvex._core import Router as _CoreRouter
+
+__all__ = ["MethodNotAllowed", "RouteGroup", "Router"]
 
 
 class _Shortcuts:

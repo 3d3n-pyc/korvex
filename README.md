@@ -75,7 +75,7 @@ def test_get_task():
 calls your code: what you do with the name is up to you.
 
 ```python
-from korvex import Router
+from korvex.router import Router
 
 router = Router()
 router.get("/users/{id:int}", "get_user")

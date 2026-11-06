@@ -39,8 +39,8 @@ from sanic import Sanic  # noqa: E402
 from starlette.routing import Match  # noqa: E402
 from starlette.routing import Route as StarletteRoute  # noqa: E402
 
-from korvex import Router  # noqa: E402
 from korvex._core import Router as UncachedRouter  # noqa: E402
+from korvex.router import Router  # noqa: E402
 
 ROUTE_COUNTS = [100, 1_000, 10_000]
 LOOKUPS = 200

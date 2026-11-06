@@ -1,15 +1,18 @@
-"""Korvex: a fast router for Python, written in Rust, with an optional ASGI app."""
+"""Korvex: a fast Python web framework, with a Rust router and HTTP server.
+
+The standalone router is in `korvex.router`; the test client in
+`korvex.testing`; security schemes in `korvex.security`; ready-made hooks
+in `korvex.middleware`.
+"""
 
 from importlib.metadata import version
 
 from korvex._app import App, LoopLocal
-from korvex._core import MethodNotAllowed
 from korvex._errors import Abort, HTTPException, ValidationError
 from korvex._params import Cookie, Depends, Form, Header, Query
 from korvex._requests import Request, UploadedFile, WebSocket, WebSocketDisconnect
 from korvex._response import Headers, Response
 from korvex._routing import AppGroup
-from korvex.router import RouteGroup, Router
 
 __all__ = [
     "Abort",
@@ -22,12 +25,9 @@ __all__ = [
     "Headers",
     "HTTPException",
     "LoopLocal",
-    "MethodNotAllowed",
     "Query",
     "Request",
     "Response",
-    "RouteGroup",
-    "Router",
     "UploadedFile",
     "ValidationError",
     "WebSocket",

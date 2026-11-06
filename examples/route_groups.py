@@ -6,7 +6,7 @@ be nested; the outer group's middleware comes first.
 Run: python examples/route_groups.py
 """
 
-from korvex import Router
+from korvex.router import Router
 
 router = Router()
 
