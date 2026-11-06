@@ -268,6 +268,7 @@ SERVER_NAMES = {
     "granian": "Granian + Korvex app",
     "uvicorn": "uvicorn + Korvex app",
     "robyn": "Robyn",
+    "fastrapi": "FastrAPI",
 }
 SERVERS_MAX = 140_000
 
@@ -348,7 +349,7 @@ def draw_servers(results, machine, theme):
 
     out.append(
         f'<text x="20" y="{axis_y + 46}" font-size="12" fill="{t["secondary"]}">'
-        "uvicorn and Granian run the Korvex ASGI app; Robyn runs its own version with its own server.</text>"
+        "uvicorn and Granian run the Korvex ASGI app; Robyn and FastrAPI run their own version with their own server.</text>"
     )
     cpu = machine.get("cpu", {}).get("brand_raw", "")
     out.append(

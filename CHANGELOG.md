@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- The comparisons are measured again, with Korvex 0.14: the servers
+  (`benches/servers.py`) and the frameworks under load
+  (`benches/load_test.py`), which dated from 0.6, and validation and
+  dependencies in-process. FastrAPI joins the servers, run from one
+  process with sync handlers (its only working setup in 0.2.11).
+- Korvex is still first, by less than before: its built-in server serves
+  115k requests/s at 1,000 clients on 4 cores, Granian 114k, FastrAPI 64k;
+  on one core under uvicorn, 30.7k against Starlette's best case 30.4k.
+  The other servers and frameworks measure within 5% of their numbers in
+  0.6, while Korvex lost 8%: version by version, one worker on one core,
+  it all came with 0.7 (6.5%), nothing since. The cause isn't found yet;
+  the roadmap now has finding it and winning it back before 1.0.
+
 ## 0.14.0
 
 The public API reviewed before 1.0: simpler to learn, with one way to do

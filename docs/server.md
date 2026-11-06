@@ -6,8 +6,8 @@ Korvex runs an app without an ASGI server, on Linux and macOS:
 korvex run main:app --workers 3
 ```
 
-or, from Python, `app.run(workers=3)`. On the same CPU cores, it serves 20
-to 36% more requests than uvicorn, with about 40% less memory (see
+or, from Python, `app.run(workers=3)`. On the same CPU cores, it serves 7 to
+17% more requests than uvicorn, with 40% less memory (see
 [Performance](performance.md)).
 
 The app stays a plain ASGI app: uvicorn, Granian or a serverless platform

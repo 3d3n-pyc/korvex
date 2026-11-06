@@ -11,8 +11,9 @@ Rust.
 - **Simple**: a function per route; its parameters say what it reads.
 - **Typed**: parameters and bodies validated with msgspec or pydantic,
   and described in OpenAPI, with Swagger UI.
-- **Fast**: on one CPU core, it serves more requests than the other
-  Python frameworks tested, with less memory.
+- **Fast**: on one CPU core, among the fastest Python frameworks tested;
+  its own server serves more than uvicorn, Granian, Robyn and FastrAPI on
+  the same cores, with less memory.
 - **Complete**: dependencies, WebSockets, a test client, ready-made
   middleware, and its own server, with workers and threads.
 
@@ -88,12 +89,12 @@ workers:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/servers-dark.svg">
-  <img alt="Requests per second on the same 4 CPU cores, with 200 and 1,000 clients: Korvex built-in server 126.4k and 130.5k, Granian with the Korvex app 111.6k and 113.4k, uvicorn with the Korvex app 105.0k and 96.3k, Robyn 90.3k and 81.9k." src="docs/servers-light.svg">
+  <img alt="Requests per second on the same 4 CPU cores, with 200 and 1,000 clients: Korvex built-in server 111.3k and 115.2k, Granian with the Korvex app 106.0k and 114.0k, uvicorn with the Korvex app 103.8k and 98.5k, Robyn 94.3k and 85.6k, FastrAPI 59.7k and 63.9k." src="docs/servers-light.svg">
 </picture>
 
-- On one core with uvicorn, Korvex serves 33.7k requests/s; Starlette
-  3.0k to 30.6k, FastAPI 1.6k to 12.4k.
-- With validation, a request takes 17.8 µs in Korvex, 76.2 µs in FastAPI.
+- On one core with uvicorn, Korvex serves 30.7k requests/s; Starlette
+  2.8k to 30.4k, FastAPI 1.6k to 11.6k.
+- With validation, a request takes 18.1 µs in Korvex, 72.6 µs in FastAPI.
 - On free-threaded Python, one worker with 3 threads serves 57% more than
   one thread, with a third of the memory of 4 workers.
 
