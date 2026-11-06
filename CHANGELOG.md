@@ -39,6 +39,11 @@ each thing. Breaking changes are listed with how to update.
   that read the text read `detail`; an `@app.exception_handler(...)`
   can answer anything else, a page for a browser say.
 
+- **`timeout` is now `read_timeout`** in `App.run()`, and `--timeout`
+  `--read-timeout` in `korvex run`: the seconds a client gets to send the
+  headers, then the body. The old name didn't say what it timed. To
+  update: rename it.
+
 ### New
 
 - **`headers=` takes a dict**, in `Response(...)` and its shortcuts,

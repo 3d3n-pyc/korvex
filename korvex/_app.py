@@ -665,7 +665,9 @@ class App(_RouteDecorators):
             try:
                 answer = await _call(hook, websocket)
             except (HTTPException, Abort) as exc:
-                answer = exc.response if isinstance(exc, Abort) else Response.json({"detail": exc.detail}, status=exc.status)
+                answer = (
+                    exc.response if isinstance(exc, Abort) else Response.json({"detail": exc.detail}, status=exc.status)
+                )
             except Exception:
                 logger.exception("before_request hook failed for WebSocket %s", websocket.path)
                 return False
@@ -732,7 +734,7 @@ class App(_RouteDecorators):
         workers: int = 1,
         graceful_timeout: float = 30.0,
         max_body: int = 1024 * 1024,
-        timeout: float = 30.0,
+        read_timeout: float = 30.0,
         uds: str | None = None,
         forwarded_allow_ips: Sequence[str] = ("127.0.0.1", "::1"),
         access_log: bool = False,
@@ -753,7 +755,7 @@ class App(_RouteDecorators):
           core.
         - On stop, requests in progress get up to `graceful_timeout` seconds.
         - Request bodies over `max_body` bytes get a 413 (a route's own
-          `max_body` overrides it); clients get `timeout` seconds to send
+          `max_body` overrides it); clients get `read_timeout` seconds to send
           the headers, then the body (408 after that).
         - `uds` listens on a Unix socket at that path instead of host:port,
           for a reverse proxy on the same machine.
@@ -779,7 +781,7 @@ class App(_RouteDecorators):
             graceful_timeout=graceful_timeout,
             config=serve.Config(
                 max_body,
-                timeout,
+                read_timeout,
                 list(self._body_limits),
                 list(forwarded_allow_ips),
                 uds,

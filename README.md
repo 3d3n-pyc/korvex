@@ -532,7 +532,7 @@ or, from Python, `app.run(workers=3)`. The same options exist in both:
 | `--threads N` | `1` | Event loops per worker, each in its own thread. On free-threaded Python (3.14t) they run in parallel, sharing the process's memory; with the GIL they take turns on one core. Each runs the startup and shutdown hooks, like a worker: keep what they open in `app.local` (below). |
 | `--graceful-timeout S` | `30` | On Ctrl+C or SIGTERM, seconds requests in progress get to finish. |
 | `--max-body BYTES` | 1 MiB | Larger request bodies get a 413, larger WebSocket messages close the connection. A route can set its own: `@app.post("/upload", max_body=50_000_000)`. |
-| `--timeout S` | `30` | Seconds a client gets to send the headers, then the body (408 after that). |
+| `--read-timeout S` | `30` | Seconds a client gets to send the headers, then the body (408 after that). |
 | `--forwarded-allow-ips` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-For` and `-Proto` (or `Forwarded`, when neither is there) set `request.client` and `request.scheme`. `*` trusts any. |
 | `--forwarded-host` | off | Also believe the host they forward for the `Host` header: `X-Forwarded-Host`, or `Forwarded`'s `host` when there's no `X-Forwarded-For` or `-Proto`. Only if the proxy sets the header it uses itself (nginx passes a client's `X-Forwarded-Host` on as is), and a proxy that uses `Forwarded` must also strip a client's `X-Forwarded-*`. |
 | `--access-log` | off | Log each request. |

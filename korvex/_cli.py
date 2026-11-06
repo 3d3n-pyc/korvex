@@ -26,7 +26,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     run.add_argument("--graceful-timeout", type=float, default=30.0, help="seconds requests get to finish on stop")
     run.add_argument("--max-body", type=int, default=1024 * 1024, help="largest request body in bytes (default: 1 MiB)")
-    run.add_argument("--timeout", type=float, default=30.0, help="seconds to send the headers, then the body")
+    run.add_argument(
+        "--read-timeout", type=float, default=30.0, help="seconds a client gets to send the headers, then the body"
+    )
     run.add_argument(
         "--forwarded-allow-ips",
         default="127.0.0.1,::1",
@@ -52,7 +54,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         threads=args.threads,
         graceful_timeout=args.graceful_timeout,
         max_body=args.max_body,
-        timeout=args.timeout,
+        read_timeout=args.read_timeout,
         uds=args.uds,
         forwarded_allow_ips=args.forwarded_allow_ips.split(","),
         access_log=args.access_log,

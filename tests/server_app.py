@@ -188,7 +188,7 @@ if __name__ == "__main__":
         threads=int(os.environ.get("THREADS", "1")),
         graceful_timeout=float(os.environ.get("GRACE", "30")),
         max_body=int(os.environ.get("MAX_BODY", str(1024 * 1024))),
-        timeout=float(os.environ.get("TIMEOUT", "30")),
+        read_timeout=float(os.environ.get("TIMEOUT", "30")),
         uds=os.environ.get("UDS"),
         forwarded_allow_ips=os.environ.get("FORWARDED_ALLOW", "127.0.0.1,::1").split(","),
         access_log=bool(os.environ.get("ACCESS_LOG")),

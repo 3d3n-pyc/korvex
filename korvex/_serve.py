@@ -56,7 +56,7 @@ class Config(NamedTuple):
     """How the server treats requests, set by App.run()."""
 
     max_body: int
-    timeout: float
+    read_timeout: float
     body_limits: list[tuple[str, str, int]]  # (method, path, bytes)
     trusted_proxies: list[str]
     uds: str | None
@@ -191,7 +191,7 @@ async def serve(
         fd,
         config.uds is not None,
         config.max_body,
-        config.timeout,
+        config.read_timeout,
         config.body_limits,
         config.trusted_proxies,
         config.ws_ping_interval,
