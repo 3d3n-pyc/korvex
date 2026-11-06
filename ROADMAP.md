@@ -2,7 +2,7 @@
 
 Where Korvex is going. Versions are a rough order, not promises.
 
-## Where it stands (0.13)
+## Where it stands (0.14)
 
 - **Fast.** On one CPU core, Korvex serves the most requests per second of
   the frameworks tested, with the least memory. Its built-in server serves
@@ -54,15 +54,12 @@ development, or a platform whose load balancer doesn't do everything.
 ## Until 1.0
 
 The API's open questions (0.10), ready-made middleware (0.11), more
-than one core per worker (0.12), and what everyone expects from a
-framework (0.13: a test client, reverse URLs, a richer OpenAPI with
-security schemes) are done. Until 1.0, a version may still break things,
-each break listed in the changelog with how to update: no one runs
-Korvex in production yet, and an API changes for free now, not after.
-
-Next is **a review of the whole public API** (names, arguments, what's
-exported, errors, consistency between similar parts), the last chance to
-change it freely.
+than one core per worker (0.12), what everyone expects from a framework
+(0.13: a test client, reverse URLs, a richer OpenAPI) and a review of the
+whole public API (0.14) are done. The public API is now what `korvex`,
+`korvex.router`, `korvex.testing`, `korvex.security` and
+`korvex.middleware` export. Until 1.0 it can still change, each change
+listed in the changelog with how to update; after, it stays.
 
 ## 1.0
 
