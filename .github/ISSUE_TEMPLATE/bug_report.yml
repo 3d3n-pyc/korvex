@@ -1,0 +1,29 @@
+name: Bug report
+description: Something doesn't work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting it. For a security issue, please report it privately instead: see SECURITY.md.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce it
+      description: A minimal app and the request that shows it, if you can.
+      render: python
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Korvex, Python (free-threaded or not), OS, and the server (built-in, uvicorn...).
+      placeholder: korvex 0.13.0, Python 3.14.0, Linux, built-in server
+    validations:
+      required: true

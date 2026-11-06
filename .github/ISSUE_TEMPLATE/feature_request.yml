@@ -1,0 +1,16 @@
+name: Idea
+description: Something Korvex could do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What you need
+      description: The problem you're solving, before the solution you have in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How it could work
+      description: What the API could look like, and how other frameworks do it, if they do.

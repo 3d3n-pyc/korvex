@@ -1,17 +1,73 @@
 # Korvex
 
+[![PyPI](https://img.shields.io/pypi/v/korvex.svg)](https://pypi.org/project/korvex/)
+[![Python versions](https://img.shields.io/pypi/pyversions/korvex.svg)](https://pypi.org/project/korvex/)
 [![CI](https://github.com/3d3n-pyc/korvex/actions/workflows/ci.yml/badge.svg)](https://github.com/3d3n-pyc/korvex/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A fast router for Python, written in Rust, with an ASGI app on top and a
-built-in server to run it.
+A fast Python web framework. Its router and HTTP server are written in
+Rust; around them, a small ASGI framework: typed parameters validated
+with msgspec or pydantic, dependencies, WebSockets, OpenAPI with Swagger
+UI, a test client and ready-made middleware. It runs on any ASGI server,
+or on its own, with workers and threads (in parallel on free-threaded
+Python).
 
-Korvex is young (alpha). It's fast (see [Performance](#performance)), but it
-lacks some of what full frameworks offer: validation, OpenAPI. The [roadmap](ROADMAP.md) lists what's coming.
+Korvex is young (alpha): the API can still change before 1.0, each change
+listed in the [changelog](CHANGELOG.md) with how to update. The
+[roadmap](ROADMAP.md) says what comes next.
 
 ```sh
 pip install korvex
 ```
+
+## Quickstart
+
+```python
+import msgspec                       # or pydantic: pip install korvex msgspec
+
+from korvex import App, HTTPException
+
+
+class Task(msgspec.Struct):
+    id: int
+    title: str
+
+
+app = App()
+app.docs(title="Tasks")              # OpenAPI at /openapi.json, Swagger UI at /docs
+TASKS = {1: Task(1, "Write the docs")}
+
+
+@app.get("/tasks/{id:int}", responses={404: "No such task"})
+def get_task(request, id: int) -> Task:
+    """Get a task"""
+    if id not in TASKS:
+        raise HTTPException(404, "no such task")
+    return TASKS[id]
+
+
+if __name__ == "__main__":
+    app.run()                        # http://127.0.0.1:8000/tasks/1
+```
+
+And its test:
+
+```python
+from korvex.testing import TestClient
+
+def test_get_task():
+    with TestClient(app) as client:
+        assert client.get("/tasks/1").json() == {"id": 1, "title": "Write the docs"}
+        assert client.get("/tasks/2").status == 404
+```
+
+**Contents:** [the router](#the-router) ·
+[the ASGI app](#the-asgi-app) · [validation](#validation) ·
+[dependencies](#dependencies) · [WebSockets](#websockets) ·
+[ready-made hooks](#ready-made-hooks) · [testing](#testing) ·
+[the built-in server](#the-built-in-server) · [performance](#performance) ·
+[deployment guide](docs/deployment.md) · [examples](examples/) ·
+[contributing](CONTRIBUTING.md)
 
 ## The router
 
@@ -719,16 +775,17 @@ its own, the server 4, each server 3 workers. Two runs:
 Reproduce with `uv run python benches/database.py` (needs podman or
 docker for PostgreSQL, and oha).
 
-## Development
+## Contributing
 
 ```sh
-uv run maturin develop --release   # build the Rust extension
+uv sync                            # the tools, and Korvex built from source
 uv run pytest                      # Python tests
 cargo test                         # Rust tests
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), and [ROADMAP.md](ROADMAP.md) for
-what's planned.
+[CONTRIBUTING.md](CONTRIBUTING.md) has the layout of the code and every
+check CI runs; [ROADMAP.md](ROADMAP.md) what's planned. Report a
+vulnerability privately, as [SECURITY.md](SECURITY.md) explains.
 
 ## License
 

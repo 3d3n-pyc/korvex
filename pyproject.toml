@@ -5,25 +5,44 @@ build-backend = "maturin"
 [project]
 name = "korvex"
 dynamic = ["version"]
-description = "A high-performance Rust-powered router for Python, with an optional ASGI layer for hosting it directly"
+description = "A fast Python web framework with a Rust router and HTTP server: ASGI, validation, dependencies, OpenAPI"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-keywords = ["router", "routing", "asgi", "rust", "pyo3", "radix-tree"]
+authors = [{ name = "Maxime Lefevre" }]
+keywords = ["web", "framework", "asgi", "http", "server", "router", "rust", "openapi", "websocket", "free-threading"]
 classifiers = [
     "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Framework :: AsyncIO",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Free Threading :: 2 - Beta",
+    "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Rust",
     "Topic :: Internet :: WWW/HTTP",
-    "Framework :: AsyncIO",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
     "Typing :: Typed",
 ]
 
 [project.urls]
-Repository = "https://github.com/3d3n-pyc/korvex"
+Homepage = "https://github.com/3d3n-pyc/korvex"
+Documentation = "https://github.com/3d3n-pyc/korvex#readme"
+Changelog = "https://github.com/3d3n-pyc/korvex/blob/main/CHANGELOG.md"
 Issues = "https://github.com/3d3n-pyc/korvex/issues"
+Repository = "https://github.com/3d3n-pyc/korvex"
 
 [project.scripts]
 korvex = "korvex.cli:main"

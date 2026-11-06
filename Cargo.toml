@@ -2,7 +2,7 @@
 name = "korvex"
 version = "0.0.1"
 edition = "2024"
-description = "A fast router for Python, written in Rust"
+description = "The Rust core of Korvex, a Python web framework: its router and HTTP server"
 license = "MIT"
 repository = "https://github.com/3d3n-pyc/korvex"
 
