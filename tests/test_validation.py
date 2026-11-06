@@ -146,10 +146,10 @@ def test_handlers_without_annotations_are_called_as_before():
 
     assert not app._routes[
         "test_validation.test_handlers_without_annotations_are_called_as_before.<locals>.user"
-    ].plan.params
+    ].plan.binds
     assert not app._routes[
         "test_validation.test_handlers_without_annotations_are_called_as_before.<locals>.typed"
-    ].plan.params
+    ].plan.binds
     assert call(app, "GET", "/typed/5")[2] == {"id": 5}
 
 

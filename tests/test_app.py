@@ -733,8 +733,8 @@ def test_abort_in_a_websocket_dependency_refuses_the_connection():
         raise Abort(Response.redirect("/login"))
 
     @app.websocket("/ws", dependencies=[Depends(refuse)])
-    async def ws(socket):
-        await socket.accept()
+    async def ws(ws):
+        await ws.accept()
 
     assert run_ws(app, ws_scope("/ws")) == [{"type": "websocket.close", "code": 1000, "reason": ""}]
 
@@ -956,3 +956,48 @@ def test_app_local_from_startup_hooks_to_handlers():
 
     sent = asyncio.run(serve())
     assert response_from(sent)[2] == b"hello"
+
+
+def test_handlers_take_the_request_only_when_they_ask_for_it():
+    from korvex import Request, WebSocket
+    from korvex.testing import TestClient
+
+    app = App()
+
+    @app.get("/health")
+    def health():
+        return Response.text("ok")
+
+    @app.get("/users/{id:int}")
+    def user(id: int):
+        return Response.json({"id": id})
+
+    @app.get("/who")
+    def who(incoming: Request, page: int = 1):  # annotated: any name
+        return Response.json({"path": incoming.path, "page": page})
+
+    @app.websocket("/ws")
+    async def live(conn: WebSocket):
+        await conn.accept()
+        await conn.send_text("hi")
+
+    with TestClient(app) as client:
+        assert client.get("/health").text == "ok"
+        assert client.get("/users/7").json() == {"id": 7}
+        assert client.get("/who?page=2").json() == {"path": "/who", "page": 2}
+        with client.websocket("/ws") as ws:
+            assert ws.receive_text() == "hi"
+
+
+def test_a_request_parameter_named_otherwise_is_refused_with_a_hint():
+    app = App()
+
+    with pytest.raises(TypeError, match="for the request itself, name it `request` or annotate it Request"):
+
+        @app.get("/")
+        def home(req): ...
+
+    with pytest.raises(TypeError, match="annotate it WebSocket"):
+
+        @app.websocket("/ws")
+        async def live(socket): ...

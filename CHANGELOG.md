@@ -7,6 +7,16 @@ each thing. Breaking changes are listed with how to update.
 
 ### Breaking changes
 
+- **A handler takes the request only when it needs it.** It was always
+  its first parameter, even unused (`def health(request)`). It's now a
+  parameter like the others: named `request`, or annotated `Request`
+  (`ws` or `websocket`, or annotated `WebSocket`, for a WebSocket
+  handler), anywhere in the list, or not at all:
+  `def get_task(id: int) -> Task`. To update: nothing for handlers whose
+  first parameter is named `request` (or `ws`); rename or annotate one
+  named otherwise (`def h(req)` becomes `def h(req: Request)`): it's
+  refused at registration, with a message saying so.
+
 - **Internal modules are private.** `korvex.app`, `korvex.schema`,
   `korvex.openapi`, `korvex.serve`, `korvex.urls`, `korvex.routing`,
   `korvex.requests`, `korvex.params`, `korvex.errors`, `korvex.response`

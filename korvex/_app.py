@@ -111,7 +111,7 @@ class App(_RouteDecorators):
     app = App()
 
     @app.get("/users/{id:int}")
-    def get_user(request, id):
+    def get_user(id: int):
         return Response.json({"id": id})
 
     # uvicorn mymodule:app
@@ -576,14 +576,16 @@ class App(_RouteDecorators):
         handler = route.func
         plan = route.plan if route.plan is not None else self._plan_of(handler_name)
         if not needs_plan(plan):  # no annotations to act on: called as before, at no cost
-            return await _call(handler, request, **path_params)
+            if plan.request:  # it takes the request
+                path_params = {**path_params, **dict.fromkeys(plan.request, request)}
+            return await _call(handler, **path_params)
         if not plan.dependencies:
             arguments = {**path_params, **await plan.bind(request, values, None)}
-            return plan.respond(await _call(handler, request, **arguments))
+            return plan.respond(await _call(handler, **arguments))
         run = Run(self.dependency_overrides, self._dependency_plan)
         try:
             arguments = {**path_params, **await plan.bind(request, values, run)}
-            response = plan.respond(await _call(handler, request, **arguments))
+            response = plan.respond(await _call(handler, **arguments))
         except BaseException as exc:
             await run.close(exc)  # raised at the yields; still answered as usual
             raise
@@ -630,10 +632,13 @@ class App(_RouteDecorators):
             path_params = {**_host_params_for(route, host_params), **path_params}
         handler = route.func
         plan = route.plan
-        run = Run(self.dependency_overrides, self._dependency_plan) if plan is not None and plan.dependencies else None
+        assert plan is not None  # worked out when the route was registered
+        run = Run(self.dependency_overrides, self._dependency_plan) if plan.dependencies else None
         try:
             arguments: dict[str, Any] = dict(path_params)
-            if plan is not None and needs_plan(plan):
+            if not needs_plan(plan):
+                arguments.update(dict.fromkeys(plan.request, websocket))
+            else:
                 try:
                     arguments.update(await plan.bind(websocket, values, run))
                 except (HTTPException, Abort) as exc:  # a 422 too
@@ -643,7 +648,7 @@ class App(_RouteDecorators):
                         await run.close(exc)
                     await websocket.close()  # before accept: the client gets a 403
                     return
-            await handler(websocket, **arguments)
+            await handler(**arguments)
         except WebSocketDisconnect as exc:
             if run is not None:
                 await self._close_quietly(run, exc, websocket.path)

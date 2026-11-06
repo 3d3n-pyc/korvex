@@ -303,6 +303,7 @@ class Plan:
         self.form = [p for p in params if p.source == "form"]
         self.form_models = [(p, Model(p.type)) for p in params if p.source == "form_model"]
         self.request = [p.name for p in params if p.source == "request"]
+        self.binds = any(p.source != "request" for p in params)  # something to read from the request
         self.body = next((p for p in params if p.source == "body"), None)
         self.body_model = Model(self.body.type) if self.body else None
         self.response = response
@@ -565,6 +566,11 @@ def _hints(func: Callable) -> dict[str, Any]:
     return typing.get_type_hints(target, include_extras=True)
 
 
+# Unannotated, a parameter by one of these names is the request (or the WebSocket).
+_REQUEST_NAMES = ("request",)
+_WEBSOCKET_NAMES = ("request", "websocket", "ws")
+
+
 def plan_for(
     func: Callable,
     pattern: str,
@@ -575,10 +581,10 @@ def plan_for(
     cache: dict | None = None,
     _chain: tuple = (),
 ) -> Plan:
-    """Reads `func`'s annotations for the route `pattern`. A handler's first
-    parameter is the request (or WebSocket); a dependency's parameters all
-    come from somewhere. `dependencies` are the route's own. Raises
-    TypeError for a parameter whose origin can't be told."""
+    """Reads `func`'s annotations for the route `pattern`: where each
+    parameter comes from. The request (or WebSocket) is a parameter like
+    the others, annotated or named so. `dependencies` are the route's own.
+    Raises TypeError for a parameter whose origin can't be told."""
     where = getattr(func, "__qualname__", repr(func))
     if func in _chain:
         cycle = " -> ".join(getattr(f, "__qualname__", repr(f)) for f in (*_chain, func))
@@ -612,9 +618,9 @@ def plan_for(
             raise TypeError(f"{where}: dependencies takes Depends(...) items, not {marker!r}")
         deps.append(Dep(None, marker.func, marker.cache, plan_dependency(marker)))
 
-    for index, (name, parameter) in enumerate(inspect.signature(func).parameters.items()):
-        if (handler and index == 0) or parameter.kind in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD):
-            continue  # the request, and catch-alls
+    for name, parameter in inspect.signature(func).parameters.items():
+        if parameter.kind in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD):
+            continue  # catch-alls
         tp, marker = _split(hints.get(name))
         if isinstance(parameter.default, (Source, Dependency)):
             if marker is not None:
@@ -659,7 +665,7 @@ def plan_for(
                     "annotate it Connection to serve both, or WebSocket"
                 )
             params.append(_param(name, "request", tp, True, key=name))
-        elif tp is None and name == "request" and not handler and not has_default:
+        elif tp is None and not has_default and name in (_WEBSOCKET_NAMES if websocket else _REQUEST_NAMES):
             params.append(_param(name, "request", None, True, key=name))
         elif name in route_params:
             if tp is not None and inner not in SCALARS:
@@ -681,7 +687,8 @@ def plan_for(
             raise TypeError(
                 f"{where}: can't tell where parameter {name!r} comes from: it isn't in the path {pattern!r}, "
                 f"its annotation isn't a model or a {_names(SCALARS)}, and it isn't given with Depends(), "
-                "Header(), Cookie(), Query() or Form()"
+                "Header(), Cookie(), Query() or Form(); for the request itself, name it `request` or annotate it "
+                f"{'WebSocket' if websocket else 'Request'}"
             )
 
     if sum(p.source == "body" for p in params) > 1:
@@ -723,7 +730,7 @@ def _names(types_: Sequence[Any]) -> str:
 
 
 def needs_plan(plan: Plan) -> bool:
-    """Whether calling the handler needs the plan at all: a handler with no
-    parameters to read, no dependencies and no return model is called as
-    before."""
-    return bool(plan.params or plan.response or plan.dependencies or plan.empty)
+    """Whether calling the handler needs the plan at all: a handler with
+    nothing to read from the request (it may take the request itself), no
+    dependencies and no return model gets the path parameters as they are."""
+    return bool(plan.binds or plan.response or plan.dependencies or plan.empty)

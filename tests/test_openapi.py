@@ -63,7 +63,7 @@ def sample_app(tmp_path):
         return Response.text("ok")
 
     @app.websocket("/ws")
-    async def ws(socket):
+    async def ws(ws):
         pass
 
     (tmp_path / "a.txt").write_text("a")

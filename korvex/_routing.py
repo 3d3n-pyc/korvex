@@ -16,9 +16,12 @@ if TYPE_CHECKING:
 
 
 Handler = Callable[..., Any]
-"""`(request, **path_params) -> Response`, sync or async. Path params come
-converted: `int` for `{id:int}`, `uuid.UUID` for `{id:uuid}`, else `str`.
-With a model return annotation, it can return the model instead."""
+"""A function that answers a route, sync or async. Its parameters say what
+it reads: the path parameters by name (converted: `int` for `{id:int}`,
+`uuid.UUID` for `{id:uuid}`, else `str`, or as annotated), query fields,
+headers, the body... and the request itself if it needs it, named
+`request` or annotated `Request`. It returns a `Response`, or a model
+(with a return annotation), or `None` (annotated `-> None`)."""
 
 WebSocketHandler = Callable[..., Awaitable[None]]
 """`async (websocket, **path_params) -> None`."""

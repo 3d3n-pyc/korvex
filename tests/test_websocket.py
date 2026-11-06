@@ -148,9 +148,9 @@ def test_ready_made_hooks_apply_to_websockets():
     rate_limit(app, requests=2, per=60)
 
     @app.websocket("/ws")
-    async def ws(socket):
-        await socket.accept()
-        await socket.send_text(current_request_id() or "none")
+    async def ws(ws):
+        await ws.accept()
+        await ws.send_text(current_request_id() or "none")
 
     first = run_ws(app, ws_scope("/ws", headers=[("X-Request-ID", "abc-123")]))
     assert first[1] == {"type": "websocket.send", "text": "abc-123"}
