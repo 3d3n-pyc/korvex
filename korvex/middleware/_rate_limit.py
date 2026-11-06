@@ -13,11 +13,11 @@ from collections.abc import Awaitable, Callable, Hashable
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Protocol
 
-from korvex.response import Response
+from korvex._response import Response
 
 if TYPE_CHECKING:
-    from korvex.app import App
-    from korvex.requests import Request
+    from korvex._app import App
+    from korvex._requests import Request
 
 
 logger = logging.getLogger("korvex")

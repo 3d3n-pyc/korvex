@@ -7,12 +7,12 @@ import inspect
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
-from korvex.requests import Request
+from korvex._requests import Request
+from korvex._schema import Plan, _library, path_params
 from korvex.router import RouteGroup, Router
-from korvex.schema import Plan, _library, path_params
 
 if TYPE_CHECKING:
-    from korvex.app import App
+    from korvex._app import App
 
 
 Handler = Callable[..., Any]

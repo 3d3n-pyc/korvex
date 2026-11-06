@@ -64,7 +64,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 def load(target: str, app_dir: str = "."):
     """Imports `module:attribute` (attribute defaults to `app`), looking in
     `app_dir` first."""
-    from korvex.app import App
+    from korvex._app import App
 
     module_name, _, attribute = target.partition(":")
     sys.path.insert(0, app_dir)

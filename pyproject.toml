@@ -45,7 +45,7 @@ Issues = "https://github.com/3d3n-pyc/korvex/issues"
 Repository = "https://github.com/3d3n-pyc/korvex"
 
 [project.scripts]
-korvex = "korvex.cli:main"
+korvex = "korvex._cli:main"
 
 [project.optional-dependencies]
 serve = ["uvicorn>=0.30"]
@@ -110,7 +110,7 @@ ignore = [
 # Where a parameter comes from, given as its default, as in FastAPI.
 extend-immutable-calls = [
     "korvex.Cookie", "korvex.Depends", "korvex.Form", "korvex.Header", "korvex.Query",
-    "korvex.params.Cookie", "korvex.params.Depends", "korvex.params.Form", "korvex.params.Header", "korvex.params.Query",
+    "korvex._params.Cookie", "korvex._params.Depends", "korvex._params.Form", "korvex._params.Header", "korvex._params.Query",
     "fastapi.Depends",  # in the benchmarks
 ]
 

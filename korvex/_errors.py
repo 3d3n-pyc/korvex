@@ -7,7 +7,7 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from korvex.response import Response
+    from korvex._response import Response
 
 
 class HTTPException(Exception):

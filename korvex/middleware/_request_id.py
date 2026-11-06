@@ -8,11 +8,11 @@ import uuid
 from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
-from korvex.response import Response
+from korvex._response import Response
 
 if TYPE_CHECKING:
-    from korvex.app import App
-    from korvex.requests import Request
+    from korvex._app import App
+    from korvex._requests import Request
 
 
 _request_id: ContextVar[str | None] = ContextVar("korvex_request_id", default=None)

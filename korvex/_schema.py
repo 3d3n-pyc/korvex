@@ -7,7 +7,7 @@ the route is registered:
 - the name of a path parameter: the path, converted to the annotated type;
 - `str`, `int`, `float`, `bool`, `UUID`, `date`, `datetime`, or an
   `Optional` or `list` of those: the query string (dates in ISO 8601);
-- `Header()`, `Cookie()`, `Query()` or `Form()` (korvex.params): there;
+- `Header()`, `Cookie()`, `Query()` or `Form()` (korvex._params): there;
 - `Depends(func)`: what `func` returns, its own parameters read the same way.
 
 A model return annotation turns the returned object into a JSON response.
@@ -27,10 +27,10 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, NamedTuple, Union
 
-from korvex.errors import ValidationError
-from korvex.params import REQUIRED, Dependency, Source
-from korvex.requests import Request, UploadedFile, WebSocket
-from korvex.response import Response
+from korvex._errors import ValidationError
+from korvex._params import REQUIRED, Dependency, Source
+from korvex._requests import Request, UploadedFile, WebSocket
+from korvex._response import Response
 
 SCALARS = (str, int, float, bool, uuid.UUID, datetime.date, datetime.datetime)
 _TRUE = {"true", "1", "yes", "on"}

@@ -9,11 +9,11 @@ from email.message import Message
 from typing import TYPE_CHECKING, Any, Union
 from urllib.parse import parse_qs, unquote
 
-from korvex.errors import HTTPException
-from korvex.response import Headers, JSONValue
+from korvex._errors import HTTPException
+from korvex._response import Headers, JSONValue
 
 if TYPE_CHECKING:
-    from korvex.app import App
+    from korvex._app import App
 
 
 class UploadedFile:
@@ -142,7 +142,7 @@ class Request:
         configure and `app.url_for()`, not from the request."""
         if self.app is None:
             raise RuntimeError("this request doesn't come from an App: url_for() needs one to find the route")
-        from korvex import urls
+        from korvex import _urls as urls
 
         return urls.url_for(self, urls.lookup(self.app._url_index(), name), params)
 

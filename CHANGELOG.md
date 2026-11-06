@@ -2,13 +2,25 @@
 
 ## Unreleased
 
-Inside, nothing a user sees changes: every import works as before.
+The public API reviewed before 1.0: simpler to learn, with one way to do
+each thing. Breaking changes are listed with how to update.
 
-- The code is reorganized: `korvex.requests` (Request, WebSocket,
-  UploadedFile), `korvex.routing` (the decorators, AppGroup, hosts) and
-  `korvex.app` (the App) instead of one 1,750-line module;
-  `korvex.middleware` is a package with a module per hook; the App keeps
-  one record per route. Requests are 1 to 2% faster.
+### Breaking changes
+
+- **Internal modules are private.** `korvex.app`, `korvex.schema`,
+  `korvex.openapi`, `korvex.serve`, `korvex.urls`, `korvex.routing`,
+  `korvex.requests`, `korvex.params`, `korvex.errors`, `korvex.response`
+  and `korvex.cli` became `korvex._app`... The public modules are
+  `korvex`, `korvex.router`, `korvex.testing`, `korvex.security` and
+  `korvex.middleware`; what they export is what 1.0 will keep stable. To
+  update: import from `korvex` (`from korvex.app import App` becomes
+  `from korvex import App`).
+
+### Inside
+
+- The code is reorganized: the App's module split in three, the
+  middleware in a module per hook, one record per route. Requests are 1
+  to 2% faster.
 - Ruff, pyright and coverage are configured in `pyproject.toml`, and CI
   runs them, with the tests on Python 3.9 to 3.14 and 3.14t.
 - New: SECURITY.md (private reports through GitHub), a code of conduct,

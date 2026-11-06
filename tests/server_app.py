@@ -178,10 +178,10 @@ def teapot(request):
 
 
 if __name__ == "__main__":
-    import korvex.serve
+    import korvex._serve
 
     if os.environ.get("STARTUP_WINDOW"):  # lets tests wait less than 5 s
-        korvex.serve.STARTUP_WINDOW = float(os.environ["STARTUP_WINDOW"])
+        korvex._serve.STARTUP_WINDOW = float(os.environ["STARTUP_WINDOW"])
     app.run(
         port=int(sys.argv[1]),
         workers=int(os.environ.get("WORKERS", "1")),

@@ -18,11 +18,10 @@ from pathlib import Path
 from typing import Any, Optional, Union, overload
 
 from korvex._core import MethodNotAllowed
-from korvex.errors import Abort, HTTPException, ValidationError
-from korvex.requests import Request, UploadedFile, WebSocket, WebSocketDisconnect
-from korvex.response import Response, StreamingResponse
-from korvex.router import Router
-from korvex.routing import (
+from korvex._errors import Abort, HTTPException, ValidationError
+from korvex._requests import Request, WebSocket, WebSocketDisconnect
+from korvex._response import Response, StreamingResponse
+from korvex._routing import (
     AppGroup,
     Handler,
     WebSocketHandler,
@@ -33,11 +32,8 @@ from korvex.routing import (
     _Route,
     _RouteDecorators,
 )
-from korvex.schema import Plan, Run, needs_plan, plan_for
-
-# Defined here until 0.13, and still importable from here.
-__all__ = ["App", "AppGroup", "LoopLocal", "Request", "UploadedFile", "WebSocket", "WebSocketDisconnect"]
-
+from korvex._schema import Plan, Run, needs_plan, plan_for
+from korvex.router import Router
 
 BeforeHook = Callable[["Request"], Union[Optional[Response], Awaitable[Optional[Response]]]]
 """`(request) -> Response | None`, sync or async. Returning a `Response`
@@ -276,13 +272,13 @@ class App(_RouteDecorators):
 
         For a route of `app.host()`, this is the path: a link on that host.
         `request.url_for()` gives the full URL, host included."""
-        from korvex import urls
+        from korvex import _urls as urls
 
         return urls.path_for(self, urls.lookup(self._url_index(), name), params)
 
     def _url_index(self) -> Any:
         """The names of the routes, worked out again once routes change."""
-        from korvex import urls
+        from korvex import _urls as urls
 
         routers = [self.router, self._ws_router] + [r for h in self._hosts for r in (h.router, h.ws_router)]
         signature = (len(self._routes), len(self._ws_routes), *(getattr(r, "version", None) for r in routers))
@@ -330,7 +326,7 @@ class App(_RouteDecorators):
         WebSockets aren't included. With `host`, the routes that answer on
         that host: its own (`app.host()`), then those without a host;
         without, only those without a host."""
-        from korvex import openapi
+        from korvex import _openapi as openapi
 
         return openapi.build(self, title=title, version=version, description=description, host=host)
 
@@ -368,15 +364,15 @@ class App(_RouteDecorators):
         """Serves the OpenAPI document at `openapi_path` (recomputed on each
         call, so it follows route changes) and Swagger UI at `docs_path`
         (loaded from a CDN; `None` to leave it out)."""
-        from korvex import openapi
+        from korvex import _openapi as openapi
 
         def serve_openapi(request: Request) -> Response:
             # Each host gets its own API: the routes that answer there.
             host = request.headers.get("host") if self._hosts else None
             return Response.json(self.openapi(title=title, version=version, description=description, host=host))
 
-        self.router.route(openapi_path, "korvex.openapi")
-        self._routes["korvex.openapi"] = _Route(serve_openapi)
+        self.router.route(openapi_path, "korvex._openapi")
+        self._routes["korvex._openapi"] = _Route(serve_openapi)
         if docs_path is not None:
             page = openapi.swagger_ui(title, openapi_path)
 
@@ -795,7 +791,7 @@ class App(_RouteDecorators):
         - A streamed response or a WebSocket waits whenever its client is
           1 MiB behind, until it catches up.
         """
-        from korvex import serve
+        from korvex import _serve as serve
 
         serve.run(
             self,
