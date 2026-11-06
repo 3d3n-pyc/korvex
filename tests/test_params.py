@@ -163,7 +163,24 @@ def test_the_body_can_be_read_by_the_handler_too():
     status, body = call(
         app, method="POST", headers=[("Content-Type", "application/x-www-form-urlencoded")], body=b"name=Ada"
     )
-    assert body == {"name": "Ada", "raw": "name=Ada", "form": ["Ada"]}
+    assert body == {"name": "Ada", "raw": "name=Ada", "form": "Ada"}
+
+
+def test_a_repeated_field_gives_its_first_value_wherever_it_comes_from():
+    app = App()
+
+    @app.post("/")
+    def read(request, page: int, x_page: int = Header(), title: str = Form()):
+        return Response.json({"query": page, "header": x_page, "form": title})
+
+    status, body = call(
+        app,
+        method="POST",
+        query=b"page=1&page=2",
+        headers=[("X-Page", "3"), ("X-Page", "4"), ("Content-Type", "application/x-www-form-urlencoded")],
+        body=b"title=first&title=second",
+    )
+    assert (status, body) == (200, {"query": 1, "header": 3, "form": "first"})
 
 
 def test_bad_declarations_are_refused_at_registration():

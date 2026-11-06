@@ -10,7 +10,7 @@ database is part of it.
 - Korvex with its built-in server, Korvex on uvicorn, and FastAPI on
   uvicorn, each with 3 workers and the same query.
 
-Needs oha and podman (or docker). Run: uv run python benches/database.py
+Needs oha and podman (or docker). Run: uv run --group bench python benches/database.py
 Results go to benches/database_results.json.
 """
 

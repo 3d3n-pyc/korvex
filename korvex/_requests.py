@@ -4,16 +4,16 @@ and the `UploadedFile`s of a multipart form."""
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from email.message import Message
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union
 from urllib.parse import parse_qs, unquote
 
-from korvex.errors import HTTPException
-from korvex.response import Headers, JSONValue
+from korvex._errors import HTTPException
+from korvex._response import HeaderItems, Headers, JSONValue, header_pairs
 
 if TYPE_CHECKING:
-    from korvex.app import App
+    from korvex._app import App
 
 
 class UploadedFile:
@@ -30,17 +30,59 @@ class UploadedFile:
         return f"UploadedFile({self.filename!r}, {self.content_type!r}, {len(self.data)} bytes)"
 
 
-FormData = dict[str, list[Union[str, UploadedFile]]]
+_V = TypeVar("_V")
 
 
-class Request:
-    """An incoming HTTP request."""
+class MultiDict(Mapping[str, _V], Generic[_V]):
+    """Names, each with one value or more, in order: a query string or a
+    form. Read like a dict, `fields["tag"]` and `fields.get("tag")` give the
+    first value; `fields.get_all("tag")` gives them all, as headers do."""
+
+    __slots__ = ("_lists",)
+
+    def __init__(self, lists: dict[str, list[_V]] | None = None) -> None:
+        self._lists: dict[str, list[_V]] = lists if lists is not None else {}
+
+    def __getitem__(self, name: str) -> _V:
+        return self._lists[name][0]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._lists)
+
+    def __len__(self) -> int:
+        return len(self._lists)
+
+    def __contains__(self, name: object) -> bool:
+        return name in self._lists
+
+    def get_all(self, name: str) -> list[_V]:
+        """Every value of `name`, in order; `[]` if there's none."""
+        return list(self._lists.get(name, ()))
+
+    def multi_items(self) -> list[tuple[str, _V]]:
+        """Every `(name, value)`, a name repeated for each of its values."""
+        return [(name, value) for name, values in self._lists.items() for value in values]
+
+    def __repr__(self) -> str:
+        return f"MultiDict({self.multi_items()!r})"
+
+
+FormData = MultiDict[Union[str, UploadedFile]]
+
+
+class Connection:
+    """What an HTTP request and a WebSocket have in common: the path, the
+    headers, cookies and query string, the path parameters, the client
+    and the scheme. Before hooks get one (`isinstance(connection,
+    WebSocket)` tells a handshake apart), and a dependency annotated
+    `Connection` serves HTTP routes and WebSockets alike."""
 
     __slots__ = (
         "method",
         "path",
         "headers",
-        "query_params",
+        "_query_string",
+        "_query",
         "path_params",
         "client",
         "scheme",
@@ -58,22 +100,33 @@ class Request:
         path_params: Mapping[str, Any],
         app: App | None = None,
     ) -> None:
-        self.method: str = scope.get("method", "GET")  # a WebSocket handshake is a GET
+        self.method: str = scope.get("method", "GET")
+        """The HTTP method; `GET` for a WebSocket's handshake."""
         self.path: str = scope["path"]
         client = scope.get("client")
         self.client: tuple[str, int] | None = tuple(client) if client else None  # type: ignore[assignment]
         """`(host, port)` of the client, behind a trusted proxy too; `None` if unknown."""
         self.scheme: str = scope.get("scheme", "http")
-        """`"https"` or `"http"`, as the client used it."""
+        """`"https"` or `"http"` (`"wss"` or `"ws"` for a WebSocket), as the
+        client used it."""
         self.headers = Headers((k.decode("latin-1"), v.decode("latin-1")) for k, v in scope["headers"])
-        self.query_params: dict[str, list[str]] = parse_qs(scope.get("query_string", b"").decode("latin-1"))
+        self._query_string: bytes = scope.get("query_string", b"")
+        self._query: MultiDict[str] | None = None
         self.path_params = path_params
         self.app = app
-        """The `App` handling the request."""
+        """The `App` handling it."""
         self._receive = receive
         self._cookies: dict[str, str] | None = None
-        self._body: bytes | None = None
+        self._body: bytes | None = None  # a Request's, read once (here: one constructor for both)
         self._form: FormData | None = None
+
+    @property
+    def query(self) -> MultiDict[str]:
+        """The query string's fields, parsed on first use:
+        `request.query.get("page")`, `request.query.get_all("tag")`."""
+        if self._query is None:
+            self._query = MultiDict(parse_qs(self._query_string.decode("latin-1")))
+        return self._query
 
     @property
     def cookies(self) -> dict[str, str]:
@@ -86,6 +139,32 @@ class Request:
                     if sep and name.strip():
                         self._cookies[name.strip()] = unquote(value.strip().strip('"'))
         return self._cookies
+
+    def url_for(self, name: str, /, **params: Any) -> str:
+        """The full URL of the route named `name`, like `App.url_for()`
+        gives its path: `"https://example.com/users/42"`. The scheme is
+        the request's (`ws` or `wss` for a WebSocket route). The host is
+        the route's own for an `app.host()` route, its parameters given
+        here too (`tenant="acme"`), with the request's port; for other
+        routes, it's the request's `Host` header.
+
+        That header comes from the client: for a link sent elsewhere (an
+        email to reset a password), build it from a base URL you
+        configure and `app.url_for()`, not from the request."""
+        if self.app is None:
+            raise RuntimeError("this request doesn't come from an App: url_for() needs one to find the route")
+        from korvex import _urls as urls
+
+        return urls.url_for(self, urls.lookup(self.app._url_index(), name), params)
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.method} {self.path!r})"
+
+
+class Request(Connection):
+    """An incoming HTTP request: a `Connection`, and its body."""
+
+    __slots__ = ()
 
     async def body(self) -> bytes:
         """Reads the whole request body (once: later calls get it again)."""
@@ -108,8 +187,9 @@ class Request:
             raise HTTPException(400, "invalid JSON body") from None
 
     async def form(self) -> FormData:
-        """Reads the body as a form: each field name maps to its values, in
-        order. Files from a `multipart/form-data` form are `UploadedFile`s.
+        """Reads the body as a form: `form.get("title")` gives a field's
+        first value, `form.get_all("tag")` all of them. Files from a
+        `multipart/form-data` form are `UploadedFile`s.
         Any other content type is answered with a 415 error, and text that
         can't be decoded with a 400."""
         if self._form is None:
@@ -122,32 +202,12 @@ class Request:
         kind = content_type.get_content_type()
         try:
             if kind == "application/x-www-form-urlencoded":
-                return parse_qs((await self.body()).decode(), keep_blank_values=True)  # type: ignore[return-value]
+                return MultiDict(parse_qs((await self.body()).decode(), keep_blank_values=True))  # type: ignore[arg-type]
             if kind == "multipart/form-data" and content_type.get_param("boundary"):
                 return _parse_multipart(await self.body(), str(content_type.get_param("boundary")))
         except (UnicodeDecodeError, LookupError):  # bad bytes, or an unknown charset
             raise HTTPException(400, "invalid form encoding") from None
         raise HTTPException(415, "expected a form (urlencoded or multipart)")
-
-    def url_for(self, name: str, /, **params: Any) -> str:
-        """The full URL of the route named `name`, like `App.url_for()`
-        gives its path: `"https://example.com/users/42"`. The scheme is
-        the request's (`ws` or `wss` for a WebSocket route). The host is
-        the route's own for an `app.host()` route, its parameters given
-        here too (`tenant="acme"`), with the request's port; for other
-        routes, it's the request's `Host` header.
-
-        That header comes from the client: for a link sent elsewhere (an
-        email to reset a password), build it from a base URL you
-        configure and `app.url_for()`, not from the request."""
-        if self.app is None:
-            raise RuntimeError("this request doesn't come from an App: url_for() needs one to find the route")
-        from korvex import urls
-
-        return urls.url_for(self, urls.lookup(self.app._url_index(), name), params)
-
-    def __repr__(self) -> str:
-        return f"Request({self.method} {self.path!r})"
 
 
 class WebSocketDisconnect(Exception):
@@ -158,11 +218,11 @@ class WebSocketDisconnect(Exception):
         super().__init__(code)
 
 
-class WebSocket(Request):
-    """A WebSocket connection, passed to `@app.websocket` handlers. It has
-    the handshake request's headers, cookies, params, client and scheme
-    (`"ws"` or `"wss"`), so the handler can check who connects before
-    calling `accept()`.
+class WebSocket(Connection):
+    """A WebSocket connection, passed to `@app.websocket` handlers. As a
+    `Connection`, it has the handshake's headers, cookies, params, client
+    and scheme (`"ws"` or `"wss"`), so the handler can check who connects
+    before calling `accept()`.
 
         @app.websocket("/ws")
         async def echo(ws):
@@ -184,14 +244,16 @@ class WebSocket(Request):
         self.subprotocols: list[str] = list(scope.get("subprotocols", []))
         """Subprotocols the client asked for, to pick one in `accept()`."""
 
-    async def accept(self, subprotocol: str | None = None, headers: Iterable[tuple[str, str]] = ()) -> None:
+    async def accept(self, subprotocol: str | None = None, headers: HeaderItems = ()) -> None:
         """Accepts the connection, optionally with one of `subprotocols`."""
         await self._wait_connect()
         await self._send(
             {
                 "type": "websocket.accept",
                 "subprotocol": subprotocol,
-                "headers": [(name.lower().encode("latin-1"), value.encode("latin-1")) for name, value in headers],
+                "headers": [
+                    (name.lower().encode("latin-1"), value.encode("latin-1")) for name, value in header_pairs(headers)
+                ],
             }
         )
         self._accepted = True
@@ -254,15 +316,6 @@ class WebSocket(Request):
             self._connected = True
             await self._receive()
 
-    async def body(self) -> bytes:
-        raise TypeError("a WebSocket has no body: use receive()")
-
-    async def json(self) -> JSONValue:
-        raise TypeError("a WebSocket has no body: use receive_json()")
-
-    async def form(self) -> FormData:
-        raise TypeError("a WebSocket has no form")
-
     def __repr__(self) -> str:
         return f"WebSocket({self.path!r})"
 
@@ -270,7 +323,7 @@ class WebSocket(Request):
 def _parse_multipart(body: bytes, boundary: str) -> FormData:
     """Splits a `multipart/form-data` body on its boundary. Each part is a
     few header lines, a blank line, then the field's value."""
-    form: FormData = {}
+    form: dict[str, list[Union[str, UploadedFile]]] = {}
     for part in body.split(b"--" + boundary.encode())[1:]:
         if part.startswith(b"--"):  # the closing boundary
             break
@@ -290,4 +343,4 @@ def _parse_multipart(body: bytes, boundary: str) -> FormData:
         else:
             value = UploadedFile(filename, headers.get_content_type(), data)
         form.setdefault(field, []).append(value)
-    return form
+    return MultiDict(form)

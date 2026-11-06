@@ -26,9 +26,9 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from urllib.parse import unquote
 
 from korvex import _core
-from korvex.app import _call, _finish, _raw_headers
+from korvex._app import _call, _finish, _raw_headers
+from korvex._response import StreamingResponse
 from korvex.middleware import current_request_id
-from korvex.response import StreamingResponse
 
 # Python 3.12+: a request handler that doesn't wait completes right away,
 # without going through the loop's queue. Older versions schedule it.
@@ -42,7 +42,7 @@ def _start_task(loop: asyncio.AbstractEventLoop, coroutine: Any) -> asyncio.Task
 
 
 if TYPE_CHECKING:
-    from korvex.app import App
+    from korvex._app import App
 
 logger = logging.getLogger("korvex")
 access_logger = logging.getLogger("korvex.access")
@@ -56,7 +56,7 @@ class Config(NamedTuple):
     """How the server treats requests, set by App.run()."""
 
     max_body: int
-    timeout: float
+    read_timeout: float
     body_limits: list[tuple[str, str, int]]  # (method, path, bytes)
     trusted_proxies: list[str]
     uds: str | None
@@ -191,7 +191,7 @@ async def serve(
         fd,
         config.uds is not None,
         config.max_body,
-        config.timeout,
+        config.read_timeout,
         config.body_limits,
         config.trusted_proxies,
         config.ws_ping_interval,

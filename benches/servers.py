@@ -11,8 +11,8 @@ loses to a default that doesn't suit it.
 - Korvex's built-in server (App.run) serves the Korvex app.
 
 Needs oha (`cargo install oha`).
-Run everything (about 4 minutes): uv run python benches/servers.py
-Run some servers only:            uv run python benches/servers.py robyn korvex
+Run everything (about 4 minutes): uv run --group bench python benches/servers.py
+Run some servers only:            uv run --group bench python benches/servers.py robyn korvex
 Results are merged into benches/servers_results.json.
 """
 

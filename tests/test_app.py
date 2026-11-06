@@ -77,29 +77,6 @@ def test_returns_405_with_allow_header_for_wrong_method():
     assert ("Allow", "GET") in headers
 
 
-def test_handler_decorator_attaches_to_an_existing_route_name():
-    app = App()
-    app.router.route("/health", "health_check")
-
-    @app.handler("health_check")
-    def health(request):
-        return Response.text("ok")
-
-    status, _, body = response_from(run_app(app, make_scope("GET", "/health")))
-    assert status == 200
-    assert body == b"ok"
-
-
-def test_missing_handler_is_a_logged_500(caplog):
-    app = App()
-    app.router.route("/health", "health_check")
-
-    status, _, _ = response_from(run_app(app, make_scope("GET", "/health")))
-
-    assert status == 500
-    assert "no handler named 'health_check'" in caplog.text
-
-
 def test_http_exception_becomes_its_response():
     app = App()
 
@@ -109,7 +86,7 @@ def test_http_exception_becomes_its_response():
 
     status, headers, body = response_from(run_app(app, make_scope("GET", "/users/7")))
 
-    assert (status, body) == (404, b"no user 7")
+    assert (status, body) == (404, b'{"detail": "no user 7"}')
     assert ("X-Reason", "missing") in headers
 
 
@@ -167,7 +144,7 @@ def test_unhandled_exception_is_a_logged_500(caplog):
 
     status, _, body = response_from(run_app(app, make_scope("GET", "/")))
 
-    assert (status, body) == (500, b"Internal Server Error")
+    assert (status, body) == (500, b'{"detail": "Internal Server Error"}')
     assert "unhandled error in GET /" in caplog.text
     assert "RuntimeError: boom" in caplog.text
 
@@ -199,18 +176,23 @@ def test_request_headers_are_available_case_insensitively():
     assert captured["value"] == "hello"
 
 
-def test_request_query_params_are_parsed():
+def test_request_query_is_read_like_headers():
     app = App()
     captured = {}
 
     @app.get("/search")
     def search(request):
-        captured["value"] = request.query_params
+        captured["query"] = request.query
         return Response.text("ok")
 
-    run_app(app, make_scope("GET", "/search", query_string=b"q=hello&page=2"))
+    run_app(app, make_scope("GET", "/search", query_string=b"q=hello&tag=a&tag=b"))
 
-    assert captured["value"] == {"q": ["hello"], "page": ["2"]}
+    query = captured["query"]
+    assert (query["q"], query.get("tag"), query.get_all("tag")) == ("hello", "a", ["a", "b"])
+    assert (query.get("missing"), query.get_all("missing"), "q" in query, len(query)) == (None, [], True, 2)
+    assert dict(query) == {"q": "hello", "tag": "a"}  # a dict of first values
+    assert query.multi_items() == [("q", "hello"), ("tag", "a"), ("tag", "b")]
+    assert repr(query) == "MultiDict([('q', 'hello'), ('tag', 'a'), ('tag', 'b')])"
 
 
 def test_request_body_and_json():
@@ -303,7 +285,7 @@ def form_app():
         fields = await request.form()
         echo = {
             name: [v if isinstance(v, str) else [v.filename, v.content_type, v.data.hex()] for v in values]
-            for name, values in fields.items()
+            for name, values in ((name, fields.get_all(name)) for name in fields)
         }
         return Response.json(echo)
 
@@ -694,33 +676,7 @@ def test_app_groups_register_under_a_prefix_with_their_dependencies():
     calls.clear()
     status, _, body = response_from(run_app(app, make_scope("POST", "/api/admin/stats")))
     assert (status, body, calls) == (200, b"stats", ["auth", "admin", "audit"])  # outer group first
-    assert repr(admin).startswith("AppGroup(prefix='/api/admin', dependencies=[")
-
-
-def test_routes_on_the_router_itself_work_with_app_handler():
-    app = App()
-    app.router.group("/api").get("/users", "list_users")
-
-    @app.handler("list_users")
-    def list_users(request):
-        return Response.text("users")
-
-    assert response_from(run_app(app, make_scope("GET", "/api/users")))[::2] == (200, b"users")
-
-
-def test_router_middleware_names_are_refused_not_ignored(caplog):
-    # The App runs dependencies, not middleware: a route given a middleware
-    # name through app.router would otherwise lose what may be its guard.
-    app = App()
-    app.router.get("/admin", "admin", middleware=["auth"])
-
-    @app.handler("admin")
-    def admin(request):
-        return Response.text("secret")
-
-    status, _, body = response_from(run_app(app, make_scope("GET", "/admin")))
-    assert (status, body) == (500, b"Internal Server Error")
-    assert "use dependencies=" in caplog.text
+    assert repr(admin).startswith("Group(prefix='/api/admin', dependencies=[")
 
 
 def test_abort_sends_its_response_from_a_dependency_handler_or_hook():
@@ -777,8 +733,8 @@ def test_abort_in_a_websocket_dependency_refuses_the_connection():
         raise Abort(Response.redirect("/login"))
 
     @app.websocket("/ws", dependencies=[Depends(refuse)])
-    async def ws(socket):
-        await socket.accept()
+    async def ws(ws):
+        await ws.accept()
 
     assert run_ws(app, ws_scope("/ws")) == [{"type": "websocket.close", "code": 1000, "reason": ""}]
 
@@ -932,7 +888,7 @@ def test_dependencies_read_host_parameters():
         return Response.text(name)
 
     assert on(app, "acme.example.com") == (200, b"Acme Corp")
-    assert on(app, "nobody.example.com") == (404, b"no such tenant")
+    assert on(app, "nobody.example.com") == (404, b'{"detail": "no such tenant"}')
 
 
 def test_app_local_is_kept_per_event_loop():
@@ -1000,3 +956,48 @@ def test_app_local_from_startup_hooks_to_handlers():
 
     sent = asyncio.run(serve())
     assert response_from(sent)[2] == b"hello"
+
+
+def test_handlers_take_the_request_only_when_they_ask_for_it():
+    from korvex import Request, WebSocket
+    from korvex.testing import TestClient
+
+    app = App()
+
+    @app.get("/health")
+    def health():
+        return Response.text("ok")
+
+    @app.get("/users/{id:int}")
+    def user(id: int):
+        return Response.json({"id": id})
+
+    @app.get("/who")
+    def who(incoming: Request, page: int = 1):  # annotated: any name
+        return Response.json({"path": incoming.path, "page": page})
+
+    @app.websocket("/ws")
+    async def live(conn: WebSocket):
+        await conn.accept()
+        await conn.send_text("hi")
+
+    with TestClient(app) as client:
+        assert client.get("/health").text == "ok"
+        assert client.get("/users/7").json() == {"id": 7}
+        assert client.get("/who?page=2").json() == {"path": "/who", "page": 2}
+        with client.websocket("/ws") as ws:
+            assert ws.receive_text() == "hi"
+
+
+def test_a_request_parameter_named_otherwise_is_refused_with_a_hint():
+    app = App()
+
+    with pytest.raises(TypeError, match="for the request itself, name it `request` or annotate it Request"):
+
+        @app.get("/")
+        def home(req): ...
+
+    with pytest.raises(TypeError, match="annotate it WebSocket"):
+
+        @app.websocket("/ws")
+        async def live(socket): ...

@@ -7,7 +7,7 @@ the route is registered:
 - the name of a path parameter: the path, converted to the annotated type;
 - `str`, `int`, `float`, `bool`, `UUID`, `date`, `datetime`, or an
   `Optional` or `list` of those: the query string (dates in ISO 8601);
-- `Header()`, `Cookie()`, `Query()` or `Form()` (korvex.params): there;
+- `Header()`, `Cookie()`, `Query()` or `Form()` (korvex._params): there;
 - `Depends(func)`: what `func` returns, its own parameters read the same way.
 
 A model return annotation turns the returned object into a JSON response.
@@ -27,10 +27,10 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, NamedTuple, Union
 
-from korvex.errors import ValidationError
-from korvex.params import REQUIRED, Dependency, Source
-from korvex.requests import Request, UploadedFile, WebSocket
-from korvex.response import Response
+from korvex._errors import ValidationError
+from korvex._params import REQUIRED, Dependency, Source
+from korvex._requests import Connection, MultiDict, Request, UploadedFile, WebSocket
+from korvex._response import Response
 
 SCALARS = (str, int, float, bool, uuid.UUID, datetime.date, datetime.datetime)
 _TRUE = {"true", "1", "yes", "on"}
@@ -87,22 +87,22 @@ class Model:
         except pydantic.ValidationError as error:
             raise ValidationError([_error(["body", *e["loc"]], e["msg"], e["type"]) for e in error.errors()]) from None
 
-    def from_form(self, form: Mapping[str, list]) -> Any:
+    def from_form(self, form: MultiDict) -> Any:
         """The model, from a form's fields: each model field from the form
         field of the same name (its alias or rename); all the values for a
-        list, else the last one. An empty value counts as missing, except
+        list, else the first one. An empty value counts as missing, except
         for text, and a checkbox's `on` is true. Raises ValidationError,
         with `["form", ...]` locations."""
         data: dict[str, Any] = {}
         for key, tp in self._fields():
             inner, many, _ = _unwrap(tp)
-            values = list(form.get(key) or [])
+            values = form.get_all(key)
             if inner is not str:
                 values = [v for v in values if v != ""]
             if inner is bool:
                 values = [_lenient_bool(v) for v in values]
             if values:
-                data[key] = values if many else values[-1]
+                data[key] = values if many else values[0]
         if self.library == "msgspec":
             import msgspec
 
@@ -303,6 +303,8 @@ class Plan:
         self.form = [p for p in params if p.source == "form"]
         self.form_models = [(p, Model(p.type)) for p in params if p.source == "form_model"]
         self.request = [p.name for p in params if p.source == "request"]
+        self.request_name = self.request[0] if len(self.request) == 1 else None  # the usual case, called directly
+        self.binds = any(p.source != "request" for p in params)  # something to read from the request
         self.body = next((p for p in params if p.source == "body"), None)
         self.body_model = Model(self.body.type) if self.body else None
         self.response = response
@@ -372,10 +374,10 @@ class Plan:
                     errors.append(_invalid(param))
         if self.query:
             for param in self.query:
-                _take(param, request.query_params.get(param.key), kwargs, errors)
+                _take(param, request.query.get_all(param.key), kwargs, errors)
         if self.headers:
             for param in self.headers:
-                _take(param, request.headers.get_all(param.key), kwargs, errors, first=True)
+                _take(param, request.headers.get_all(param.key), kwargs, errors)
         if self.cookies:
             for param in self.cookies:
                 cookie = request.cookies.get(param.key)
@@ -383,7 +385,7 @@ class Plan:
         if self.form or self.form_models:
             form = await _read_form(request)
             for param, model in self.form_models:
-                if not param.required and not any(form.get(key) for key, _ in model._fields()):
+                if not param.required and not any(form.get_all(key) for key, _ in model._fields()):
                     kwargs[param.name] = param.default  # none of its fields sent
                     continue
                 try:
@@ -391,7 +393,7 @@ class Plan:
                 except ValidationError as error:
                     errors.extend(error.errors)
             for param in self.form:
-                values = form.get(param.key) or []
+                values = form.get_all(param.key)
                 if param.inner is not str and param.inner is not UploadedFile:
                     values = [v for v in values if v != ""]  # an empty field: not given
                 _take(param, values, kwargs, errors)
@@ -490,7 +492,7 @@ class Run:
             raise raised
 
 
-def _take(param: Param, values: list | None, kwargs: dict, errors: list, first: bool = False) -> None:
+def _take(param: Param, values: list | None, kwargs: dict, errors: list) -> None:
     """Converts a parameter's raw values, or uses its default."""
     if not values:
         if param.required:
@@ -502,7 +504,7 @@ def _take(param: Param, values: list | None, kwargs: dict, errors: list, first: 
         if param.many:
             kwargs[param.name] = [_convert_field(v, param.inner) for v in values]
         else:
-            kwargs[param.name] = _convert_field(values[0] if first else values[-1], param.inner)
+            kwargs[param.name] = _convert_field(values[0], param.inner)  # the first, wherever it's from
     except (ValueError, TypeError):
         errors.append(_invalid(param))
 
@@ -523,11 +525,11 @@ def _invalid(param: Param) -> dict:
     return _error([param.source, param.key], f"Input should be a valid {name}", "type_error")
 
 
-async def _read_form(request: Any) -> dict:
+async def _read_form(request: Any) -> MultiDict:
     """The request's form; an empty body without a content type is an empty
     form, so optional fields can all be left out."""
     if not request.headers.get("content-type") and not (await request.body()).strip():
-        return {}
+        return MultiDict()
     return await request.form()
 
 
@@ -565,6 +567,11 @@ def _hints(func: Callable) -> dict[str, Any]:
     return typing.get_type_hints(target, include_extras=True)
 
 
+# Unannotated, a parameter by one of these names is the request (or the WebSocket).
+_REQUEST_NAMES = ("request",)
+_WEBSOCKET_NAMES = ("request", "websocket", "ws")
+
+
 def plan_for(
     func: Callable,
     pattern: str,
@@ -575,10 +582,10 @@ def plan_for(
     cache: dict | None = None,
     _chain: tuple = (),
 ) -> Plan:
-    """Reads `func`'s annotations for the route `pattern`. A handler's first
-    parameter is the request (or WebSocket); a dependency's parameters all
-    come from somewhere. `dependencies` are the route's own. Raises
-    TypeError for a parameter whose origin can't be told."""
+    """Reads `func`'s annotations for the route `pattern`: where each
+    parameter comes from. The request (or WebSocket) is a parameter like
+    the others, annotated or named so. `dependencies` are the route's own.
+    Raises TypeError for a parameter whose origin can't be told."""
     where = getattr(func, "__qualname__", repr(func))
     if func in _chain:
         cycle = " -> ".join(getattr(f, "__qualname__", repr(f)) for f in (*_chain, func))
@@ -612,9 +619,9 @@ def plan_for(
             raise TypeError(f"{where}: dependencies takes Depends(...) items, not {marker!r}")
         deps.append(Dep(None, marker.func, marker.cache, plan_dependency(marker)))
 
-    for index, (name, parameter) in enumerate(inspect.signature(func).parameters.items()):
-        if (handler and index == 0) or parameter.kind in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD):
-            continue  # the request, and catch-alls
+    for name, parameter in inspect.signature(func).parameters.items():
+        if parameter.kind in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD):
+            continue  # catch-alls
         tp, marker = _split(hints.get(name))
         if isinstance(parameter.default, (Source, Dependency)):
             if marker is not None:
@@ -650,11 +657,16 @@ def plan_for(
                 raise TypeError(f"{where}: parameter {name!r}: a WebSocket has no form")
             key = marker.alias or (name.replace("_", "-") if marker.kind == "header" else name)
             params.append(_param(name, marker.kind, tp, required, default, key))
-        elif inspect.isclass(inner) and issubclass(inner, Request):
+        elif inspect.isclass(inner) and issubclass(inner, Connection):
             if issubclass(inner, WebSocket) and not websocket:
                 raise TypeError(f"{where}: parameter {name!r} asks for a WebSocket in an HTTP route")
+            if issubclass(inner, Request) and websocket:
+                raise TypeError(
+                    f"{where}: parameter {name!r} asks for a Request in a WebSocket route; "
+                    "annotate it Connection to serve both, or WebSocket"
+                )
             params.append(_param(name, "request", tp, True, key=name))
-        elif tp is None and name == "request" and not handler and not has_default:
+        elif tp is None and not has_default and name in (_WEBSOCKET_NAMES if websocket else _REQUEST_NAMES):
             params.append(_param(name, "request", None, True, key=name))
         elif name in route_params:
             if tp is not None and inner not in SCALARS:
@@ -676,7 +688,8 @@ def plan_for(
             raise TypeError(
                 f"{where}: can't tell where parameter {name!r} comes from: it isn't in the path {pattern!r}, "
                 f"its annotation isn't a model or a {_names(SCALARS)}, and it isn't given with Depends(), "
-                "Header(), Cookie(), Query() or Form()"
+                "Header(), Cookie(), Query() or Form(); for the request itself, name it `request` or annotate it "
+                f"{'WebSocket' if websocket else 'Request'}"
             )
 
     if sum(p.source == "body" for p in params) > 1:
@@ -718,7 +731,7 @@ def _names(types_: Sequence[Any]) -> str:
 
 
 def needs_plan(plan: Plan) -> bool:
-    """Whether calling the handler needs the plan at all: a handler with no
-    parameters to read, no dependencies and no return model is called as
-    before."""
-    return bool(plan.params or plan.response or plan.dependencies or plan.empty)
+    """Whether calling the handler needs the plan at all: a handler with
+    nothing to read from the request (it may take the request itself), no
+    dependencies and no return model gets the path parameters as they are."""
+    return bool(plan.binds or plan.response or plan.dependencies or plan.empty)

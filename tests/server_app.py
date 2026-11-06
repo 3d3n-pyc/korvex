@@ -67,7 +67,13 @@ async def stream(request):
 @app.post("/echo")
 async def echo(request):
     body = (await request.body()).decode()
-    return Response.json({"body": body, "query": request.query_params, "cookies": request.cookies})
+    return Response.json(
+        {
+            "body": body,
+            "query": {name: request.query.get_all(name) for name in request.query},
+            "cookies": request.cookies,
+        }
+    )
 
 
 @app.get("/slow")
@@ -123,7 +129,7 @@ def client(request):
 
 @app.websocket("/ws/{room}")
 async def ws_echo(ws, room):
-    if ws.query_params.get("token") != ["secret"]:
+    if ws.query.get("token") != "secret":
         await ws.close(code=1008)  # refuses it: a 403
         return
     await ws.accept(subprotocol="chat" if "chat" in ws.subprotocols else None)
@@ -178,17 +184,17 @@ def teapot(request):
 
 
 if __name__ == "__main__":
-    import korvex.serve
+    import korvex._serve
 
     if os.environ.get("STARTUP_WINDOW"):  # lets tests wait less than 5 s
-        korvex.serve.STARTUP_WINDOW = float(os.environ["STARTUP_WINDOW"])
+        korvex._serve.STARTUP_WINDOW = float(os.environ["STARTUP_WINDOW"])
     app.run(
         port=int(sys.argv[1]),
         workers=int(os.environ.get("WORKERS", "1")),
         threads=int(os.environ.get("THREADS", "1")),
         graceful_timeout=float(os.environ.get("GRACE", "30")),
         max_body=int(os.environ.get("MAX_BODY", str(1024 * 1024))),
-        timeout=float(os.environ.get("TIMEOUT", "30")),
+        read_timeout=float(os.environ.get("TIMEOUT", "30")),
         uds=os.environ.get("UDS"),
         forwarded_allow_ips=os.environ.get("FORWARDED_ALLOW", "127.0.0.1,::1").split(","),
         access_log=bool(os.environ.get("ACCESS_LOG")),

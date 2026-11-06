@@ -12,7 +12,7 @@ through ASGI (no server), like bench_validation.py:
   the event loop, like sync handlers. The async variant is FastAPI's
   fastest way to write them.
 
-Run: uv run pytest benches/bench_dependencies.py --benchmark-only
+Run: uv run --group bench pytest benches/bench_dependencies.py --benchmark-only
 """
 
 import asyncio

@@ -17,8 +17,8 @@ routes one by one, but sorts them itself (deepest first), so the tested
 route always comes last.
 
 Needs oha: `cargo install oha`.
-Run everything (about 11 minutes): uv run python benches/load_test.py
-Run some only:                     uv run python benches/load_test.py korvex "django, route first"
+Run everything (about 11 minutes): uv run --group bench python benches/load_test.py
+Run some only:                     uv run --group bench python benches/load_test.py korvex "django, route first"
 Results are merged into benches/load_results.json.
 """
 

@@ -6,15 +6,18 @@ import asyncio
 import json
 import mimetypes
 import os
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping
 from http.cookies import SimpleCookie
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal, Optional, Union, cast
 from urllib.parse import quote
 
 # `Union` rather than `|`: this line runs at import time, and `|` between
 # types needs Python 3.10+.
 JSONValue = Union[None, bool, int, float, str, "list[JSONValue]", "dict[str, JSONValue]"]
 Chunks = Union[Iterable[Union[bytes, str]], AsyncIterable[Union[bytes, str]]]
+HeaderItems = Union[Mapping[str, str], Iterable[tuple[str, str]]]
+"""Headers, as a dict (`{"X-Total": "3"}`) or as pairs, which can repeat a
+name (`[("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")]`)."""
 
 FILE_CHUNK_SIZE = 64 * 1024
 
@@ -25,8 +28,8 @@ class Headers:
 
     __slots__ = ("_items",)
 
-    def __init__(self, items: Iterable[tuple[str, str]] = ()) -> None:
-        self._items = list(items)
+    def __init__(self, items: HeaderItems = ()) -> None:
+        self._items = header_pairs(items)
 
     def get(self, name: str, default: str | None = None) -> str | None:
         """The first value for `name`, or `default`."""
@@ -84,25 +87,25 @@ class Response:
 
     __slots__ = ("status", "headers", "body")
 
-    def __init__(self, body: str | bytes = b"", *, status: int = 200, headers: Iterable[tuple[str, str]] = ()) -> None:
+    def __init__(self, body: str | bytes = b"", *, status: int = 200, headers: HeaderItems = ()) -> None:
         self.status = status
         self.headers = Headers(headers)
         self.body = body.encode() if isinstance(body, str) else body
 
     @classmethod
-    def text(cls, text: str, *, status: int = 200, headers: Iterable[tuple[str, str]] = ()) -> Response:
+    def text(cls, text: str, *, status: int = 200, headers: HeaderItems = ()) -> Response:
         """A `text/plain` response (unless `headers` sets Content-Type)."""
         return cls._with_type(text, "text/plain; charset=utf-8", status, headers)
 
     @classmethod
-    def json(cls, data: Any, *, status: int = 200, headers: Iterable[tuple[str, str]] = ()) -> Response:
+    def json(cls, data: Any, *, status: int = 200, headers: HeaderItems = ()) -> Response:
         """An `application/json` response (unless `headers` sets Content-Type).
         `data` is anything `json.dumps` takes. (Typed `Any`, not `JSONValue`:
         type checkers reject a `dict[str, list[dict]]` as a `JSONValue`.)"""
         return cls._with_type(json.dumps(data), "application/json", status, headers)
 
     @classmethod
-    def redirect(cls, location: str, *, status: int = 302, headers: Iterable[tuple[str, str]] = ()) -> Response:
+    def redirect(cls, location: str, *, status: int = 302, headers: HeaderItems = ()) -> Response:
         """An empty redirect to `location`."""
         response = cls(status=status, headers=headers)
         response.headers.set("Location", location)
@@ -144,7 +147,7 @@ class Response:
         self.set_cookie(name, "", max_age=0, path=path, domain=domain)
 
     @classmethod
-    def stream(cls, chunks: Chunks, *, status: int = 200, headers: Iterable[tuple[str, str]] = ()) -> StreamingResponse:
+    def stream(cls, chunks: Chunks, *, status: int = 200, headers: HeaderItems = ()) -> StreamingResponse:
         """A response sent piece by piece, from an iterable or a generator
         (sync or async) of `bytes` or `str`."""
         return StreamingResponse(chunks, status=status, headers=headers)
@@ -157,7 +160,7 @@ class Response:
         filename: Optional[str] = None,
         content_type: Optional[str] = None,
         status: int = 200,
-        headers: Iterable[tuple[str, str]] = (),
+        headers: HeaderItems = (),
     ) -> StreamingResponse:
         """Sends a file, read in chunks without blocking. The content type
         is guessed from the name. With `filename`, the browser downloads it
@@ -173,7 +176,7 @@ class Response:
         return response
 
     @classmethod
-    def _with_type(cls, body: str, content_type: str, status: int, headers: Iterable[tuple[str, str]]) -> Response:
+    def _with_type(cls, body: str, content_type: str, status: int, headers: HeaderItems) -> Response:
         response = cls(body, status=status, headers=headers)
         if "Content-Type" not in response.headers:
             response.headers.set("Content-Type", content_type)
@@ -196,7 +199,7 @@ class StreamingResponse(Response):
 
     __slots__ = ("chunks", "_on_close")
 
-    def __init__(self, chunks: Chunks, *, status: int = 200, headers: Iterable[tuple[str, str]] = ()) -> None:
+    def __init__(self, chunks: Chunks, *, status: int = 200, headers: HeaderItems = ()) -> None:
         super().__init__(status=status, headers=headers)
         self.chunks = chunks
         self._on_close: list[Callable[[], Awaitable[None]]] = []  # run once sent, or not sent after all
@@ -229,3 +232,15 @@ def _attachment(filename: str) -> str:
         safe = "".join(c for c in filename if c.isprintable() and c not in '"\\')
         return f'attachment; filename="{safe}"'
     return f"attachment; filename*=UTF-8''{quote(filename)}"
+
+
+def header_pairs(headers: HeaderItems) -> list[tuple[str, str]]:
+    """`(name, value)` pairs from a dict or from pairs."""
+    if isinstance(headers, Mapping):
+        return list(cast("Mapping[str, str]", headers).items())
+    pairs: list[tuple[str, str]] = []
+    for pair in headers:
+        if not (isinstance(pair, tuple) and len(pair) == 2):
+            raise TypeError(f"headers takes a dict or (name, value) pairs, not {pair!r} in a list")
+        pairs.append(pair)
+    return pairs

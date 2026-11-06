@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-from korvex import App, Request, Response
+from korvex import App, Response
 from taskboard.db import Database
 
 STATIC = Path(__file__).parent.parent / "static"
@@ -11,12 +11,12 @@ STATIC = Path(__file__).parent.parent / "static"
 
 def register(app: App, db: Database) -> None:
     @app.get("/", include_in_schema=False)
-    def board(request: Request) -> Response:
+    def board() -> Response:
         """The board's page"""
         return Response.file(STATIC / "index.html")
 
     @app.get("/health")
-    async def health(request: Request) -> Response:
+    async def health() -> Response:
         """Health check
 
         200 when the database answers, 503 otherwise: a load balancer stops

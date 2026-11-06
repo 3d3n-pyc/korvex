@@ -6,7 +6,7 @@ to you; here, a plain dict does it.
 Run: python examples/basic_router.py
 """
 
-from korvex import MethodNotAllowed, Router
+from korvex.router import MethodNotAllowed, Router
 
 router = Router()
 router.get("/health", "health")

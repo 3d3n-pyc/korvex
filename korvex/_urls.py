@@ -11,13 +11,13 @@ from urllib.parse import quote
 
 from korvex._core import MethodNotAllowed
 from korvex._core import Router as _CoreRouter
-from korvex.schema import _TYPE_NAMES, _convert
+from korvex._schema import _TYPE_NAMES, _convert
 
 if TYPE_CHECKING:
-    from korvex.app import App
-    from korvex.requests import Request
+    from korvex._app import App
+    from korvex._requests import Connection
+    from korvex._routing import _Host
     from korvex.router import Router
-    from korvex.routing import _Host
 
 _PARAM = re.compile(r"\{(\w+)(?::(\w+))?\}")
 _WILDCARD = re.compile(r"\*(\w+)")
@@ -53,18 +53,15 @@ def build_index(app: App) -> Index:
     explicit: dict[str, list[Target]] = {}
     default: dict[str, list[Target]] = {}
     by_key: dict[tuple[bool, int, str], Target] = {}
-    sources: list[tuple[Router, bool, _Host | None]] = [(app.router, False, None), (app._ws_router, True, None)]
+    sources: list[tuple[Router, bool, _Host | None]] = [(app._router, False, None), (app._ws_router, True, None)]
     for host in app._hosts:
         sources += [(host.router, False, host), (host.ws_router, True, host)]
     for router, websocket, host in sources:
         for pattern, method, key, _ in router.routes():
             route = (app._ws_routes if websocket else app._routes).get(key)
-            if route is not None and route.name is not None:
-                name, is_explicit = route.name, route.explicit
-            elif route is None and not websocket and not key.startswith("korvex."):
-                name, is_explicit = key, False  # a route added to app.router directly: its handler name
-            else:
+            if route is None or route.name is None:
                 continue  # the docs, and what has no name
+            name, is_explicit = route.name, route.explicit
             target = Target(name, key, websocket, method, pattern, host, router)
             by_key[(websocket, id(router), key)] = target
             (explicit if is_explicit else default).setdefault(name, []).append(target)
@@ -129,7 +126,7 @@ def path_for(app: App, target: Target, params: dict[str, Any], *, host_given: bo
     return "/" + "/".join(encoded)
 
 
-def url_for(request: Request, target: Target, params: dict[str, Any]) -> str:
+def url_for(request: Connection, target: Target, params: dict[str, Any]) -> str:
     """The full URL of `target`: the request's scheme (`ws`/`wss` for a
     WebSocket route), the route's host (or the request's), the path."""
     app = request.app

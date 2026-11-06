@@ -13,7 +13,7 @@ Needs oha (`cargo install oha`), and for the free-threaded runs a Python
 
     uv python install 3.14t
     uv venv --python 3.14t /tmp/ft && uv pip install --python /tmp/ft/bin/python .
-    KORVEX_FT_PYTHON=/tmp/ft/bin/python uv run python benches/threads.py
+    KORVEX_FT_PYTHON=/tmp/ft/bin/python uv run --group bench python benches/threads.py
 
 Results go to benches/threads_results.json.
 """

@@ -2,7 +2,7 @@
 
 import uuid
 
-from korvex import App, Depends, Request
+from korvex import App, Depends
 from taskboard.domain import TaskList
 from taskboard.services.lists import ListService
 from taskboard.services.tasks import TaskService
@@ -18,7 +18,7 @@ def register(app: App, lists: ListService, tasks: TaskService, current_user: Cur
     )
 
     @api.get("/lists")
-    async def list_lists(request: Request) -> list[TaskList]:
+    async def list_lists() -> list[TaskList]:
         """All lists
 
         In order, each with how many tasks are still open.
@@ -26,17 +26,17 @@ def register(app: App, lists: ListService, tasks: TaskService, current_user: Cur
         return await lists.find()
 
     @api.post("/lists", status=201)
-    async def create_list(request: Request, body: NewList) -> TaskList:
+    async def create_list(body: NewList) -> TaskList:
         """Create a list"""
         return await lists.create(body.name, color=body.color)
 
     @api.patch("/lists/{id:uuid}", responses=NOT_FOUND)
-    async def update_list(request: Request, id: uuid.UUID, body: ListChanges) -> TaskList:
+    async def update_list(id: uuid.UUID, body: ListChanges) -> TaskList:
         """Rename or recolor a list"""
         return await lists.update(id, name=body.name or None, color=body.color or None)
 
     @api.delete("/lists/{id:uuid}", status=204, responses=NOT_FOUND)
-    async def delete_list(request: Request, id: uuid.UUID) -> None:
+    async def delete_list(id: uuid.UUID) -> None:
         """Delete a list
 
         Its tasks go with it. The last list can't be deleted.
@@ -44,7 +44,7 @@ def register(app: App, lists: ListService, tasks: TaskService, current_user: Cur
         await lists.delete(id)
 
     @api.put("/lists/{id:uuid}/order", status=204, responses=NOT_FOUND)
-    async def reorder_tasks(request: Request, id: uuid.UUID, body: TaskOrder) -> None:
+    async def reorder_tasks(id: uuid.UUID, body: TaskOrder) -> None:
         """Reorder a list's tasks
 
         After a drag and drop: the task IDs in their new order.
@@ -52,6 +52,6 @@ def register(app: App, lists: ListService, tasks: TaskService, current_user: Cur
         await tasks.reorder(id, body.task_ids)
 
     @api.post("/lists/{id:uuid}/clear-done", responses=NOT_FOUND)
-    async def clear_done(request: Request, id: uuid.UUID) -> Cleared:
+    async def clear_done(id: uuid.UUID) -> Cleared:
         """Delete a list's finished tasks"""
         return Cleared(await tasks.clear_done(id))

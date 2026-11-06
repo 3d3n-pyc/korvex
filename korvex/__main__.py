@@ -1,5 +1,5 @@
 """`python -m korvex` works like the `korvex` command."""
 
-from korvex.cli import main
+from korvex._cli import main
 
 main()

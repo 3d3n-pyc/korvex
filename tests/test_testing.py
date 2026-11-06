@@ -31,7 +31,7 @@ def make_app():
     async def echo(request):
         return Response.json(
             {
-                "query": request.query_params,
+                "query": {name: request.query.get_all(name) for name in request.query},
                 "headers": {k: v for k, v in request.headers if k in ("x-one", "x-two", "host", "user-agent")},
                 "cookies": request.cookies,
                 "scheme": request.scheme,
@@ -195,7 +195,7 @@ def test_server_errors_are_raised_in_the_test():
         assert client.get("/teapot").status == 418  # an HTTP error is an answer, not a bug
     with TestClient(make_app(), raise_server_errors=False) as client:
         response = client.get("/boom")
-    assert (response.status, response.text) == (500, "Internal Server Error")
+    assert (response.status, response.json()) == (500, {"detail": "Internal Server Error"})
 
 
 def test_teardown_errors_are_raised_too():
@@ -296,7 +296,7 @@ def ws_app():
                 await ws.close(4000)
                 return
             else:
-                await ws.send_text(f"{room}: {message} {ws.query_params.get('n', [''])[0]}".strip())
+                await ws.send_text(f"{room}: {message} {ws.query.get('n', '')}".strip())
 
     def token(x_token: str = Header("")):
         if x_token != "ok":

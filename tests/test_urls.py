@@ -215,8 +215,6 @@ def test_routes_added_later_are_found():
     def late(request): ...
 
     assert app.url_for("late") == "/late"
-    app.router.get("/raw/{id}", "raw_handler")  # a route added to the router directly
-    assert app.url_for("raw_handler", id="1") == "/raw/1"
 
 
 def test_request_url_for_is_absolute():

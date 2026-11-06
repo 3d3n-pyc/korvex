@@ -12,13 +12,13 @@ import uuid
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
-from korvex.requests import UploadedFile
-from korvex.routing import _has_body
-from korvex.schema import Model, Plan, _unwrap, path_params, scalar_schema
+from korvex._requests import UploadedFile
+from korvex._routing import _has_body
+from korvex._schema import Model, Plan, _unwrap, path_params, scalar_schema
 from korvex.security import SecurityScheme
 
 if TYPE_CHECKING:
-    from korvex.app import App
+    from korvex._app import App
 
 _PARAM = re.compile(r"\{(\w+)(?::\w+)?\}|\*(\w+)")
 
@@ -53,7 +53,7 @@ def build(
     components: dict[str, Any] = {}
     paths: dict[str, dict[str, Any]] = {}
     used_ids: set[str] = set()
-    custom = dict(app.router.constraints())  # name -> regex
+    custom = dict(app._router.constraints())  # name -> regex
     schemes = _Schemes()
     for pattern, method, name, _ in app._routes_for(host):
         route = app._routes.get(name)

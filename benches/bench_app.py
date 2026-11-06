@@ -5,7 +5,7 @@ socket or server involved, so this isolates in-process framework
 overhead the same way bench_router.py isolates routing alone.
 
 Run with:
-    uv run pytest benches/bench_app.py --benchmark-only -v
+    uv run --group bench pytest benches/bench_app.py --benchmark-only -v
 """
 
 import asyncio

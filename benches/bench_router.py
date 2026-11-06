@@ -10,9 +10,9 @@ be timed on cache hits. Their plain names below bypass the cache to time
 the actual matching; the `(cached)` variants keep it.
 
 Run:
-    uv run pytest benches/bench_router.py --benchmark-only
-    uv run pytest benches/bench_router.py --benchmark-only --benchmark-json=benches/results.json
-    uv run python benches/plot.py   # draws docs/benchmark-{light,dark}.svg
+    uv run --group bench pytest benches/bench_router.py --benchmark-only
+    uv run --group bench pytest benches/bench_router.py --benchmark-only --benchmark-json=benches/results.json
+    uv run --group bench python benches/plot.py   # draws docs/benchmark-{light,dark}.svg
 
 To add a router: write `build(routes) -> router` and
 `lookup(router, path) -> handler name`, then add them to ROUTERS.
@@ -39,8 +39,8 @@ from sanic import Sanic  # noqa: E402
 from starlette.routing import Match  # noqa: E402
 from starlette.routing import Route as StarletteRoute  # noqa: E402
 
-from korvex import Router  # noqa: E402
 from korvex._core import Router as UncachedRouter  # noqa: E402
+from korvex.router import Router  # noqa: E402
 
 ROUTE_COUNTS = [100, 1_000, 10_000]
 LOOKUPS = 200

@@ -141,3 +141,31 @@ def test_download_names_keep_the_header_well_formed(tmp_path):
     assert disposition("report.txt") == 'attachment; filename="report.txt"'
     assert disposition('a"b\\c\r\nX-Evil: 1\t.txt') == 'attachment; filename="abcX-Evil: 1.txt"'
     assert disposition("été\r\n.txt") == "attachment; filename*=UTF-8''%C3%A9t%C3%A9%0D%0A.txt"
+
+
+def test_headers_take_a_dict_or_pairs():
+    from korvex import HTTPException
+
+    assert list(Response.json({}, headers={"X-Total": "3"}).headers) == [
+        ("X-Total", "3"),
+        ("Content-Type", "application/json"),
+    ]
+    pairs = Response(headers=[("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")]).headers
+    assert pairs.get_all("set-cookie") == ["a=1", "b=2"]  # pairs can repeat a name
+    assert HTTPException(401, headers={"WWW-Authenticate": "Bearer"}).headers == [("WWW-Authenticate", "Bearer")]
+    with pytest.raises(TypeError, match="a dict or \\(name, value\\) pairs"):
+        Response(headers=["X-Total: 3"])
+
+
+def test_websocket_accept_takes_a_dict_of_headers():
+    from korvex import App, WebSocket
+    from korvex.testing import TestClient
+
+    app = App()
+
+    @app.websocket("/ws")
+    async def ws(ws: WebSocket):
+        await ws.accept(headers={"X-Room": "lobby"})
+
+    with TestClient(app) as client, client.websocket("/ws") as connection:
+        assert connection.headers["x-room"] == "lobby"

@@ -8,7 +8,7 @@ called in-process through ASGI (no server), like bench_app.py:
 - korvex with a pydantic model in and out;
 - FastAPI with the same pydantic models, for reference.
 
-Run: uv run pytest benches/bench_validation.py --benchmark-only
+Run: uv run --group bench pytest benches/bench_validation.py --benchmark-only
 """
 
 import asyncio

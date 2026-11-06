@@ -6,15 +6,13 @@ on an App:
     cors(app, allow_origins=["https://example.com"])
 """
 
-from korvex.middleware._compression import COMPRESSIBLE, compress
-from korvex.middleware._cors import ALL_METHODS, cors
+from korvex.middleware._compression import compress
+from korvex.middleware._cors import cors
 from korvex.middleware._rate_limit import Decision, MemoryStore, RateLimitStore, RedisStore, rate_limit
 from korvex.middleware._request_id import RequestIdFilter, current_request_id, request_id
 from korvex.middleware._security_headers import security_headers
 
 __all__ = [
-    "ALL_METHODS",
-    "COMPRESSIBLE",
     "Decision",
     "MemoryStore",
     "RateLimitStore",

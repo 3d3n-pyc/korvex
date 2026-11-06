@@ -11,13 +11,13 @@ AWAIT = os.environ.get("AWAIT") == "1"
 
 app = App()
 
-for i in range(1_000):
-    app.router.get(f"/r{i % 10}/{{id:int}}/detail_{i}", "filler")
 
-
-@app.handler("filler")
 async def filler(request, id):
     return Response.text("filler")
+
+
+for i in range(1_000):
+    app.get(f"/r{i % 10}/{{id:int}}/detail_{i}")(filler)
 
 
 @app.get("/users/{id:int}")

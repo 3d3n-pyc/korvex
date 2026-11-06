@@ -13,11 +13,11 @@ from collections.abc import Awaitable, Callable, Hashable
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Protocol
 
-from korvex.response import Response
+from korvex._response import Response
 
 if TYPE_CHECKING:
-    from korvex.app import App
-    from korvex.requests import Request
+    from korvex._app import App
+    from korvex._requests import Connection, Request
 
 
 logger = logging.getLogger("korvex")
@@ -171,7 +171,7 @@ class RedisStore:
         return Decision(bool(int(allowed)), int(remaining), float(retry_after), float(reset))
 
 
-def _client_address(request: Request) -> Optional[Hashable]:
+def _client_address(request: Connection) -> Optional[Hashable]:
     # An unknown address shares one limit rather than escaping it: behind a
     # proxy that doesn't send X-Forwarded-For, every address is unknown.
     return request.client[0] if request.client else "unknown"
@@ -185,7 +185,7 @@ def rate_limit(
     *,
     requests: int,
     per: float,
-    key: Callable[[Request], Optional[Hashable]] = _client_address,
+    key: Callable[[Connection], Optional[Hashable]] = _client_address,
     store: RateLimitStore | None = None,
     headers: bool = True,
 ) -> None:
@@ -219,7 +219,7 @@ def rate_limit(
     if inspect.iscoroutinefunction(state.hit):  # a store over the network: don't block the loop
 
         @app.before_request
-        async def check_async(request: Request) -> Response | None:
+        async def check_async(request: Connection) -> Response | None:
             who = key(request)
             if who is None:
                 _decision.set(None)
@@ -229,7 +229,7 @@ def rate_limit(
     else:
 
         @app.before_request
-        def check(request: Request) -> Response | None:
+        def check(request: Connection) -> Response | None:
             who = key(request)
             if who is None:
                 _decision.set(None)

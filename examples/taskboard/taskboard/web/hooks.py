@@ -5,7 +5,7 @@ import time
 from contextvars import ContextVar
 from typing import Optional
 
-from korvex import App, Request, Response
+from korvex import App, Connection, Request, Response
 from korvex.middleware import cors, rate_limit, request_id
 from taskboard.config import Settings
 
@@ -14,7 +14,7 @@ _started: ContextVar[float] = ContextVar("started")
 
 def install(app: App, settings: Settings) -> None:
     @app.before_request
-    def start_timer(request: Request) -> None:
+    def start_timer(connection: Connection) -> None:  # WebSocket handshakes too
         _started.set(time.perf_counter())
 
     @app.after_request
@@ -29,9 +29,9 @@ def install(app: App, settings: Settings) -> None:
     rate_limit(app, requests=settings.rate_limit, per=60, key=_limited_key)
 
 
-def _limited_key(request: Request) -> Optional[str]:
+def _limited_key(connection: Connection) -> Optional[str]:
     """Rate limits apply per client address, except to health checks and
     static files."""
-    if request.path == "/health" or request.path.startswith("/static/"):
+    if connection.path == "/health" or connection.path.startswith("/static/"):
         return None
-    return request.client[0] if request.client else "unknown"
+    return connection.client[0] if connection.client else "unknown"

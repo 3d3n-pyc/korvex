@@ -8,11 +8,11 @@ import uuid
 from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
-from korvex.response import Response
+from korvex._response import Response
 
 if TYPE_CHECKING:
-    from korvex.app import App
-    from korvex.requests import Request
+    from korvex._app import App
+    from korvex._requests import Connection, Request
 
 
 _request_id: ContextVar[str | None] = ContextVar("korvex_request_id", default=None)
@@ -29,7 +29,7 @@ def request_id(app: App, *, header: str = "X-Request-ID", trust_incoming: bool =
     log records. The built-in server's access logs show it too."""
 
     @app.before_request
-    def assign(request: Request) -> None:
+    def assign(request: Connection) -> None:
         incoming = request.headers.get(header) if trust_incoming else None
         _request_id.set(incoming if incoming and _SAFE_ID.fullmatch(incoming) else uuid.uuid4().hex)
 

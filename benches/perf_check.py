@@ -37,7 +37,8 @@ from pathlib import Path
 
 def _cases() -> dict:
     import korvex
-    from korvex import App, Response, Router
+    from korvex import App, Response
+    from korvex.router import Router
 
     loop = asyncio.new_event_loop()
     cases = {}

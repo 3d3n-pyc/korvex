@@ -33,14 +33,14 @@ create_exception!(
 );
 
 /// `(handler, params, middleware)`, e.g. `("get_user", {"id": 42}, ("auth",))`.
-/// Fully immutable (params is a read-only mapping), so `korvex.Router` can
+/// Fully immutable (params is a read-only mapping), so `korvex.router.Router` can
 /// cache and share it between calls.
 type Match<'py> = (String, Bound<'py, PyMappingProxy>, Bound<'py, PyTuple>);
 
 /// `(path, method, handler, middleware)`, as listed by `routes()`.
 type RouteInfo<'py> = (String, &'static str, String, Bound<'py, PyTuple>);
 
-/// The compiled router. `korvex.Router` subclasses it to add the
+/// The compiled router. `korvex.router.Router` subclasses it to add the
 /// `get`/`post`/... shortcuts and `group()`.
 #[pyclass(subclass, module = "korvex._core")]
 struct Router {

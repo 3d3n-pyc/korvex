@@ -148,9 +148,9 @@ def test_ready_made_hooks_apply_to_websockets():
     rate_limit(app, requests=2, per=60)
 
     @app.websocket("/ws")
-    async def ws(socket):
-        await socket.accept()
-        await socket.send_text(current_request_id() or "none")
+    async def ws(ws):
+        await ws.accept()
+        await ws.send_text(current_request_id() or "none")
 
     first = run_ws(app, ws_scope("/ws", headers=[("X-Request-ID", "abc-123")]))
     assert first[1] == {"type": "websocket.send", "text": "abc-123"}
@@ -158,3 +158,68 @@ def test_ready_made_hooks_apply_to_websockets():
     assert run_ws(app, ws_scope("/ws")) == [
         {"type": "websocket.close", "code": 1000, "reason": ""}
     ]  # the third: limited
+
+
+def test_a_websocket_is_a_connection_not_a_request():
+    from korvex import Connection, Request
+
+    seen = []
+    app = App()
+
+    @app.before_request
+    def hook(connection: Connection):
+        seen.append((type(connection).__name__, connection.path, connection.method))
+
+    @app.websocket("/ws")
+    async def ws(ws: WebSocket):
+        assert isinstance(ws, Connection) and not isinstance(ws, Request)
+        assert not hasattr(ws, "body") and not hasattr(ws, "form")
+        await ws.accept()
+        await ws.send_text("hi")
+
+    @app.get("/http")
+    def http(request: Request):
+        return Response.text("ok")
+
+    from korvex.testing import TestClient
+
+    with TestClient(app) as client:
+        with client.websocket("/ws") as connection:
+            assert connection.receive_text() == "hi"
+        assert client.get("/http").text == "ok"
+    assert seen == [("WebSocket", "/ws", "GET"), ("Request", "/http", "GET")]
+
+
+def test_dependencies_ask_for_a_connection_to_serve_both():
+    import pytest
+
+    from korvex import Connection, Depends, Request
+
+    def origin(connection: Connection) -> str:
+        return connection.headers.get("origin") or "none"
+
+    def body_size(request: Request) -> int:
+        return 0
+
+    app = App()
+
+    @app.websocket("/ws")
+    async def ws(ws: WebSocket, where: str = Depends(origin)):
+        await ws.accept()
+        await ws.send_text(where)
+
+    @app.get("/http")
+    def http(request, where: str = Depends(origin)):
+        return Response.text(where)
+
+    with pytest.raises(TypeError, match="asks for a Request in a WebSocket route; annotate it Connection"):
+
+        @app.websocket("/bad")
+        async def bad(ws: WebSocket, size: int = Depends(body_size)): ...
+
+    from korvex.testing import TestClient
+
+    with TestClient(app) as client:
+        with client.websocket("/ws", headers={"Origin": "https://a.example"}) as connection:
+            assert connection.receive_text() == "https://a.example"
+        assert client.get("/http", headers={"Origin": "https://b.example"}).text == "https://b.example"

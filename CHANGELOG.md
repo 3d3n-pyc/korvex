@@ -1,14 +1,95 @@
 # Changelog
 
-## Unreleased
+## 0.14.0
 
-Inside, nothing a user sees changes: every import works as before.
+The public API reviewed before 1.0: simpler to learn, with one way to do
+each thing. Breaking changes are listed with how to update.
 
-- The code is reorganized: `korvex.requests` (Request, WebSocket,
-  UploadedFile), `korvex.routing` (the decorators, AppGroup, hosts) and
-  `korvex.app` (the App) instead of one 1,750-line module;
-  `korvex.middleware` is a package with a module per hook; the App keeps
-  one record per route. Requests are 1 to 2% faster.
+### Breaking changes
+
+- **A handler takes the request only when it needs it.** It was always
+  its first parameter, even unused (`def health(request)`). It's now a
+  parameter like the others: named `request`, or annotated `Request`
+  (`ws` or `websocket`, or annotated `WebSocket`, for a WebSocket
+  handler), anywhere in the list, or not at all:
+  `def get_task(id: int) -> Task`. To update: nothing for handlers whose
+  first parameter is named `request` (or `ws`); rename or annotate one
+  named otherwise (`def h(req)` becomes `def h(req: Request)`): it's
+  refused at registration, with a message saying so.
+- **Errors are answered as JSON**: `{"detail": "..."}`. An
+  `HTTPException`, a 404 or a 405 answered `text/plain` while a
+  validation error's 422 was JSON, so an API client got two formats. A
+  500 answers `{"detail": "Internal Server Error"}`. To update: clients
+  that read the text read `detail`; an `@app.exception_handler(...)`
+  can answer anything else, a page for a browser say.
+- **`request.query` replaces `request.query_params`, and reads like the
+  headers**: `request.query.get("page")` gives the first value,
+  `.get_all("tag")` every one; `await request.form()` works the same. It
+  was a dict of lists (`query_params["page"][0]`). Typed parameters now
+  take the *first* value of a repeated field wherever it comes from: a
+  query or form field took the last one (`?page=1&page=2` gave 2, now
+  1), a header the first. To update: `request.query_params["x"][0]`
+  becomes `request.query["x"]`, `form["x"]` gives the first value
+  (`form.get_all("x")` the list).
+- **Internal modules are private.** `korvex.app`, `korvex.schema`,
+  `korvex.openapi`, `korvex.serve`, `korvex.urls`, `korvex.routing`,
+  `korvex.requests`, `korvex.params`, `korvex.errors`, `korvex.response`
+  and `korvex.cli` became `korvex._app`... The public modules are
+  `korvex`, `korvex.router`, `korvex.testing`, `korvex.security` and
+  `korvex.middleware`; what they export is what 1.0 will keep stable. To
+  update: import from `korvex` (`from korvex.app import App` becomes
+  `from korvex import App`).
+- **The standalone router moves to `korvex.router`.** `Router`,
+  `RouteGroup` and `MethodNotAllowed` sat in `korvex` next to `App`,
+  though an app never uses them. To update:
+  `from korvex.router import Router`.
+- **One way to declare a route: the decorators.** `App(router=...)`,
+  `app.router` and `@app.handler("name")` (to attach a function to a
+  route added to the router by name) are gone, and with them two errors
+  only that path had: a 500 for router middleware names, and "no handler
+  named". To update: declare the route with `@app.get(...)` and the
+  others (`app.get(path)(func)` registers a function you already have).
+- **`AppGroup` is now `Group`**: what `app.group()` and `app.host()`
+  return. With `RouteGroup` gone from `korvex`, there's one kind of group
+  left. To update: rename it in type annotations.
+- **`Connection`, what a `Request` and a `WebSocket` share**: path,
+  headers, cookies, query, path parameters, client, scheme, `app` and
+  `url_for()`. `WebSocket` was a `Request` whose `body()`, `json()` and
+  `form()` always raised; it's now a `Connection` without them. Before
+  hooks get a `Connection`. A dependency annotated `Request` in a
+  WebSocket route is refused at registration, with a message: annotate
+  it `Connection` to serve both. To update: `isinstance(x, Request)` is
+  false for a WebSocket now (`isinstance(x, WebSocket)` works as
+  before); hooks and shared dependencies take a `Connection`.
+- **`timeout` is now `read_timeout`** in `App.run()`, and `--timeout` becomes
+  `--read-timeout` in `korvex run`: the seconds a client gets to send the
+  headers, then the body. The old name didn't say what it timed. To
+  update: rename it.
+- `korvex.middleware` no longer exports `ALL_METHODS` and
+  `COMPRESSIBLE`, two defaults of `cors()` and `compress()`.
+
+### New
+
+- **`headers=` takes a dict**, in `Response(...)` and its shortcuts,
+  `HTTPException` and `WebSocket.accept()`: `headers={"X-Total": "3"}`.
+  Pairs still work, to repeat a name. A dict failed before with "too
+  many values to unpack".
+
+### Documentation
+
+- The README is short: what Korvex is, a quickstart and its test, the
+  guide, and performance in brief. It was 793 lines.
+- The guide is in [`docs/`](docs/README.md), a page per topic, each
+  starting with an example: routes, requests and responses, validation,
+  dependencies, errors and hooks, WebSockets, OpenAPI and security,
+  middleware, testing, the built-in server, deployment, performance and
+  the standalone router.
+
+### Inside
+
+- The code is reorganized: the App's module split in three, the
+  middleware in a module per hook, one record per route; the query string is
+  parsed only when read. Requests are 1 to 5% faster.
 - Ruff, pyright and coverage are configured in `pyproject.toml`, and CI
   runs them, with the tests on Python 3.9 to 3.14 and 3.14t.
 - New: SECURITY.md (private reports through GitHub), a code of conduct,

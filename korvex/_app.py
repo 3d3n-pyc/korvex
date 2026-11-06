@@ -18,12 +18,11 @@ from pathlib import Path
 from typing import Any, Optional, Union, overload
 
 from korvex._core import MethodNotAllowed
-from korvex.errors import Abort, HTTPException, ValidationError
-from korvex.requests import Request, UploadedFile, WebSocket, WebSocketDisconnect
-from korvex.response import Response, StreamingResponse
-from korvex.router import Router
-from korvex.routing import (
-    AppGroup,
+from korvex._errors import Abort, HTTPException, ValidationError
+from korvex._requests import Connection, Request, WebSocket, WebSocketDisconnect
+from korvex._response import Response, StreamingResponse
+from korvex._routing import (
+    Group,
     Handler,
     WebSocketHandler,
     _check_name_type,
@@ -33,13 +32,10 @@ from korvex.routing import (
     _Route,
     _RouteDecorators,
 )
-from korvex.schema import Plan, Run, needs_plan, plan_for
+from korvex._schema import Plan, Run, needs_plan, plan_for
+from korvex.router import Router
 
-# Defined here until 0.13, and still importable from here.
-__all__ = ["App", "AppGroup", "LoopLocal", "Request", "UploadedFile", "WebSocket", "WebSocketDisconnect"]
-
-
-BeforeHook = Callable[["Request"], Union[Optional[Response], Awaitable[Optional[Response]]]]
+BeforeHook = Callable[["Connection"], Union[Optional[Response], Awaitable[Optional[Response]]]]
 """`(request) -> Response | None`, sync or async. Returning a `Response`
 sends it right away; returning `None` moves on to the next step."""
 
@@ -115,14 +111,14 @@ class App(_RouteDecorators):
     app = App()
 
     @app.get("/users/{id:int}")
-    def get_user(request, id):
+    def get_user(id: int):
         return Response.json({"id": id})
 
     # uvicorn mymodule:app
     """
 
-    def __init__(self, router: Router | None = None) -> None:
-        self.router = router if router is not None else Router()
+    def __init__(self) -> None:
+        self._router = Router()  # HTTP routes
         self._ws_router = Router()  # WebSocket routes: a path can have both
         # Each route, under its handler name in the router: HTTP, WebSocket.
         self._routes: dict[str, _Route] = {}
@@ -135,7 +131,7 @@ class App(_RouteDecorators):
         """`{dependency: replacement}`: the replacement is called instead,
         wherever the dependency is used. For tests:
         `app.dependency_overrides[current_user] = lambda: test_user`."""
-        self._root = AppGroup(self, self.router.group())
+        self._root = Group(self, self._router.group())
         self._on_startup: list[Hook] = []
         self._on_shutdown: list[Hook] = []
         self._exception_handlers: dict[int | type[Exception], ExceptionHandler] = {}
@@ -184,8 +180,8 @@ class App(_RouteDecorators):
         deprecated: bool = False,
         responses: Mapping[int | str, Any] | None = None,
         include_in_schema: bool = True,
-    ) -> AppGroup:
-        """Returns an `AppGroup` that registers handlers under `prefix`, with
+    ) -> Group:
+        """Returns an `Group` that registers handlers under `prefix`, with
         `dependencies` for all of them, and the OpenAPI options (`tags`,
         `deprecated`, `responses`, `include_in_schema`) their own add to."""
         return self._root.group(
@@ -206,7 +202,7 @@ class App(_RouteDecorators):
         deprecated: bool = False,
         responses: Mapping[int | str, Any] | None = None,
         include_in_schema: bool = True,
-    ) -> AppGroup:
+    ) -> Group:
         """Returns a group whose routes only answer for requests to that
         host (its `Host` header, without the port):
 
@@ -230,10 +226,10 @@ class App(_RouteDecorators):
         normalized = pattern.lower().rstrip(".")
         found = next((h for h in self._hosts if h.pattern == normalized), None)
         if found is None:
-            found = _Host(pattern, self.router.constraints())
+            found = _Host(pattern, self._router.constraints())
             self._hosts.append(found)
             self._hosts.sort(key=lambda h: bool(h.params))  # stable: literal hosts first, in order
-        return AppGroup(
+        return Group(
             self, found.router.group(), dependencies, found, _Docs(tags, deprecated, responses, include_in_schema)
         )
 
@@ -276,15 +272,15 @@ class App(_RouteDecorators):
 
         For a route of `app.host()`, this is the path: a link on that host.
         `request.url_for()` gives the full URL, host included."""
-        from korvex import urls
+        from korvex import _urls as urls
 
         return urls.path_for(self, urls.lookup(self._url_index(), name), params)
 
     def _url_index(self) -> Any:
         """The names of the routes, worked out again once routes change."""
-        from korvex import urls
+        from korvex import _urls as urls
 
-        routers = [self.router, self._ws_router] + [r for h in self._hosts for r in (h.router, h.ws_router)]
+        routers = [self._router, self._ws_router] + [r for h in self._hosts for r in (h.router, h.ws_router)]
         signature = (len(self._routes), len(self._ws_routes), *(getattr(r, "version", None) for r in routers))
         if self._url_cache is None or self._url_cache[0] != signature:
             self._url_cache = (signature, urls.build_index(self))
@@ -330,7 +326,7 @@ class App(_RouteDecorators):
         WebSockets aren't included. With `host`, the routes that answer on
         that host: its own (`app.host()`), then those without a host;
         without, only those without a host."""
-        from korvex import openapi
+        from korvex import _openapi as openapi
 
         return openapi.build(self, title=title, version=version, description=description, host=host)
 
@@ -354,7 +350,7 @@ class App(_RouteDecorators):
         if found is not None:
             routes += found[0].router.routes()
         seen = {(pattern, method) for pattern, method, _, _ in routes}
-        return routes + [route for route in self.router.routes() if (route[0], route[1]) not in seen]
+        return routes + [route for route in self._router.routes() if (route[0], route[1]) not in seen]
 
     def docs(
         self,
@@ -368,14 +364,14 @@ class App(_RouteDecorators):
         """Serves the OpenAPI document at `openapi_path` (recomputed on each
         call, so it follows route changes) and Swagger UI at `docs_path`
         (loaded from a CDN; `None` to leave it out)."""
-        from korvex import openapi
+        from korvex import _openapi as openapi
 
         def serve_openapi(request: Request) -> Response:
             # Each host gets its own API: the routes that answer there.
             host = request.headers.get("host") if self._hosts else None
             return Response.json(self.openapi(title=title, version=version, description=description, host=host))
 
-        self.router.route(openapi_path, "korvex.openapi")
+        self._router.route(openapi_path, "korvex.openapi")
         self._routes["korvex.openapi"] = _Route(serve_openapi)
         if docs_path is not None:
             page = openapi.swagger_ui(title, openapi_path)
@@ -383,7 +379,7 @@ class App(_RouteDecorators):
             def serve_docs(request: Request) -> Response:
                 return Response(page, headers=[("Content-Type", "text/html; charset=utf-8")])
 
-            self.router.route(docs_path, "korvex.docs")
+            self._router.route(docs_path, "korvex.docs")
             self._routes["korvex.docs"] = _Route(serve_docs)
 
     def constraint(self, name: str, pattern: str) -> None:
@@ -400,20 +396,10 @@ class App(_RouteDecorators):
         before plain ones. The value reaches the handler as a `str`; an
         annotation converts it further. Define a constraint before the
         routes that use it; it can't be redefined differently."""
-        self.router.constraint(name, pattern)
+        self._router.constraint(name, pattern)
         for host in self._hosts:
             host.router.constraint(name, pattern)
             host.ws_router.constraint(name, pattern)
-
-    def handler(self, name: str) -> Callable[[Handler], Handler]:
-        """Decorator: attaches a function to a handler name already
-        registered on `app.router` (e.g. through a route group)."""
-
-        def register(func: Handler) -> Handler:
-            self._routes[name] = _Route(func, name=name)
-            return func
-
-        return register
 
     def static(self, prefix: str, directory: str | os.PathLike[str], *, name: str | None = None) -> None:
         """Serves the files in `directory` under `prefix`:
@@ -437,7 +423,7 @@ class App(_RouteDecorators):
         key = f"korvex.static:{prefix}"  # unique per prefix: all serve() share a qualname
         pattern = f"{prefix.rstrip('/')}/*path"
         self._check_name(name, False, None, pattern)
-        self.router.route(pattern, key)
+        self._router.route(pattern, key)
         self._add_route(False, key, _Route(serve, name=name or "static", explicit=name is not None), None, pattern)
 
     # Both `@app.on_startup` and `@app.on_startup()` work: the overloads
@@ -561,7 +547,7 @@ class App(_RouteDecorators):
                 changed = await _call(hook, request, response)
             except Exception:
                 logger.exception("after_request hook failed for %s %s", request.method, request.path)
-                return Response.text("Internal Server Error", status=500)
+                return _server_error()
             if changed is not None:
                 if changed is not response and isinstance(response, StreamingResponse):
                     await _finish(response, request.path)  # replaced: it won't be sent
@@ -576,39 +562,32 @@ class App(_RouteDecorators):
             found = _match(host[0].router, request)
             host_params = host[1] if found is not None else None  # only for the host's own routes
         if found is None:
-            found = _match(self.router, request)
+            found = _match(self._router, request)
         if found is None:
             raise HTTPException(404)
 
-        handler_name, path_params, middleware_names = found
-        route = self._routes.get(handler_name)
+        handler_name, path_params, _ = found
+        route = self._routes[handler_name]
         values = path_params  # what dependencies can read: the host's parameters too
         if host_params:
             values = {**host_params, **path_params}
             path_params = {**_host_params_for(route, host_params), **path_params}
         request.path_params = values
-        if middleware_names:
-            # Middleware names given to app.router directly: the App runs
-            # dependencies, not middleware. Refuse rather than serve the
-            # route without what may well be its guard.
-            raise LookupError(
-                f"route {request.path!r} has router middleware {list(middleware_names)!r}, which the App doesn't run: "
-                "use dependencies=[Depends(...)] on the route or its group instead"
-            )
-
-        if route is None:
-            raise LookupError(f"no handler named {handler_name!r}; register one with @app.handler({handler_name!r})")
         handler = route.func
         plan = route.plan if route.plan is not None else self._plan_of(handler_name)
         if not needs_plan(plan):  # no annotations to act on: called as before, at no cost
-            return await _call(handler, request, **path_params)
+            if plan.request_name is not None:  # it takes the request
+                return await _call(handler, **path_params, **{plan.request_name: request})
+            if plan.request:  # under several names
+                return await _call(handler, **path_params, **dict.fromkeys(plan.request, request))
+            return await _call(handler, **path_params)
         if not plan.dependencies:
             arguments = {**path_params, **await plan.bind(request, values, None)}
-            return plan.respond(await _call(handler, request, **arguments))
+            return plan.respond(await _call(handler, **arguments))
         run = Run(self.dependency_overrides, self._dependency_plan)
         try:
             arguments = {**path_params, **await plan.bind(request, values, run)}
-            response = plan.respond(await _call(handler, request, **arguments))
+            response = plan.respond(await _call(handler, **arguments))
         except BaseException as exc:
             await run.close(exc)  # raised at the yields; still answered as usual
             raise
@@ -620,12 +599,11 @@ class App(_RouteDecorators):
         return response
 
     def _plan_of(self, handler_name: str) -> Plan:
-        """The plan of an HTTP route's handler. One attached with
-        @app.handler gets its plan on first use, once its route's pattern
-        is known."""
+        """The plan of an HTTP route's handler: the App's own routes (static
+        files, the docs) get theirs on first use."""
         route = self._routes[handler_name]
         if route.plan is None:
-            pattern = next((path for path, _, name, _ in self.router.routes() if name == handler_name), "")
+            pattern = next((path for path, _, name, _ in self._router.routes() if name == handler_name), "")
             route.plan = self._plan(route.func, pattern)
         return route.plan
 
@@ -656,10 +634,13 @@ class App(_RouteDecorators):
             path_params = {**_host_params_for(route, host_params), **path_params}
         handler = route.func
         plan = route.plan
-        run = Run(self.dependency_overrides, self._dependency_plan) if plan is not None and plan.dependencies else None
+        assert plan is not None  # worked out when the route was registered
+        run = Run(self.dependency_overrides, self._dependency_plan) if plan.dependencies else None
         try:
             arguments: dict[str, Any] = dict(path_params)
-            if plan is not None and needs_plan(plan):
+            if not needs_plan(plan):
+                arguments.update(dict.fromkeys(plan.request, websocket))
+            else:
                 try:
                     arguments.update(await plan.bind(websocket, values, run))
                 except (HTTPException, Abort) as exc:  # a 422 too
@@ -669,7 +650,7 @@ class App(_RouteDecorators):
                         await run.close(exc)
                     await websocket.close()  # before accept: the client gets a 403
                     return
-            await handler(websocket, **arguments)
+            await handler(**arguments)
         except WebSocketDisconnect as exc:
             if run is not None:
                 await self._close_quietly(run, exc, websocket.path)
@@ -691,7 +672,9 @@ class App(_RouteDecorators):
             try:
                 answer = await _call(hook, websocket)
             except (HTTPException, Abort) as exc:
-                answer = exc.response if isinstance(exc, Abort) else Response.text(exc.detail, status=exc.status)
+                answer = (
+                    exc.response if isinstance(exc, Abort) else Response.json({"detail": exc.detail}, status=exc.status)
+                )
             except Exception:
                 logger.exception("before_request hook failed for WebSocket %s", websocket.path)
                 return False
@@ -722,13 +705,13 @@ class App(_RouteDecorators):
                 return await _call(handler, request, exc)
             except Exception:
                 logger.exception("exception handler failed for %s %s", request.method, request.path)
-                return Response.text("Internal Server Error", status=500)
+                return _server_error()
         if isinstance(exc, ValidationError):
             return Response.json({"detail": exc.errors}, status=422, headers=exc.headers)
         if isinstance(exc, HTTPException):
-            return Response.text(exc.detail, status=exc.status, headers=exc.headers)
+            return Response.json({"detail": exc.detail}, status=exc.status, headers=exc.headers)
         logger.exception("unhandled error in %s %s", request.method, request.path, exc_info=exc)
-        return Response.text("Internal Server Error", status=500)
+        return _server_error()
 
     def _find_exception_handler(self, exc: Exception) -> ExceptionHandler | None:
         """By status for an HTTPException, then by class, closest first."""
@@ -758,7 +741,7 @@ class App(_RouteDecorators):
         workers: int = 1,
         graceful_timeout: float = 30.0,
         max_body: int = 1024 * 1024,
-        timeout: float = 30.0,
+        read_timeout: float = 30.0,
         uds: str | None = None,
         forwarded_allow_ips: Sequence[str] = ("127.0.0.1", "::1"),
         access_log: bool = False,
@@ -779,7 +762,7 @@ class App(_RouteDecorators):
           core.
         - On stop, requests in progress get up to `graceful_timeout` seconds.
         - Request bodies over `max_body` bytes get a 413 (a route's own
-          `max_body` overrides it); clients get `timeout` seconds to send
+          `max_body` overrides it); clients get `read_timeout` seconds to send
           the headers, then the body (408 after that).
         - `uds` listens on a Unix socket at that path instead of host:port,
           for a reverse proxy on the same machine.
@@ -795,7 +778,7 @@ class App(_RouteDecorators):
         - A streamed response or a WebSocket waits whenever its client is
           1 MiB behind, until it catches up.
         """
-        from korvex import serve
+        from korvex import _serve as serve
 
         serve.run(
             self,
@@ -805,20 +788,25 @@ class App(_RouteDecorators):
             graceful_timeout=graceful_timeout,
             config=serve.Config(
                 max_body,
-                timeout,
+                read_timeout,
                 list(self._body_limits),
                 list(forwarded_allow_ips),
                 uds,
                 access_log,
                 ws_ping_interval,
                 forwarded_host,
-                tuple(self.router.constraints()),
+                tuple(self._router.constraints()),
                 threads,
             ),
         )
 
     def __repr__(self) -> str:
-        return f"App(router={self.router!r})"
+        return f"App({len(self._routes)} routes, {len(self._ws_routes)} WebSocket routes)"
+
+
+def _server_error() -> Response:
+    """The answer to an error nothing handled: the cause is logged, never sent."""
+    return Response.json({"detail": "Internal Server Error"}, status=500)
 
 
 def _host_params_for(route: _Route | None, host_params: dict[str, str]) -> dict[str, str]:

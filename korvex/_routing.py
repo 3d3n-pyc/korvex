@@ -1,5 +1,5 @@
 """Registering routes on an `App`: the `get`/`post`/... decorators, groups
-(`AppGroup`), hosts, and the checks their options go through."""
+(`Group`), hosts, and the checks their options go through."""
 
 from __future__ import annotations
 
@@ -7,18 +7,21 @@ import inspect
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
-from korvex.requests import Request
+from korvex._requests import Connection
+from korvex._schema import Plan, _library, path_params
 from korvex.router import RouteGroup, Router
-from korvex.schema import Plan, _library, path_params
 
 if TYPE_CHECKING:
-    from korvex.app import App
+    from korvex._app import App
 
 
 Handler = Callable[..., Any]
-"""`(request, **path_params) -> Response`, sync or async. Path params come
-converted: `int` for `{id:int}`, `uuid.UUID` for `{id:uuid}`, else `str`.
-With a model return annotation, it can return the model instead."""
+"""A function that answers a route, sync or async. Its parameters say what
+it reads: the path parameters by name (converted: `int` for `{id:int}`,
+`uuid.UUID` for `{id:uuid}`, else `str`, or as annotated), query fields,
+headers, the body... and the request itself if it needs it, named
+`request` or annotated `Request`. It returns a `Response`, or a model
+(with a return annotation), or `None` (annotated `-> None`)."""
 
 WebSocketHandler = Callable[..., Awaitable[None]]
 """`async (websocket, **path_params) -> None`."""
@@ -301,7 +304,7 @@ class _Docs:
         return merged
 
 
-class AppGroup(_RouteDecorators):
+class Group(_RouteDecorators):
     """Registers handlers under a shared prefix and dependencies, and
     OpenAPI's `tags`, `deprecated`, `responses` and `include_in_schema`
     for all of them.
@@ -420,15 +423,15 @@ class AppGroup(_RouteDecorators):
         deprecated: bool = False,
         responses: Mapping[int | str, Any] | None = None,
         include_in_schema: bool = True,
-    ) -> AppGroup:
+    ) -> Group:
         """Returns a nested group. Its `dependencies` run after this
         group's; its OpenAPI options add to this group's."""
         docs = self._docs.merge(_Docs(tags, deprecated, responses, include_in_schema))
-        return AppGroup(self._app, self._routes.group(prefix), (*self._dependencies, *dependencies), self._host, docs)
+        return Group(self._app, self._routes.group(prefix), (*self._dependencies, *dependencies), self._host, docs)
 
     def __repr__(self) -> str:
         host = f", host={self._host.pattern!r}" if self._host else ""
-        return f"AppGroup(prefix={self._routes.prefix!r}{host}, dependencies={list(self._dependencies)!r})"
+        return f"Group(prefix={self._routes.prefix!r}{host}, dependencies={list(self._dependencies)!r})"
 
 
 class _Host:
@@ -469,7 +472,7 @@ class _Host:
         return params
 
 
-def _host_labels(request: Request) -> list[str]:
+def _host_labels(request: Connection) -> list[str]:
     """The labels of the host the request is for, from its `Host` header,
     without the port: `"Acme.example.com:8000"` -> `["acme", "example", "com"]`."""
     host = (request.headers.get("host") or "").lower()

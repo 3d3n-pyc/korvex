@@ -6,11 +6,11 @@ import sys
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from typing import TYPE_CHECKING
 
-from korvex.response import Response
+from korvex._response import Response
 
 if TYPE_CHECKING:
-    from korvex.app import App
-    from korvex.requests import Request
+    from korvex._app import App
+    from korvex._requests import Request
 
 
 COMPRESSIBLE = (
@@ -165,7 +165,7 @@ def compress(
 
     @app.after_request
     def compress_response(request: Request, response: Response) -> None:
-        from korvex.response import StreamingResponse
+        from korvex._response import StreamingResponse
 
         if response.status in (204, 304) or response.status < 200 or "Content-Encoding" in response.headers:
             return

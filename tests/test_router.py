@@ -8,7 +8,7 @@ from uuid import UUID
 
 import pytest
 
-from korvex import MethodNotAllowed, RouteGroup, Router
+from korvex.router import MethodNotAllowed, RouteGroup, Router
 
 
 def make_router(*routes):

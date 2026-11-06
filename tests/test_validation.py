@@ -146,10 +146,10 @@ def test_handlers_without_annotations_are_called_as_before():
 
     assert not app._routes[
         "test_validation.test_handlers_without_annotations_are_called_as_before.<locals>.user"
-    ].plan.params
+    ].plan.binds
     assert not app._routes[
         "test_validation.test_handlers_without_annotations_are_called_as_before.<locals>.typed"
-    ].plan.params
+    ].plan.binds
     assert call(app, "GET", "/typed/5")[2] == {"id": 5}
 
 
@@ -199,19 +199,6 @@ def test_how_many_body_errors_depends_on_the_library(models):
     status, _, data = call(user_app(models), "POST", "/users", b"{}")  # both fields missing
     assert status == 422
     assert len(data["detail"]) == (1 if UserIn is MsgspecUserIn else 2)
-
-
-def test_handlers_attached_by_name_get_their_plan_on_first_use(models):
-    UserIn, _, _ = models
-    app = App()
-    app.router.route("/things/{id}", "update_thing", method="POST")
-
-    @app.handler("update_thing")
-    def update(request, id: int, body: UserIn):
-        return Response.json({"id": id, "name": body.name})
-
-    assert call(app, "POST", "/things/4", b'{"name": "x", "age": 1}')[2] == {"id": 4, "name": "x"}
-    assert call(app, "POST", "/things/four", b'{"name": "x", "age": 1}')[0] == 422
 
 
 def test_dates_in_the_query_string_and_the_path():

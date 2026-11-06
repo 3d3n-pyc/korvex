@@ -30,24 +30,25 @@ src/
   server.rs   the built-in server (Unix only): HTTP in a Rust thread, handed to asyncio
   proxy.rs    trusted X-Forwarded-* headers
   websocket.rs WebSockets in the built-in server
-korvex/
-  router.py   Router (wraps the Rust one) and RouteGroup
-  app.py      App: dispatch, hooks, errors, lifespan, App.run()
-  requests.py Request, WebSocket and UploadedFile (multipart forms)
-  routing.py  registering routes: the get/post/... decorators, AppGroup, hosts
-  response.py Response and Headers
-  errors.py   HTTPException and ValidationError
-  params.py   Header(), Cookie(), Query(), Form() and Depends()
-  schema.py   validation from a handler's annotations (msgspec or pydantic),
-              and resolving dependencies
-  openapi.py  the OpenAPI document and the Swagger UI page
-  security.py security schemes: Bearer(), APIKey(), OAuth2Password()
-  urls.py     reverse URLs: url_for()
-  middleware/ ready-made hooks, one module each: cors(), request_id(),
-              rate_limit(), compress(), security_headers()
-  testing.py  TestClient and AsyncTestClient: the app in-process, for tests
-  serve.py    App.run(): one process, or a supervisor and its workers
-  cli.py      the `korvex run` command
+korvex/       public: korvex, korvex.router, .testing, .security, .middleware
+  __init__.py   what `import korvex` gives
+  router.py     the standalone Router (wraps the Rust one) and RouteGroup
+  testing.py    TestClient and AsyncTestClient: the app in-process, for tests
+  security.py   security schemes: Bearer(), APIKey(), OAuth2Password()
+  middleware/   ready-made hooks, one module each: cors(), request_id(),
+                rate_limit(), compress(), security_headers()
+  _app.py       App: dispatch, hooks, errors, lifespan, App.run()
+  _requests.py  Request, WebSocket and UploadedFile (multipart forms)
+  _routing.py   registering routes: the get/post/... decorators, groups, hosts
+  _response.py  Response and Headers
+  _errors.py    HTTPException, ValidationError and Abort
+  _params.py    Header(), Cookie(), Query(), Form() and Depends()
+  _schema.py    validation from a handler's annotations (msgspec or pydantic),
+                and resolving dependencies
+  _openapi.py   the OpenAPI document and the Swagger UI page
+  _urls.py      reverse URLs: url_for()
+  _serve.py     the built-in server's Python side: workers, threads, signals
+  _cli.py       the `korvex run` command
 tests/        Python tests (Rust tests live next to the code)
 benches/      comparisons with other frameworks:
   bench_router.py  route matching alone
@@ -61,6 +62,10 @@ benches/      comparisons with other frameworks:
   servers.py       servers on the same CPU cores, built-in one included
   plot.py          draws the charts in docs/
 ```
+
+Modules starting with `_` are internal: what they hold can change in any
+version. The public API is what the five public modules export, and what
+the docs show.
 
 Only `lib.rs`, `server.rs` and `websocket.rs` use PyO3; keep `tree`, `path`, `method` and
 `proxy` plain Rust.

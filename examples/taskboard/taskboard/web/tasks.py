@@ -7,7 +7,7 @@ from typing import Optional
 
 import msgspec
 
-from korvex import App, Depends, Request, Response
+from korvex import App, Depends, Response
 from taskboard.domain import Task
 from taskboard.services.tasks import TaskService
 from taskboard.web.auth import CurrentUser
@@ -23,7 +23,6 @@ def register(app: App, tasks: TaskService, current_user: CurrentUser) -> None:
 
     @api.get("/tasks")
     async def find_tasks(
-        request: Request,
         list_id: Optional[uuid.UUID] = None,
         done: Optional[bool] = None,
         due_from: Optional[date] = None,
@@ -41,7 +40,7 @@ def register(app: App, tasks: TaskService, current_user: CurrentUser) -> None:
         return await tasks.find(list_id=list_id, done=done, due_from=due_from, due_to=due_to, search=q, limit=limit)
 
     @api.post("/tasks", status=201, responses={404: ("No such list", Problem)})
-    async def create_task(request: Request, body: NewTask) -> Task:
+    async def create_task(body: NewTask) -> Task:
         """Create a task
 
         At the top of its list.
@@ -49,12 +48,12 @@ def register(app: App, tasks: TaskService, current_user: CurrentUser) -> None:
         return await tasks.create(body.list_id, body.title, notes=body.notes, due=body.due)
 
     @api.get("/tasks/{id:uuid}", responses=NOT_FOUND)
-    async def get_task(request: Request, id: uuid.UUID) -> Task:
+    async def get_task(id: uuid.UUID) -> Task:
         """Get a task"""
         return await tasks.get(id)
 
     @api.patch("/tasks/{id:uuid}", responses=NOT_FOUND)
-    async def update_task(request: Request, id: uuid.UUID, body: TaskChanges) -> Task:
+    async def update_task(id: uuid.UUID, body: TaskChanges) -> Task:
         """Change a task
 
         Only the fields sent change; `"due": null` removes the due date.
@@ -64,12 +63,12 @@ def register(app: App, tasks: TaskService, current_user: CurrentUser) -> None:
         )
 
     @api.delete("/tasks/{id:uuid}", status=204, responses=NOT_FOUND)
-    async def delete_task(request: Request, id: uuid.UUID) -> None:
+    async def delete_task(id: uuid.UUID) -> None:
         """Delete a task"""
         await tasks.delete(id)
 
     @api.get("/export")
-    def export_tasks(request: Request) -> Response:
+    def export_tasks() -> Response:
         """Export every task
 
         Newline-delimited JSON, streamed: read from the database and sent a
