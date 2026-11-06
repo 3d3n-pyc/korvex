@@ -159,6 +159,17 @@ uvicorn mymodule:app
   which answer on every host. `/docs` documents the routes of the host
   it's served from, and `app.openapi(host=...)` those of any host. In the
   built-in server, a route's `max_body` applies to its path on every host.
+- `app.url_for("get_user", id=42)` gives a route's path, `/users/42`,
+  without writing it again; `request.url_for(...)` the full URL
+  (`https://example.com/users/42`, with the route's own host for an
+  `app.host()` route). A route is named after its function, or
+  `name="user"` on its decorator; `url_for("static", path="css/app.css")`
+  links to a file of `app.static()`. Values are percent-encoded and
+  checked against the route's constraints and annotations, and the path
+  must reach that route: anything else raises an error, instead of a link
+  that leads to a 404. When two routes share a function's name (a
+  factory registering the same functions in several groups), `url_for()`
+  asks for a `name=` to tell them apart.
 - Routes registered on `app.router` directly are linked to a function
   with `@app.handler("name")`. The App doesn't run the router's middleware
   names: a route that has some answers a 500, rather than run without

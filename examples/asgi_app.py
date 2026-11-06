@@ -10,7 +10,7 @@ Run:
 Then:
     curl http://127.0.0.1:8000/health
     curl http://127.0.0.1:8000/users/42
-    curl -X POST http://127.0.0.1:8000/users -d '{"name": "Ada"}'
+    curl -i -X POST http://127.0.0.1:8000/users -d '{"name": "Ada"}'    # Location: /users/43
     curl http://127.0.0.1:8000/secret                                   # 401
     curl -H "Authorization: Bearer token" http://127.0.0.1:8000/secret  # 200
 """
@@ -35,7 +35,9 @@ def get_user(request: Request, id: int) -> Response:
 @app.post("/users")
 async def create_user(request: Request) -> Response:
     data = await request.json()
-    return Response.json({"created": data}, status=201)
+    # The new user's URL, built from the route's name rather than written again.
+    location = app.url_for("get_user", id=43)
+    return Response.json({"id": 43, **data}, status=201, headers=[("Location", location)])
 
 
 def auth(authorization: str = Header("")) -> None:

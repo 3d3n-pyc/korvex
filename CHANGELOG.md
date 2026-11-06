@@ -15,6 +15,21 @@ a richer OpenAPI.
   `AsyncTestClient` does the same in `async` tests. No dependency: it
   speaks ASGI directly, to any ASGI app. The taskboard example uses it,
   in place of the client it wrote for itself.
+- Reverse URLs: `app.url_for("get_user", id=42)` gives `/users/42`,
+  `request.url_for(...)` the full URL (the request's scheme, `ws`/`wss`
+  for a WebSocket route, and the route's own host for an `app.host()`
+  route, its parameters given too). A route is known by its function's
+  name, or by `name=` on its decorator (`get`, `post`... and `websocket`);
+  `app.static()` directories by `"static"`, or their `name=`. A given
+  name points to one path (several methods on it are fine); function
+  names shared by routes on different paths are refused by `url_for()`
+  only, with a request for a `name=`. Values are percent-encoded, and
+  checked: against `int`, `uuid` and custom constraints, against the
+  handler's annotations, not empty, `.` or `..`, a `/` only in a
+  `*wildcard`, and the path must reach that route rather than another
+  answering it first. Starlette and Litestar escape none of them.
+- `request.app`: the `App` handling the request. `operationId` in
+  OpenAPI is the route's name.
 
 ## 0.12.0
 

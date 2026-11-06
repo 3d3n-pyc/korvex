@@ -36,8 +36,8 @@ def register(app: App, auth: AuthService, settings: Settings) -> CurrentUser:
         """
         token = await auth.login(password)
         if token is None:
-            return Response.redirect("/?login=failed", status=303)
-        response = Response.redirect("/", status=303)
+            return Response.redirect(app.url_for("board") + "?login=failed", status=303)
+        response = Response.redirect(app.url_for("board"), status=303)
         # HttpOnly: page scripts can't read it. SameSite=Lax: other sites
         # can't send it with a POST, which stops cross-site request forgery.
         response.set_cookie(
@@ -57,7 +57,7 @@ def register(app: App, auth: AuthService, settings: Settings) -> CurrentUser:
         Ends the session on the server too, not just in the browser.
         """
         await auth.logout(token)
-        response = Response.redirect("/", status=303)
+        response = Response.redirect(app.url_for("board"), status=303)
         response.delete_cookie(COOKIE)
         return response
 

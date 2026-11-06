@@ -54,7 +54,8 @@ def build(app: App, *, title: str, version: str, description: str | None = None,
             continue  # static files and the docs themselves; names without a handler can't be described
         func = app._handlers[name]
         plan = app._plan_of(name)
-        operation: dict[str, Any] = {"operationId": _unique(getattr(func, "__name__", "handler"), used_ids)}
+        route_name = app._route_names.get((False, name), (getattr(func, "__name__", "handler"),))[0]
+        operation: dict[str, Any] = {"operationId": _unique(route_name, used_ids)}
         if plan.summary:
             operation["summary"] = plan.summary
         if plan.description:
