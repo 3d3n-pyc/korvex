@@ -25,7 +25,8 @@ from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Protocol
 from korvex.response import Response
 
 if TYPE_CHECKING:
-    from korvex.app import App, Request
+    from korvex.app import App
+    from korvex.requests import Request
 
 logger = logging.getLogger("korvex")
 

@@ -29,6 +29,7 @@ from typing import Any, NamedTuple, Union
 
 from korvex.errors import ValidationError
 from korvex.params import REQUIRED, Dependency, Source
+from korvex.requests import Request, UploadedFile, WebSocket
 from korvex.response import Response
 
 SCALARS = (str, int, float, bool, uuid.UUID, datetime.date, datetime.datetime)
@@ -391,7 +392,7 @@ class Plan:
                     errors.extend(error.errors)
             for param in self.form:
                 values = form.get(param.key) or []
-                if param.inner is not str and param.inner is not _UPLOADED_FILE:
+                if param.inner is not str and param.inner is not UploadedFile:
                     values = [v for v in values if v != ""]  # an empty field: not given
                 _take(param, values, kwargs, errors)
         if self.body is not None and self.body_model is not None:
@@ -489,9 +490,6 @@ class Run:
             raise raised
 
 
-_UPLOADED_FILE: Any = None  # korvex.app.UploadedFile, set by plan_for (app.py imports this module)
-
-
 def _take(param: Param, values: list | None, kwargs: dict, errors: list, first: bool = False) -> None:
     """Converts a parameter's raw values, or uses its default."""
     if not values:
@@ -511,7 +509,7 @@ def _take(param: Param, values: list | None, kwargs: dict, errors: list, first: 
 
 def _convert_field(value: Any, tp: Any) -> Any:
     """Like `_convert`, for a value that may be a form's file."""
-    if tp is _UPLOADED_FILE:
+    if tp is UploadedFile:
         if isinstance(value, str):
             raise ValueError("expected a file")
         return value
@@ -521,7 +519,7 @@ def _convert_field(value: Any, tp: Any) -> Any:
 
 
 def _invalid(param: Param) -> dict:
-    name = "file" if param.inner is _UPLOADED_FILE else _TYPE_NAMES.get(param.inner, param.inner)
+    name = "file" if param.inner is UploadedFile else _TYPE_NAMES.get(param.inner, param.inner)
     return _error([param.source, param.key], f"Input should be a valid {name}", "type_error")
 
 
@@ -581,10 +579,6 @@ def plan_for(
     parameter is the request (or WebSocket); a dependency's parameters all
     come from somewhere. `dependencies` are the route's own. Raises
     TypeError for a parameter whose origin can't be told."""
-    from korvex.app import Request, UploadedFile, WebSocket  # here: app.py imports this module
-
-    global _UPLOADED_FILE
-    _UPLOADED_FILE = UploadedFile
     where = getattr(func, "__qualname__", repr(func))
     if func in _chain:
         cycle = " -> ".join(getattr(f, "__qualname__", repr(f)) for f in (*_chain, func))

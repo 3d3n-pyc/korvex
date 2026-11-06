@@ -21,10 +21,21 @@ import threading
 import time
 import traceback
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from korvex import _core
 from korvex.middleware import current_request_id
+
+# Python 3.12+: a request handler that doesn't wait completes right away,
+# without going through the loop's queue. Older versions schedule it.
+_eager_task_factory = getattr(asyncio, "eager_task_factory", None)
+
+
+def _start_task(loop: asyncio.AbstractEventLoop, coroutine: Any) -> asyncio.Task:
+    if _eager_task_factory is not None:
+        return _eager_task_factory(loop, coroutine)
+    return loop.create_task(coroutine)
+
 
 if TYPE_CHECKING:
     from korvex.app import App
@@ -164,7 +175,7 @@ async def serve(
     lets requests in progress finish for up to `graceful_timeout` seconds.
     In a thread of its own, signals go to the main thread instead: it sets
     the event `joined(loop, event)` was given."""
-    from korvex.app import _call, _start_task
+    from korvex.app import _call
 
     try:
         for hook in app._on_startup:  # if one raises, the server doesn't start

@@ -3,11 +3,13 @@
 from importlib.metadata import version
 
 from korvex._core import MethodNotAllowed
-from korvex.app import App, AppGroup, LoopLocal, Request, UploadedFile, WebSocket, WebSocketDisconnect
+from korvex.app import App, LoopLocal
 from korvex.errors import Abort, HTTPException, ValidationError
 from korvex.params import Cookie, Depends, Form, Header, Query
+from korvex.requests import Request, UploadedFile, WebSocket, WebSocketDisconnect
 from korvex.response import Headers, Response
 from korvex.router import RouteGroup, Router
+from korvex.routing import AppGroup
 
 __all__ = [
     "Abort",

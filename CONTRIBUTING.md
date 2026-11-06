@@ -23,7 +23,9 @@ src/
   websocket.rs WebSockets in the built-in server
 korvex/
   router.py   Router (wraps the Rust one) and RouteGroup
-  app.py      App and Request (ASGI)
+  app.py      App: dispatch, hooks, errors, lifespan, App.run()
+  requests.py Request, WebSocket and UploadedFile (multipart forms)
+  routing.py  registering routes: the get/post/... decorators, AppGroup, hosts
   response.py Response and Headers
   errors.py   HTTPException and ValidationError
   params.py   Header(), Cookie(), Query(), Form() and Depends()

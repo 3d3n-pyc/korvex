@@ -12,7 +12,8 @@ import uuid
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
-from korvex.app import UploadedFile, _has_body
+from korvex.requests import UploadedFile
+from korvex.routing import _has_body
 from korvex.schema import Model, Plan, _unwrap, path_params, scalar_schema
 from korvex.security import SecurityScheme
 

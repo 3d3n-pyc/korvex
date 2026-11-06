@@ -35,7 +35,7 @@ from types import TracebackType
 from typing import Any, Callable, TypeVar, Union
 from urllib.parse import quote, unquote, urlencode, urljoin, urlsplit
 
-from korvex.app import WebSocketDisconnect
+from korvex.requests import WebSocketDisconnect
 from korvex.response import Headers
 
 __all__ = ["AsyncTestClient", "AsyncTestWebSocket", "TestClient", "TestResponse", "TestWebSocket"]

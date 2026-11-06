@@ -14,8 +14,10 @@ from korvex._core import Router as _CoreRouter
 from korvex.schema import _TYPE_NAMES, _convert
 
 if TYPE_CHECKING:
-    from korvex.app import App, Request, _Host
+    from korvex.app import App
+    from korvex.requests import Request
     from korvex.router import Router
+    from korvex.routing import _Host
 
 _PARAM = re.compile(r"\{(\w+)(?::(\w+))?\}")
 _WILDCARD = re.compile(r"\*(\w+)")
