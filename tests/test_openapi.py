@@ -4,6 +4,7 @@ what the routes really do."""
 from typing import Optional
 
 import pytest
+from support import request
 
 from korvex import App, Response
 
@@ -147,32 +148,27 @@ def test_an_empty_app_is_still_valid():
 
 
 def test_docs_routes_serve_the_document_and_swagger_ui(tmp_path):
-    import json
-
-    from test_app import make_scope, response_from, run_app
 
     app = sample_app(tmp_path)
     app.docs(title="Demo <script>", version="2.0")
-    status, headers, body = response_from(run_app(app, make_scope("GET", "/openapi.json")))
-    document = json.loads(body)
+    response = request(app, "GET", "/openapi.json")
+    status, document = response.status, response.json()
     validator.validate(document)
     assert status == 200 and document["info"]["version"] == "2.0"
     assert "/openapi.json" not in document["paths"] and "/docs" not in document["paths"]
 
-    status, headers, body = response_from(run_app(app, make_scope("GET", "/docs")))
-    page = body.decode()
-    assert status == 200 and ("Content-Type", "text/html; charset=utf-8") in headers
+    response = request(app, "GET", "/docs")
+    page = response.text
+    assert response.status == 200 and response.headers["content-type"] == "text/html; charset=utf-8"
     assert 'url: "/openapi.json"' in page and "swagger-ui-bundle.js" in page
     assert "<title>Demo &lt;script&gt;</title>" in page  # the title can't inject markup
 
 
 def test_docs_page_can_be_left_out():
-    from test_app import make_scope, response_from, run_app
-
     app = App()
     app.docs(docs_path=None, openapi_path="/spec.json")
-    assert response_from(run_app(app, make_scope("GET", "/docs")))[0] == 404
-    assert response_from(run_app(app, make_scope("GET", "/spec.json")))[0] == 200
+    assert request(app, "GET", "/docs").status == 404
+    assert request(app, "GET", "/spec.json").status == 200
 
 
 def test_dependencies_headers_cookies_and_forms_are_described():

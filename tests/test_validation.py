@@ -6,7 +6,7 @@ from typing import Optional
 from uuid import UUID
 
 import pytest
-from test_app import make_scope, response_from, run_app
+from support import request
 
 from korvex import App, Response
 
@@ -42,9 +42,10 @@ def models(request):
 
 
 def call(app, method, path, body=b"", query=b""):
-    scope = make_scope(method, path, headers=[("Content-Type", "application/json")], query_string=query)
-    status, headers, raw = response_from(run_app(app, scope, body=body))
-    return status, dict(headers), json.loads(raw) if raw else None
+    """`(status, headers, JSON body or None)` of one JSON request."""
+    target = f"{path}?{query.decode()}" if query else path
+    response = request(app, method, target, headers=[("Content-Type", "application/json")], body=body)
+    return response.status, dict(response.headers), response.json() if response.body else None
 
 
 def user_app(models):
@@ -160,7 +161,8 @@ def test_returning_a_response_still_works_with_a_return_model(models):
     def maybe(request) -> UserOut:
         return Response.text("not today", status=503)
 
-    assert response_from(run_app(app, make_scope("GET", "/maybe")))[:3:2] == (503, b"not today")
+    response = request(app, "GET", "/maybe")
+    assert (response.status, response.body) == (503, b"not today")
 
 
 def test_unclear_parameters_are_refused_at_registration(models):

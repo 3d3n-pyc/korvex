@@ -1,21 +1,20 @@
 """Tests for parameters read from headers, cookies, forms and aliased query
 fields: Header(), Cookie(), Form() and Query()."""
 
-import json
 from datetime import date
 from typing import Annotated, Optional
 
 import pytest
-from test_app import make_scope, response_from, run_app
+from support import request
 
 from korvex import App, Cookie, Form, Header, Query, Response, UploadedFile
 
 
 def call(app, path="/", headers=(), query=b"", method="GET", body=b""):
-    scope = make_scope(method, path, headers=list(headers), query_string=query)
-    status, response_headers, raw = response_from(run_app(app, scope, body=body))
-    is_json = ("Content-Type", "application/json") in response_headers
-    return status, json.loads(raw) if is_json else raw.decode()
+    """`(status, JSON or text)` of one request."""
+    response = request(app, method, f"{path}?{query.decode()}" if query else path, headers=list(headers), body=body)
+    is_json = response.headers.get("content-type") == "application/json"
+    return response.status, response.json() if is_json else response.text
 
 
 def echo(**values):

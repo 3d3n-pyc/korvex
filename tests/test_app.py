@@ -4,43 +4,9 @@ import asyncio
 import json
 
 import pytest
+from support import make_scope, response_from, run_app, run_lifespan
 
 from korvex import App, HTTPException, Response
-
-
-def make_scope(method="GET", path="/", headers=None, query_string=b""):
-    return {
-        "type": "http",
-        "method": method,
-        "path": path,
-        "headers": [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in (headers or [])],
-        "query_string": query_string,
-    }
-
-
-def run_app(app, scope, body=b""):
-    sent = []
-    body_sent = False
-
-    async def receive():
-        nonlocal body_sent
-        if not body_sent:
-            body_sent = True
-            return {"type": "http.request", "body": body, "more_body": False}
-        return {"type": "http.disconnect"}
-
-    async def send(message):
-        sent.append(message)
-
-    asyncio.run(app(scope, receive, send))
-    return sent
-
-
-def response_from(sent):
-    start = next(m for m in sent if m["type"] == "http.response.start")
-    body = b"".join(m["body"] for m in sent if m["type"] == "http.response.body")
-    headers = [(name.decode("latin-1"), value.decode("latin-1")) for name, value in start["headers"]]
-    return start["status"], headers, body
 
 
 def test_get_decorator_registers_route_and_handler():
@@ -266,21 +232,6 @@ def test_unsupported_scope_type_raises():
 
     with pytest.raises(NotImplementedError):
         run_app(app, {"type": "carrier-pigeon"})
-
-
-def run_lifespan(app):
-    """Sends the startup then shutdown events, as a server would."""
-    events = iter([{"type": "lifespan.startup"}, {"type": "lifespan.shutdown"}])
-    sent = []
-
-    async def receive():
-        return next(events)
-
-    async def send(message):
-        sent.append(message)
-
-    asyncio.run(app({"type": "lifespan"}, receive, send))
-    return sent
 
 
 def test_lifespan_startup_and_shutdown_are_acknowledged():
@@ -816,7 +767,7 @@ def test_abort_sends_its_response_from_a_dependency_handler_or_hook():
 
 
 def test_abort_in_a_websocket_dependency_refuses_the_connection():
-    from test_websocket import run_ws, ws_scope
+    from support import run_ws, ws_scope
 
     from korvex import Abort, Depends
 
@@ -937,7 +888,7 @@ def test_bad_hosts_and_clashing_names_are_refused():
 
 
 def test_websockets_per_host():
-    from test_websocket import run_ws, ws_scope
+    from support import run_ws, ws_scope
 
     app = App()
     chat = app.host("{room}.chat.example.com")
