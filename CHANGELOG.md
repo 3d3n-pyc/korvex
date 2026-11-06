@@ -32,6 +32,13 @@ each thing. Breaking changes are listed with how to update.
   return. With `RouteGroup` gone from `korvex`, there's one kind of group
   left. To update: rename it in type annotations.
 
+### New
+
+- **`headers=` takes a dict**, in `Response(...)` and its shortcuts,
+  `HTTPException` and `WebSocket.accept()`: `headers={"X-Total": "3"}`.
+  Pairs still work, to repeat a name. A dict failed before with "too
+  many values to unpack".
+
 ### Inside
 
 - The code is reorganized: the App's module split in three, the

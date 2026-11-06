@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from http import HTTPStatus
 from typing import TYPE_CHECKING
+
+from korvex._response import HeaderItems, header_pairs
 
 if TYPE_CHECKING:
     from korvex._response import Response
@@ -14,12 +15,12 @@ class HTTPException(Exception):
     """Raise it in a handler, a dependency or a before hook to answer with
     an HTTP error:
     `raise HTTPException(404, "user not found")`. Without a `detail`, the
-    standard reason (`Not Found`) is used."""
+    standard reason (`Not Found`) is used. `headers` is a dict or pairs."""
 
-    def __init__(self, status: int, detail: str | None = None, *, headers: Iterable[tuple[str, str]] = ()) -> None:
+    def __init__(self, status: int, detail: str | None = None, *, headers: HeaderItems = ()) -> None:
         self.status = status
         self.detail = detail if detail is not None else HTTPStatus(status).phrase
-        self.headers = list(headers)
+        self.headers = header_pairs(headers)
         super().__init__(status, self.detail)
 
 

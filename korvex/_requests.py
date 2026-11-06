@@ -4,13 +4,13 @@ and the `UploadedFile`s of a multipart form."""
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from email.message import Message
 from typing import TYPE_CHECKING, Any, Union
 from urllib.parse import parse_qs, unquote
 
 from korvex._errors import HTTPException
-from korvex._response import Headers, JSONValue
+from korvex._response import HeaderItems, Headers, JSONValue, header_pairs
 
 if TYPE_CHECKING:
     from korvex._app import App
@@ -184,14 +184,16 @@ class WebSocket(Request):
         self.subprotocols: list[str] = list(scope.get("subprotocols", []))
         """Subprotocols the client asked for, to pick one in `accept()`."""
 
-    async def accept(self, subprotocol: str | None = None, headers: Iterable[tuple[str, str]] = ()) -> None:
+    async def accept(self, subprotocol: str | None = None, headers: HeaderItems = ()) -> None:
         """Accepts the connection, optionally with one of `subprotocols`."""
         await self._wait_connect()
         await self._send(
             {
                 "type": "websocket.accept",
                 "subprotocol": subprotocol,
-                "headers": [(name.lower().encode("latin-1"), value.encode("latin-1")) for name, value in headers],
+                "headers": [
+                    (name.lower().encode("latin-1"), value.encode("latin-1")) for name, value in header_pairs(headers)
+                ],
             }
         )
         self._accepted = True
