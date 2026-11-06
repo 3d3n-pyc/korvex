@@ -9,11 +9,11 @@ import html
 import json
 import re
 import uuid
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
-from http import HTTPStatus
-
-from korvex.app import UploadedFile, _has_body
+from korvex.requests import UploadedFile
+from korvex.routing import _has_body
 from korvex.schema import Model, Plan, _unwrap, path_params, scalar_schema
 from korvex.security import SecurityScheme
 
@@ -47,21 +47,24 @@ def openapi_path(pattern: str) -> str:
     return _PARAM.sub(lambda m: "{" + (m.group(1) or m.group(2)) + "}", pattern)
 
 
-def build(app: App, *, title: str, version: str, description: str | None = None, host: str | None = None) -> dict[str, Any]:
+def build(
+    app: App, *, title: str, version: str, description: str | None = None, host: str | None = None
+) -> dict[str, Any]:
     components: dict[str, Any] = {}
     paths: dict[str, dict[str, Any]] = {}
     used_ids: set[str] = set()
     custom = dict(app.router.constraints())  # name -> regex
     schemes = _Schemes()
     for pattern, method, name, _ in app._routes_for(host):
-        if name.startswith("korvex.") or name not in app._handlers:
+        route = app._routes.get(name)
+        if name.startswith("korvex.") or route is None:
             continue  # static files and the docs themselves; names without a handler can't be described
-        docs = app._docs.get(name)
+        docs = route.docs
         if docs is not None and not docs.include:
             continue
-        func = app._handlers[name]
+        func = route.func
         plan = app._plan_of(name)
-        route_name = app._route_names.get((False, name), (getattr(func, "__name__", "handler"),))[0]
+        route_name = route.name or getattr(func, "__name__", "handler")
         operation: dict[str, Any] = {"operationId": _unique(route_name, used_ids)}
         if docs is not None and docs.tags:
             operation["tags"] = list(docs.tags)
@@ -75,7 +78,12 @@ def build(app: App, *, title: str, version: str, description: str | None = None,
         everything = plan.everything()  # the handler's parameters and its dependencies'
         annotated = {p.key: p.type for p in everything if p.source == "path"}
         parameters = [
-            {"name": param, "in": "path", "required": True, "schema": _path_schema(param, given, annotated, pattern, custom)}
+            {
+                "name": param,
+                "in": "path",
+                "required": True,
+                "schema": _path_schema(param, given, annotated, pattern, custom),
+            }
             for param, given in path_params(pattern).items()
         ]
         for param in everything:
@@ -99,7 +107,10 @@ def build(app: App, *, title: str, version: str, description: str | None = None,
             files = any(_unwrap(p.type)[0] is UploadedFile for p in form)
             schemas = [Model(p.type).schema(components) for p in models]
             if form:
-                fields: dict[str, Any] = {"type": "object", "properties": {p.key: _with_default(_form_schema(p.type), p) for p in form}}
+                fields: dict[str, Any] = {
+                    "type": "object",
+                    "properties": {p.key: _with_default(_form_schema(p.type), p) for p in form},
+                }
                 if [p.key for p in form if p.required]:
                     fields["required"] = [p.key for p in form if p.required]
                 schemas.append(fields)

@@ -76,7 +76,9 @@ def test_bodies_and_query_strings_are_validated(client, inbox):
 def test_rule_violations_look_like_validation_errors(client, inbox):
     response = client.post("/api/tasks", json={"list_id": inbox["id"], "title": "   "})
     assert response.status == 422
-    assert response.json()["detail"] == [{"loc": ["body", "title"], "msg": "a title can't be blank", "type": "value_error"}]
+    assert response.json()["detail"] == [
+        {"loc": ["body", "title"], "msg": "a title can't be blank", "type": "value_error"}
+    ]
 
 
 def test_export_streams_every_task(client):

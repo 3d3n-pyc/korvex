@@ -2,7 +2,6 @@
 services it needs (no globals: tests build as many apps as they like)."""
 
 from korvex import App
-
 from taskboard.services import Services
 from taskboard.web import auth, errors, hooks, lists, live, pages, tasks
 

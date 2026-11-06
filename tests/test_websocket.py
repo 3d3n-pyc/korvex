@@ -1,40 +1,10 @@
 """Tests for WebSockets in the App, driven through ASGI messages."""
 
-import asyncio
 import json
 
+from support import request, run_ws, ws_scope
+
 from korvex import App, Response, WebSocket
-
-
-def ws_scope(path, subprotocols=(), headers=()):
-    return {
-        "type": "websocket",
-        "path": path,
-        "query_string": b"",
-        "headers": [(k.lower().encode(), v.encode()) for k, v in headers],
-        "subprotocols": list(subprotocols),
-    }
-
-
-def run_ws(app, scope, incoming=()):
-    """Plays the server: sends connect, then `incoming` messages (str or
-    bytes), then a disconnect; returns what the app sent."""
-    messages = [{"type": "websocket.connect"}]
-    for message in incoming:
-        key = "text" if isinstance(message, str) else "bytes"
-        messages.append({"type": "websocket.receive", key: message})
-    messages.append({"type": "websocket.disconnect", "code": 1001})
-    queue = iter(messages)
-    sent = []
-
-    async def receive():
-        return next(queue)
-
-    async def send(message):
-        sent.append(message)
-
-    asyncio.run(app(scope, receive, send))
-    return sent
 
 
 def echo_app():
@@ -129,9 +99,7 @@ def test_websocket_in_a_group_and_next_to_an_http_route():
     sent = run_ws(app, ws_scope("/api/live"))
     assert sent[1] == {"type": "websocket.send", "text": "live"}
 
-    from test_app import make_scope, response_from, run_app
-
-    assert response_from(run_app(app, make_scope("GET", "/api/live")))[2] == b"http"
+    assert request(app, "GET", "/api/live").body == b"http"
 
 
 def test_before_hooks_see_the_handshake_and_can_refuse_it():
@@ -160,7 +128,10 @@ def test_before_hooks_see_the_handshake_and_can_refuse_it():
         await ws.accept()
         await ws.send_text(name)
 
-    assert run_ws(app, ws_scope("/ws/a", headers=[("Origin", "https://example.com")]))[1] == {"type": "websocket.send", "text": "a"}
+    assert run_ws(app, ws_scope("/ws/a", headers=[("Origin", "https://example.com")]))[1] == {
+        "type": "websocket.send",
+        "text": "a",
+    }
     refused = [{"type": "websocket.close", "code": 1000, "reason": ""}]
     assert run_ws(app, ws_scope("/ws/a", headers=[("Origin", "https://evil.example")])) == refused
     assert run_ws(app, ws_scope("/ws/closed")) == refused
@@ -184,4 +155,6 @@ def test_ready_made_hooks_apply_to_websockets():
     first = run_ws(app, ws_scope("/ws", headers=[("X-Request-ID", "abc-123")]))
     assert first[1] == {"type": "websocket.send", "text": "abc-123"}
     assert run_ws(app, ws_scope("/ws"))[0]["type"] == "websocket.accept"
-    assert run_ws(app, ws_scope("/ws")) == [{"type": "websocket.close", "code": 1000, "reason": ""}]  # the third: limited
+    assert run_ws(app, ws_scope("/ws")) == [
+        {"type": "websocket.close", "code": 1000, "reason": ""}
+    ]  # the third: limited

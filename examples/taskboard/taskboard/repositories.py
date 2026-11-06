@@ -116,10 +116,11 @@ class TaskRepository:
 
     async def iterate(self, *, batch: int = 200) -> AsyncIterator[Task]:
         """Every task, fetched `batch` at a time."""
+        sql = "SELECT * FROM tasks ORDER BY list_id, position LIMIT ? OFFSET ?"
         offset = 0
         while True:
-            sql = "SELECT * FROM tasks ORDER BY list_id, position LIMIT ? OFFSET ?"
-            tasks = await self.db.run(lambda c: [_task(row) for row in c.execute(sql, (batch, offset))])
+            page = (batch, offset)
+            tasks = await self.db.run(lambda c, page=page: [_task(row) for row in c.execute(sql, page)])
             for task in tasks:
                 yield task
             if len(tasks) < batch:
@@ -147,7 +148,10 @@ class TaskRepository:
         """Deletes the list's finished tasks; returns their IDs."""
 
         def work(c: sqlite3.Connection) -> list[uuid.UUID]:
-            ids = [uuid.UUID(row[0]) for row in c.execute("SELECT id FROM tasks WHERE list_id = ? AND done", (str(list_id),))]
+            ids = [
+                uuid.UUID(row[0])
+                for row in c.execute("SELECT id FROM tasks WHERE list_id = ? AND done", (str(list_id),))
+            ]
             c.execute("DELETE FROM tasks WHERE list_id = ? AND done", (str(list_id),))
             return ids
 
@@ -155,7 +159,9 @@ class TaskRepository:
 
     async def first_position(self, list_id: uuid.UUID) -> int:
         """A position before every task of the list (new tasks go on top)."""
-        row = await self.db.fetch_one("SELECT coalesce(min(position), 1) - 1 FROM tasks WHERE list_id = ?", (str(list_id),))
+        row = await self.db.fetch_one(
+            "SELECT coalesce(min(position), 1) - 1 FROM tasks WHERE list_id = ?", (str(list_id),)
+        )
         return row[0] if row else 0
 
     async def reorder(self, list_id: uuid.UUID, ids: Sequence[uuid.UUID]) -> None:
@@ -163,7 +169,9 @@ class TaskRepository:
         in `ids` keep their order, after them; IDs from elsewhere are ignored."""
 
         def work(c: sqlite3.Connection) -> None:
-            current = [row[0] for row in c.execute("SELECT id FROM tasks WHERE list_id = ? ORDER BY position", (str(list_id),))]
+            current = [
+                row[0] for row in c.execute("SELECT id FROM tasks WHERE list_id = ? ORDER BY position", (str(list_id),))
+            ]
             known = set(current)
             wanted = [str(id) for id in ids if str(id) in known]
             order = list(dict.fromkeys(wanted + current))

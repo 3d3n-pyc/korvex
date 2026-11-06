@@ -20,8 +20,9 @@ wheels/
 .installed.cfg
 *.egg
 
-# --- Environnements virtuels ---
+# --- Virtual environments ---
 .venv/
+.venv-*/
 venv/
 env/
 ENV/
@@ -29,7 +30,7 @@ ENV/
 # --- uv ---
 uv-cache/
 
-# --- Tests / couverture ---
+# --- Tests and coverage ---
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -51,7 +52,7 @@ coverage.xml
 # --- pytest-benchmark ---
 .benchmarks/
 
-# --- Éditeurs / IDE ---
+# --- Editors ---
 .vscode/
 .idea/
 *.swp
@@ -62,7 +63,7 @@ coverage.xml
 .DS_Store
 Thumbs.db
 
-# --- Divers ---
+# --- Other ---
 *.log
 .env
 .env.local

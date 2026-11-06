@@ -6,7 +6,7 @@ from typing import Optional
 from uuid import UUID
 
 import pytest
-from test_app import make_scope, response_from, run_app
+from support import request
 
 from korvex import App, Response
 
@@ -42,9 +42,10 @@ def models(request):
 
 
 def call(app, method, path, body=b"", query=b""):
-    scope = make_scope(method, path, headers=[("Content-Type", "application/json")], query_string=query)
-    status, headers, raw = response_from(run_app(app, scope, body=body))
-    return status, dict(headers), json.loads(raw) if raw else None
+    """`(status, headers, JSON body or None)` of one JSON request."""
+    target = f"{path}?{query.decode()}" if query else path
+    response = request(app, method, target, headers=[("Content-Type", "application/json")], body=body)
+    return response.status, dict(response.headers), response.json() if response.body else None
 
 
 def user_app(models):
@@ -105,10 +106,25 @@ def test_query_parameters():
     app = App()
 
     @app.get("/search")
-    def search(request, q: str, limit: int = 10, tags: list[str] = [], exact: Optional[bool] = None, after: Optional[UUID] = None):
-        return Response.json({"q": q, "limit": limit, "tags": tags, "exact": exact, "after": str(after) if after else None})
+    def search(
+        request,
+        q: str,
+        limit: int = 10,
+        tags: list[str] = [],  # noqa: B006 (as users write it)
+        exact: Optional[bool] = None,
+        after: Optional[UUID] = None,
+    ):
+        return Response.json(
+            {"q": q, "limit": limit, "tags": tags, "exact": exact, "after": str(after) if after else None}
+        )
 
-    assert call(app, "GET", "/search", query=b"q=rust")[2] == {"q": "rust", "limit": 10, "tags": [], "exact": None, "after": None}
+    assert call(app, "GET", "/search", query=b"q=rust")[2] == {
+        "q": "rust",
+        "limit": 10,
+        "tags": [],
+        "exact": None,
+        "after": None,
+    }
     uid = "123e4567-e89b-12d3-a456-426614174000"
     data = call(app, "GET", "/search", query=f"q=a&limit=3&tags=x&tags=y&exact=false&after={uid}".encode())[2]
     assert data == {"q": "a", "limit": 3, "tags": ["x", "y"], "exact": False, "after": uid}
@@ -128,8 +144,12 @@ def test_handlers_without_annotations_are_called_as_before():
     def typed(request, id: int) -> Response:  # the pattern already gives an int: nothing to do
         return Response.json({"id": id})
 
-    assert not app._plans["test_validation.test_handlers_without_annotations_are_called_as_before.<locals>.user"].params
-    assert not app._plans["test_validation.test_handlers_without_annotations_are_called_as_before.<locals>.typed"].params
+    assert not app._routes[
+        "test_validation.test_handlers_without_annotations_are_called_as_before.<locals>.user"
+    ].plan.params
+    assert not app._routes[
+        "test_validation.test_handlers_without_annotations_are_called_as_before.<locals>.typed"
+    ].plan.params
     assert call(app, "GET", "/typed/5")[2] == {"id": 5}
 
 
@@ -141,7 +161,8 @@ def test_returning_a_response_still_works_with_a_return_model(models):
     def maybe(request) -> UserOut:
         return Response.text("not today", status=503)
 
-    assert response_from(run_app(app, make_scope("GET", "/maybe")))[:3:2] == (503, b"not today")
+    response = request(app, "GET", "/maybe")
+    assert (response.status, response.body) == (503, b"not today")
 
 
 def test_unclear_parameters_are_refused_at_registration(models):
@@ -200,7 +221,9 @@ def test_dates_in_the_query_string_and_the_path():
 
     @app.get("/agenda/{day}")
     def agenda(request, day: date, after: Optional[datetime] = None, until: Optional[date] = None):
-        return Response.json({"day": day.isoformat(), "after": after.isoformat() if after else None, "until": str(until)})
+        return Response.json(
+            {"day": day.isoformat(), "after": after.isoformat() if after else None, "until": str(until)}
+        )
 
     data = call(app, "GET", "/agenda/2026-11-05", query=b"after=2026-11-05T08:30:00Z&until=2026-12-31")[2]
     assert data == {"day": "2026-11-05", "after": "2026-11-05T08:30:00+00:00", "until": "2026-12-31"}
@@ -223,7 +246,7 @@ def test_an_unsupported_annotation_is_refused_even_with_a_default():
     with pytest.raises(TypeError, match="can't tell where parameter 'options'"):
 
         @app.get("/a")
-        def annotated(request, options: dict = {}):  # would silently always be {}
+        def annotated(request, options: dict = {}):  # noqa: B006 (refused: would silently always be {})
             pass
 
     @app.get("/b")

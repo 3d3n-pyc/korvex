@@ -5,10 +5,61 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+# A new push to a pull request stops the run of the one before.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  lint:
+    name: Lint, types and Rust tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Rust formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Rust tests
+        run: cargo test
+
+      - name: Install
+        run: uv sync --locked
+
+      - name: Ruff
+        run: uv run --no-sync ruff check --output-format=github .
+
+      - name: Python formatting
+        run: uv run --no-sync ruff format --check .
+
+      - name: Pyright
+        run: uv run --no-sync pyright
+
   test:
+    name: Python ${{ matrix.python }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
     services:
       redis:  # for the RedisStore tests; skipped where there's no Redis
         image: redis:7-alpine
@@ -21,30 +72,33 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
 
-      - name: Check formatting
-        run: cargo fmt --check
-
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
-
-      - name: Run Rust tests
-        run: cargo test
+      - uses: Swatinem/rust-cache@v2
 
       - name: Install uv
         uses: astral-sh/setup-uv@v10.3.3
 
       - name: Build and install
-        run: uv run maturin develop --release
+        run: uv sync --locked --python ${{ matrix.python }}
 
-      - name: Run Python tests
-        run: uv run pytest
+      - name: Tests
+        if: matrix.python != '3.14'
+        run: uv run --no-sync pytest
+
+      # Coverage on one version: the server's and the CLI's subprocesses
+      # count too. The report is on the run's summary page.
+      - name: Tests, with coverage
+        if: matrix.python == '3.14'
+        run: |
+          uv run --no-sync coverage run -m pytest
+          uv run --no-sync coverage combine
+          uv run --no-sync coverage report
+          uv run --no-sync coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
 
   free-threaded:
     # Python 3.14t, without the GIL. -W error::RuntimeWarning fails the run
     # if any module turns the GIL back on, which would undo the point.
+    name: Python 3.14t (free-threaded)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

@@ -125,7 +125,9 @@ def test_responses_override_and_ranges():
 
 
 def test_security_scheme_from_a_dependency(document):
-    assert document["components"]["securitySchemes"] == {"bearer": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}}
+    assert document["components"]["securitySchemes"] == {
+        "bearer": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
+    }
     create = document["paths"]["/api/tasks"]["post"]
     assert create["security"] == [{"bearer": []}]
     assert create["responses"]["401"] == {"description": "Not authenticated"}
@@ -190,7 +192,12 @@ def test_schemes_sharing_a_name():
 
 def test_schemes_at_runtime():
     app = App()
-    bearer, header_key, query_key, cookie_key = Bearer(), APIKey(header="X-Key"), APIKey(query="key"), APIKey(cookie="key")
+    bearer, header_key, query_key, cookie_key = (
+        Bearer(),
+        APIKey(header="X-Key"),
+        APIKey(query="key"),
+        APIKey(cookie="key"),
+    )
     optional = Bearer(required=False)
 
     @app.get("/bearer")
@@ -217,7 +224,11 @@ def test_schemes_at_runtime():
         assert client.get("/bearer", headers={"Authorization": "bearer abc"}).text == "abc"
         for headers in ({}, {"Authorization": "Basic abc"}, {"Authorization": "Bearer "}):
             refused = client.get("/bearer", headers=headers)
-            assert (refused.status, refused.text, refused.headers["www-authenticate"]) == (401, "Not authenticated", "Bearer")
+            assert (refused.status, refused.text, refused.headers["www-authenticate"]) == (
+                401,
+                "Not authenticated",
+                "Bearer",
+            )
         assert client.get("/keys", headers={"X-Key": "k1"}).text == "k1"
         assert client.get("/keys").headers["www-authenticate"] == "APIKey"
         assert client.get("/query?key=k2").text == "k2"
@@ -240,9 +251,8 @@ def test_scheme_on_a_websocket():
         await ws.send_text(session)
 
     with TestClient(app) as client:
-        with pytest.raises(WebSocketDisconnect):
-            with client.websocket("/live"):
-                pass
+        with pytest.raises(WebSocketDisconnect), client.websocket("/live"):
+            pass
         with client.websocket("/live", cookies={"session": "s"}) as ws:
             assert ws.receive_text() == "s"
 

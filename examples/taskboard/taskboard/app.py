@@ -5,7 +5,6 @@ from datetime import timedelta
 from typing import Optional
 
 from korvex import App
-
 from taskboard import __version__, web
 from taskboard.config import Settings
 from taskboard.db import Database

@@ -2,9 +2,9 @@
 
 import pytest
 from conftest import PASSWORD
+
 from korvex import WebSocketDisconnect
 from korvex.testing import TestClient
-
 from taskboard.app import create_app
 from taskboard.config import Settings
 
@@ -17,9 +17,8 @@ def test_the_api_needs_a_session(anonymous):
 
 
 def test_live_updates_need_a_session(anonymous):
-    with pytest.raises(WebSocketDisconnect):  # refused: closed before being accepted
-        with anonymous.websocket("/live"):
-            pass
+    with pytest.raises(WebSocketDisconnect), anonymous.websocket("/live"):  # refused: closed before being accepted
+        pass
 
 
 def test_wrong_password(anonymous):

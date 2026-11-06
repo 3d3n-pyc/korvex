@@ -31,8 +31,21 @@ CONNECTIONS = 200
 
 
 def command(python, workers, threads):
-    return [python, "-m", "korvex", "run", "korvex_app:app", "--app-dir", "benches/load", "--port", str(PORT),
-            "--workers", str(workers), "--threads", str(threads)]
+    return [
+        python,
+        "-m",
+        "korvex",
+        "run",
+        "korvex_app:app",
+        "--app-dir",
+        "benches/load",
+        "--port",
+        str(PORT),
+        "--workers",
+        str(workers),
+        "--threads",
+        str(threads),
+    ]
 
 
 def main():

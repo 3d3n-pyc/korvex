@@ -40,14 +40,57 @@ PY = sys.executable
 PORT = servers.PORT
 
 SERVERS = {
-    "korvex, built-in server": [PY, "-m", "korvex", "run", "korvex_db_app:app", "--app-dir", "benches/db",
-                                "--port", str(PORT), "--workers", str(WORKERS)],
-    "korvex on uvicorn": [PY, "-m", "uvicorn", "korvex_db_app:app", "--app-dir", "benches/db", "--port", str(PORT),
-                          "--log-level", "warning", "--no-access-log", "--loop", "uvloop", "--http", "httptools",
-                          "--workers", str(WORKERS)],
-    "fastapi on uvicorn": [PY, "-m", "uvicorn", "fastapi_db_app:app", "--app-dir", "benches/db", "--port", str(PORT),
-                           "--log-level", "warning", "--no-access-log", "--loop", "uvloop", "--http", "httptools",
-                           "--workers", str(WORKERS)],
+    "korvex, built-in server": [
+        PY,
+        "-m",
+        "korvex",
+        "run",
+        "korvex_db_app:app",
+        "--app-dir",
+        "benches/db",
+        "--port",
+        str(PORT),
+        "--workers",
+        str(WORKERS),
+    ],
+    "korvex on uvicorn": [
+        PY,
+        "-m",
+        "uvicorn",
+        "korvex_db_app:app",
+        "--app-dir",
+        "benches/db",
+        "--port",
+        str(PORT),
+        "--log-level",
+        "warning",
+        "--no-access-log",
+        "--loop",
+        "uvloop",
+        "--http",
+        "httptools",
+        "--workers",
+        str(WORKERS),
+    ],
+    "fastapi on uvicorn": [
+        PY,
+        "-m",
+        "uvicorn",
+        "fastapi_db_app:app",
+        "--app-dir",
+        "benches/db",
+        "--port",
+        str(PORT),
+        "--log-level",
+        "warning",
+        "--no-access-log",
+        "--loop",
+        "uvloop",
+        "--http",
+        "httptools",
+        "--workers",
+        str(WORKERS),
+    ],
 }
 
 
@@ -57,16 +100,34 @@ def start_postgres():
         sys.exit("needs podman or docker to run PostgreSQL")
     subprocess.run([runtime, "rm", "-f", CONTAINER], capture_output=True)
     subprocess.run(
-        [runtime, "run", "-d", "--rm", "--name", CONTAINER, "-p", f"127.0.0.1:{DB_PORT}:5432",
-         "-e", "POSTGRES_USER=bench", "-e", "POSTGRES_PASSWORD=bench", "-e", "POSTGRES_DB=bench",
-         "docker.io/library/postgres:17-alpine", "-c", "max_connections=200"],
-        check=True, capture_output=True,
+        [
+            runtime,
+            "run",
+            "-d",
+            "--rm",
+            "--name",
+            CONTAINER,
+            "-p",
+            f"127.0.0.1:{DB_PORT}:5432",
+            "-e",
+            "POSTGRES_USER=bench",
+            "-e",
+            "POSTGRES_PASSWORD=bench",
+            "-e",
+            "POSTGRES_DB=bench",
+            "docker.io/library/postgres:17-alpine",
+            "-c",
+            "max_connections=200",
+        ],
+        check=True,
+        capture_output=True,
     )
     # Pinned with taskset rather than --cpuset-cpus, which rootless podman
     # often can't apply. The backends PostgreSQL forks for each connection
     # inherit it.
-    pid = subprocess.run([runtime, "inspect", "--format", "{{.State.Pid}}", CONTAINER],
-                         check=True, capture_output=True, text=True).stdout.strip()
+    pid = subprocess.run(
+        [runtime, "inspect", "--format", "{{.State.Pid}}", CONTAINER], check=True, capture_output=True, text=True
+    ).stdout.strip()
     subprocess.run(["taskset", "-a", "-p", "-c", DB_CPUS, pid], check=True, capture_output=True)
     asyncio.run(seed())
     return runtime

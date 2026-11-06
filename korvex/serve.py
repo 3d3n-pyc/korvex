@@ -10,6 +10,8 @@ startup hook, for example) stops everything instead of looping.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import functools
 import logging
 import os
 import signal
@@ -20,10 +22,24 @@ import threading
 import time
 import traceback
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
+from urllib.parse import unquote
 
 from korvex import _core
+from korvex.app import _call, _finish, _raw_headers
 from korvex.middleware import current_request_id
+from korvex.response import StreamingResponse
+
+# Python 3.12+: a request handler that doesn't wait completes right away,
+# without going through the loop's queue. Older versions schedule it.
+_eager_task_factory = getattr(asyncio, "eager_task_factory", None)
+
+
+def _start_task(loop: asyncio.AbstractEventLoop, coroutine: Any) -> asyncio.Task:
+    if _eager_task_factory is not None:
+        return _eager_task_factory(loop, coroutine)
+    return loop.create_task(coroutine)
+
 
 if TYPE_CHECKING:
     from korvex.app import App
@@ -163,7 +179,6 @@ async def serve(
     lets requests in progress finish for up to `graceful_timeout` seconds.
     In a thread of its own, signals go to the main thread instead: it sets
     the event `joined(loop, event)` was given."""
-    from korvex.app import _call, _start_task
 
     try:
         for hook in app._on_startup:  # if one raises, the server doesn't start
@@ -183,7 +198,9 @@ async def serve(
         config.forwarded_host,
         list(config.constraints),
     )
-    handle = _logged(app._serve_one) if config.access_log else app._serve_one
+    handle = functools.partial(_serve_http, app)
+    if config.access_log:
+        handle = _logged(handle)
     stopping = asyncio.Event()
     if joined is None:
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -218,7 +235,7 @@ async def serve(
                 path, query, headers, client, scheme, connection = event
                 queue: asyncio.Queue = asyncio.Queue()
                 websockets[connection.id] = queue
-                task = start(app._serve_websocket(path, query, headers, client, scheme, connection, queue, writable))
+                task = start(_serve_websocket(app, path, query, headers, client, scheme, connection, queue, writable))
                 task.add_done_callback(lambda _, id=connection.id: websockets.pop(id, None))
             elif kind == "ws_message" and event[0] in websockets:
                 key = "text" if isinstance(event[1], str) else "bytes"
@@ -247,11 +264,132 @@ async def serve(
             await _call(hook)
 
 
+async def _serve_http(
+    app: App,
+    method: str,
+    path: str,
+    query_string: bytes,
+    headers: list,
+    body: bytes,
+    client: tuple[str, int] | None,
+    scheme: str,
+    responder: Any,
+    error: int = 0,
+    writable: Callable[[int], Awaitable[None]] | None = None,
+) -> int:
+    """Runs one request taken from the built-in server, through the same
+    dispatch as under ASGI, hands the response back to Rust, and returns
+    its status. `error` is a status the server already decided on (413,
+    408, 400): the request goes through the before hooks, then gets that
+    error's response, as if the route had raised `HTTPException`. A
+    streamed response waits on `writable(responder.id)` whenever its
+    client falls behind."""
+    scope = {
+        "type": "http",
+        "method": method,
+        "path": unquote(path),
+        "query_string": query_string,
+        "headers": headers,
+        "client": client,
+        "scheme": scheme,
+    }
+
+    async def receive() -> dict:
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    response = await app._respond(scope, receive, error)
+    head = method == "HEAD"
+    raw_headers = _raw_headers(response, head)
+    if head:
+        responder.respond(response.status, raw_headers, b"")
+    elif isinstance(response, StreamingResponse):
+        responder.start_stream(response.status, raw_headers)
+        try:
+            async for chunk in response:
+                sent = responder.send_chunk(chunk)
+                if sent == 0:
+                    break  # the client is gone
+                if sent == 2 and writable is not None:
+                    await writable(responder.id)  # the client is behind: let it catch up
+        finally:
+            responder.end_stream()
+            await _finish(response, path)
+    else:
+        responder.respond(response.status, raw_headers, response.body)
+    if head and isinstance(response, StreamingResponse):
+        await _finish(response, path)
+    return response.status
+
+
+async def _serve_websocket(
+    app: App,
+    path: str,
+    query_string: bytes,
+    headers: list,
+    client: tuple[str, int] | None,
+    scheme: str,
+    connection: Any,
+    incoming: asyncio.Queue,
+    writable: Callable[[int], Awaitable[None]] | None = None,
+) -> None:
+    """Runs a WebSocket from the built-in server through the same code
+    as under ASGI: it speaks ASGI messages over the Rust connection. A
+    send waits on `writable(connection.id)` while the client is behind."""
+    offered = next((v.decode("latin-1") for k, v in headers if k == b"sec-websocket-protocol"), "")
+    scope = {
+        "type": "websocket",
+        "path": unquote(path),
+        "query_string": query_string,
+        "headers": headers,
+        "client": client,
+        "scheme": scheme,
+        "subprotocols": [p.strip() for p in offered.split(",") if p.strip()],
+    }
+    connected = False
+
+    async def receive() -> dict:
+        nonlocal connected
+        if not connected:
+            connected = True
+            return {"type": "websocket.connect"}
+        return await incoming.get()
+
+    async def send(message: dict) -> None:
+        kind = message["type"]
+        if kind == "websocket.accept":
+            connection.accept(message.get("subprotocol"), message.get("headers") or [])
+        elif kind == "websocket.send":
+            if message.get("text") is not None:
+                sent = connection.send_text(message["text"])
+            else:
+                sent = connection.send_bytes(message.get("bytes") or b"")
+            if sent == 2 and writable is not None:
+                await writable(connection.id)  # the client is behind: let it catch up
+        elif kind == "websocket.close":
+            connection.close(message.get("code", 1000), message.get("reason") or "")
+
+    try:
+        await app._websocket(scope, receive, send)
+    finally:
+        connection.finish()
+
+
 def _logged(serve_one: Callable[..., Awaitable[int]]) -> Callable[..., Awaitable[int]]:
-    """Wraps App._serve_one to log each request: client, request line,
+    """Wraps _serve_http to log each request: client, request line,
     status and duration."""
 
-    async def serve_logged(method: str, path: str, query: bytes, headers: list, body: bytes, client, scheme, responder, error: int = 0, writable=None) -> int:
+    async def serve_logged(
+        method: str,
+        path: str,
+        query: bytes,
+        headers: list,
+        body: bytes,
+        client,
+        scheme,
+        responder,
+        error: int = 0,
+        writable=None,
+    ) -> int:
         started = time.perf_counter()
         status = await serve_one(method, path, query, headers, body, client, scheme, responder, error, writable)
         target = f"{path}?{query.decode('latin-1')}" if query else path
@@ -299,10 +437,8 @@ def supervise(app: App, listener: socket.socket, workers: int, graceful_timeout:
         # Stop the kernel from queueing new connections no worker would take.
         listener.close()
         for pid in list(children):
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
 
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)

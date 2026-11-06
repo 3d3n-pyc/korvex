@@ -1,38 +1,43 @@
 """`App`: an ASGI application built on `Router`.
 
-Run it with any ASGI server (uvicorn, hypercorn, granian...). For each
-request, `App` matches the path, resolves the route's dependencies, calls the
-handler and sends its `Response`.
+Run it with any ASGI server (uvicorn, hypercorn, granian...), or its own
+(`App.run()`). For each request, `App` matches the path, resolves the
+route's dependencies, calls the handler and sends its `Response`.
 """
 
 from __future__ import annotations
 
 import asyncio
-import inspect
-import json
 import logging
 import os
 import threading
 import weakref
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
-from email.message import Message
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Optional, Union, overload
-from urllib.parse import parse_qs, unquote
 
 from korvex._core import MethodNotAllowed
 from korvex.errors import Abort, HTTPException, ValidationError
-from korvex.response import Headers, JSONValue, Response, StreamingResponse
-from korvex.schema import Plan, Run, _library, needs_plan, path_params, plan_for
-from korvex.router import RouteGroup, Router
+from korvex.requests import Request, UploadedFile, WebSocket, WebSocketDisconnect
+from korvex.response import Response, StreamingResponse
+from korvex.router import Router
+from korvex.routing import (
+    AppGroup,
+    Handler,
+    WebSocketHandler,
+    _check_name_type,
+    _Docs,
+    _Host,
+    _host_labels,
+    _Route,
+    _RouteDecorators,
+)
+from korvex.schema import Plan, Run, needs_plan, plan_for
 
-# `Union`/`Optional` rather than `|`: these lines run at import time, and
-# `|` between types needs Python 3.10+.
-Handler = Callable[..., Any]
-"""`(request, **path_params) -> Response`, sync or async. Path params come
-converted: `int` for `{id:int}`, `uuid.UUID` for `{id:uuid}`, else `str`.
-With a model return annotation, it can return the model instead."""
+# Defined here until 0.13, and still importable from here.
+__all__ = ["App", "AppGroup", "LoopLocal", "Request", "UploadedFile", "WebSocket", "WebSocketDisconnect"]
+
 
 BeforeHook = Callable[["Request"], Union[Optional[Response], Awaitable[Optional[Response]]]]
 """`(request) -> Response | None`, sync or async. Returning a `Response`
@@ -50,8 +55,6 @@ ExceptionHandler = Callable[["Request", Any], Union[Response, Awaitable[Response
 annotated with the class the handler is registered for."""
 
 logger = logging.getLogger("korvex")
-
-
 
 
 class LoopLocal:
@@ -106,690 +109,25 @@ class LoopLocal:
             raise AttributeError(name) from None
 
 
-class UploadedFile:
-    """A file sent in a `multipart/form-data` form."""
-
-    __slots__ = ("filename", "content_type", "data")
-
-    def __init__(self, filename: str, content_type: str, data: bytes) -> None:
-        self.filename = filename
-        self.content_type = content_type
-        self.data = data
-
-    def __repr__(self) -> str:
-        return f"UploadedFile({self.filename!r}, {self.content_type!r}, {len(self.data)} bytes)"
-
-
-FormData = dict[str, list[Union[str, UploadedFile]]]
-
-
-class Request:
-    """An incoming HTTP request."""
-
-    __slots__ = ("method", "path", "headers", "query_params", "path_params", "client", "scheme", "app", "_receive", "_cookies", "_body", "_form")
-
-    def __init__(
-        self, scope: dict, receive: Callable[[], Awaitable[dict]], path_params: Mapping[str, Any], app: App | None = None
-    ) -> None:
-        self.method: str = scope.get("method", "GET")  # a WebSocket handshake is a GET
-        self.path: str = scope["path"]
-        client = scope.get("client")
-        self.client: tuple[str, int] | None = tuple(client) if client else None  # type: ignore[assignment]
-        """`(host, port)` of the client, behind a trusted proxy too; `None` if unknown."""
-        self.scheme: str = scope.get("scheme", "http")
-        """`"https"` or `"http"`, as the client used it."""
-        self.headers = Headers((k.decode("latin-1"), v.decode("latin-1")) for k, v in scope["headers"])
-        self.query_params: dict[str, list[str]] = parse_qs(scope.get("query_string", b"").decode("latin-1"))
-        self.path_params = path_params
-        self.app = app
-        """The `App` handling the request."""
-        self._receive = receive
-        self._cookies: dict[str, str] | None = None
-        self._body: bytes | None = None
-        self._form: FormData | None = None
-
-    @property
-    def cookies(self) -> dict[str, str]:
-        """The cookies sent by the client, parsed on first use."""
-        if self._cookies is None:
-            self._cookies = {}
-            for header in self.headers.get_all("cookie"):
-                for pair in header.split(";"):
-                    name, sep, value = pair.partition("=")
-                    if sep and name.strip():
-                        self._cookies[name.strip()] = unquote(value.strip().strip('"'))
-        return self._cookies
-
-    async def body(self) -> bytes:
-        """Reads the whole request body (once: later calls get it again)."""
-        if self._body is None:
-            chunks = []
-            more_body = True
-            while more_body:
-                message = await self._receive()
-                chunks.append(message.get("body", b""))
-                more_body = message.get("more_body", False)
-            self._body = b"".join(chunks)
-        return self._body
-
-    async def json(self) -> JSONValue:
-        """Reads the body and parses it as JSON. A body that isn't valid
-        JSON is answered with a 400 error."""
-        try:
-            return json.loads(await self.body())
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            raise HTTPException(400, "invalid JSON body") from None
-
-    async def form(self) -> FormData:
-        """Reads the body as a form: each field name maps to its values, in
-        order. Files from a `multipart/form-data` form are `UploadedFile`s.
-        Any other content type is answered with a 415 error, and text that
-        can't be decoded with a 400."""
-        if self._form is None:
-            self._form = await self._read_form()
-        return self._form
-
-    async def _read_form(self) -> FormData:
-        content_type = Message()
-        content_type["content-type"] = self.headers.get("content-type") or ""
-        kind = content_type.get_content_type()
-        try:
-            if kind == "application/x-www-form-urlencoded":
-                return parse_qs((await self.body()).decode(), keep_blank_values=True)  # type: ignore[return-value]
-            if kind == "multipart/form-data" and content_type.get_param("boundary"):
-                return _parse_multipart(await self.body(), str(content_type.get_param("boundary")))
-        except (UnicodeDecodeError, LookupError):  # bad bytes, or an unknown charset
-            raise HTTPException(400, "invalid form encoding") from None
-        raise HTTPException(415, "expected a form (urlencoded or multipart)")
-
-    def url_for(self, name: str, /, **params: Any) -> str:
-        """The full URL of the route named `name`, like `App.url_for()`
-        gives its path: `"https://example.com/users/42"`. The scheme is
-        the request's (`ws` or `wss` for a WebSocket route). The host is
-        the route's own for an `app.host()` route, its parameters given
-        here too (`tenant="acme"`), with the request's port; for other
-        routes, it's the request's `Host` header.
-
-        That header comes from the client: for a link sent elsewhere (an
-        email to reset a password), build it from a base URL you
-        configure and `app.url_for()`, not from the request."""
-        if self.app is None:
-            raise RuntimeError("this request doesn't come from an App: url_for() needs one to find the route")
-        from korvex import urls
-
-        return urls.url_for(self, urls.lookup(self.app._url_index(), name), params)
-
-    def __repr__(self) -> str:
-        return f"Request({self.method} {self.path!r})"
-
-
-class WebSocketDisconnect(Exception):
-    """Raised by `WebSocket.receive()` once the client has disconnected."""
-
-    def __init__(self, code: int = 1000) -> None:
-        self.code = code
-        super().__init__(code)
-
-
-class WebSocket(Request):
-    """A WebSocket connection, passed to `@app.websocket` handlers. It has
-    the handshake request's headers, cookies, params, client and scheme
-    (`"ws"` or `"wss"`), so the handler can check who connects before
-    calling `accept()`.
-
-        @app.websocket("/ws")
-        async def echo(ws):
-            await ws.accept()
-            async for message in ws:
-                await ws.send_text(message)
-    """
-
-    __slots__ = ("subprotocols", "_send", "_connected", "_accepted", "_closed")
-
-    def __init__(
-        self, scope: dict, receive: Callable, send: Callable, path_params: Mapping[str, Any], app: App | None = None
-    ) -> None:
-        super().__init__(scope, receive, path_params, app)
-        self._send = send
-        self._connected = False
-        self._accepted = False
-        self._closed = False
-        self.subprotocols: list[str] = list(scope.get("subprotocols", []))
-        """Subprotocols the client asked for, to pick one in `accept()`."""
-
-    async def accept(self, subprotocol: str | None = None, headers: Iterable[tuple[str, str]] = ()) -> None:
-        """Accepts the connection, optionally with one of `subprotocols`."""
-        await self._wait_connect()
-        await self._send(
-            {
-                "type": "websocket.accept",
-                "subprotocol": subprotocol,
-                "headers": [(name.lower().encode("latin-1"), value.encode("latin-1")) for name, value in headers],
-            }
-        )
-        self._accepted = True
-
-    async def receive(self) -> str | bytes:
-        """The next message, text or binary. Raises `WebSocketDisconnect`
-        when the client has gone."""
-        message = await self._receive()
-        if message["type"] == "websocket.disconnect":
-            self._closed = True
-            raise WebSocketDisconnect(message.get("code", 1000))
-        if message.get("text") is not None:
-            return message["text"]
-        return message.get("bytes") or b""
-
-    async def receive_text(self) -> str:
-        message = await self.receive()
-        if not isinstance(message, str):
-            raise TypeError("expected a text message, got binary")
-        return message
-
-    async def receive_bytes(self) -> bytes:
-        message = await self.receive()
-        if not isinstance(message, bytes):
-            raise TypeError("expected a binary message, got text")
-        return message
-
-    async def receive_json(self) -> JSONValue:
-        return json.loads(await self.receive())
-
-    async def send_text(self, text: str) -> None:
-        await self._send({"type": "websocket.send", "text": text})
-
-    async def send_bytes(self, data: bytes) -> None:
-        await self._send({"type": "websocket.send", "bytes": data})
-
-    async def send_json(self, data: Any) -> None:
-        await self.send_text(json.dumps(data))
-
-    async def close(self, code: int = 1000, reason: str = "") -> None:
-        """Closes the connection. Before `accept()`, this refuses it: the
-        client gets a 403."""
-        if self._closed:
-            return
-        await self._wait_connect()
-        await self._send({"type": "websocket.close", "code": code, "reason": reason})
-        self._closed = True
-
-    async def __aiter__(self) -> AsyncIterator[str | bytes]:
-        """The messages, until the client disconnects."""
-        while True:
-            try:
-                yield await self.receive()
-            except WebSocketDisconnect:
-                return
-
-    async def _wait_connect(self) -> None:
-        """ASGI starts with a `websocket.connect` message to receive first."""
-        if not self._connected:
-            self._connected = True
-            await self._receive()
-
-    async def body(self) -> bytes:
-        raise TypeError("a WebSocket has no body: use receive()")
-
-    async def json(self) -> JSONValue:
-        raise TypeError("a WebSocket has no body: use receive_json()")
-
-    async def form(self) -> FormData:
-        raise TypeError("a WebSocket has no form")
-
-    def __repr__(self) -> str:
-        return f"WebSocket({self.path!r})"
-
-
-WebSocketHandler = Callable[..., Awaitable[None]]
-"""`async (websocket, **path_params) -> None`."""
-
-
-class _RouteDecorators:
-    """`@get(path)` and friends, for any class with a `route()` decorator.
-
-    - `name`: what `url_for()` knows the route by (the function's name by
-      default).
-    - `status`: the status of the response made from what the handler
-      returns, a model or `None` (annotated `-> None`, for an empty
-      response: `status=204`). A `Response` it returns keeps its own.
-      OpenAPI documents it as the route's success.
-    - `dependencies` (`[Depends(func), ...]`): run before the handler, for
-      what they check rather than what they return.
-    - `tags`, `deprecated`, `responses` and `include_in_schema`: how the
-      route shows in OpenAPI. `responses` documents other answers, by
-      status: `{404: "No such task"}`, `{409: Conflict}` (a model), or
-      `{409: ("Name taken", Conflict)}`.
-    - `max_body` (bytes): raises or lowers the built-in server's body size
-      limit for that route; ASGI servers ignore it."""
-
-    __slots__ = ()
-
-    def route(
-        self,
-        path: str,
-        *,
-        method: str = "GET",
-        name: str | None = None,
-        status: int = 200,
-        dependencies: Sequence[Any] = (),
-        tags: Sequence[str] = (),
-        deprecated: bool = False,
-        responses: Mapping[int | str, Any] | None = None,
-        include_in_schema: bool = True,
-        max_body: int | None = None,
-    ) -> Callable[[Handler], Handler]:
-        raise NotImplementedError
-
-    def get(
-        self,
-        path: str,
-        *,
-        name: str | None = None,
-        status: int = 200,
-        dependencies: Sequence[Any] = (),
-        tags: Sequence[str] = (),
-        deprecated: bool = False,
-        responses: Mapping[int | str, Any] | None = None,
-        include_in_schema: bool = True,
-        max_body: int | None = None,
-    ) -> Callable[[Handler], Handler]:
-        return self.route(
-            path,
-            method="GET",
-            name=name,
-            status=status,
-            dependencies=dependencies,
-            tags=tags,
-            deprecated=deprecated,
-            responses=responses,
-            include_in_schema=include_in_schema,
-            max_body=max_body,
-        )
-
-    def post(
-        self,
-        path: str,
-        *,
-        name: str | None = None,
-        status: int = 200,
-        dependencies: Sequence[Any] = (),
-        tags: Sequence[str] = (),
-        deprecated: bool = False,
-        responses: Mapping[int | str, Any] | None = None,
-        include_in_schema: bool = True,
-        max_body: int | None = None,
-    ) -> Callable[[Handler], Handler]:
-        return self.route(
-            path,
-            method="POST",
-            name=name,
-            status=status,
-            dependencies=dependencies,
-            tags=tags,
-            deprecated=deprecated,
-            responses=responses,
-            include_in_schema=include_in_schema,
-            max_body=max_body,
-        )
-
-    def put(
-        self,
-        path: str,
-        *,
-        name: str | None = None,
-        status: int = 200,
-        dependencies: Sequence[Any] = (),
-        tags: Sequence[str] = (),
-        deprecated: bool = False,
-        responses: Mapping[int | str, Any] | None = None,
-        include_in_schema: bool = True,
-        max_body: int | None = None,
-    ) -> Callable[[Handler], Handler]:
-        return self.route(
-            path,
-            method="PUT",
-            name=name,
-            status=status,
-            dependencies=dependencies,
-            tags=tags,
-            deprecated=deprecated,
-            responses=responses,
-            include_in_schema=include_in_schema,
-            max_body=max_body,
-        )
-
-    def patch(
-        self,
-        path: str,
-        *,
-        name: str | None = None,
-        status: int = 200,
-        dependencies: Sequence[Any] = (),
-        tags: Sequence[str] = (),
-        deprecated: bool = False,
-        responses: Mapping[int | str, Any] | None = None,
-        include_in_schema: bool = True,
-        max_body: int | None = None,
-    ) -> Callable[[Handler], Handler]:
-        return self.route(
-            path,
-            method="PATCH",
-            name=name,
-            status=status,
-            dependencies=dependencies,
-            tags=tags,
-            deprecated=deprecated,
-            responses=responses,
-            include_in_schema=include_in_schema,
-            max_body=max_body,
-        )
-
-    def delete(
-        self,
-        path: str,
-        *,
-        name: str | None = None,
-        status: int = 200,
-        dependencies: Sequence[Any] = (),
-        tags: Sequence[str] = (),
-        deprecated: bool = False,
-        responses: Mapping[int | str, Any] | None = None,
-        include_in_schema: bool = True,
-        max_body: int | None = None,
-    ) -> Callable[[Handler], Handler]:
-        return self.route(
-            path,
-            method="DELETE",
-            name=name,
-            status=status,
-            dependencies=dependencies,
-            tags=tags,
-            deprecated=deprecated,
-            responses=responses,
-            include_in_schema=include_in_schema,
-            max_body=max_body,
-        )
-
-    def head(
-        self,
-        path: str,
-        *,
-        name: str | None = None,
-        status: int = 200,
-        dependencies: Sequence[Any] = (),
-        tags: Sequence[str] = (),
-        deprecated: bool = False,
-        responses: Mapping[int | str, Any] | None = None,
-        include_in_schema: bool = True,
-        max_body: int | None = None,
-    ) -> Callable[[Handler], Handler]:
-        return self.route(
-            path,
-            method="HEAD",
-            name=name,
-            status=status,
-            dependencies=dependencies,
-            tags=tags,
-            deprecated=deprecated,
-            responses=responses,
-            include_in_schema=include_in_schema,
-            max_body=max_body,
-        )
-
-    def options(
-        self,
-        path: str,
-        *,
-        name: str | None = None,
-        status: int = 200,
-        dependencies: Sequence[Any] = (),
-        tags: Sequence[str] = (),
-        deprecated: bool = False,
-        responses: Mapping[int | str, Any] | None = None,
-        include_in_schema: bool = True,
-        max_body: int | None = None,
-    ) -> Callable[[Handler], Handler]:
-        return self.route(
-            path,
-            method="OPTIONS",
-            name=name,
-            status=status,
-            dependencies=dependencies,
-            tags=tags,
-            deprecated=deprecated,
-            responses=responses,
-            include_in_schema=include_in_schema,
-            max_body=max_body,
-        )
-
-
-class _Docs:
-    """How a route, or a group's routes, show in OpenAPI."""
-
-    __slots__ = ("tags", "deprecated", "responses", "include")
-
-    def __init__(
-        self,
-        tags: Sequence[str] = (),
-        deprecated: bool = False,
-        responses: Mapping[int | str, Any] | None = None,
-        include: bool = True,
-    ) -> None:
-        if isinstance(tags, str):
-            raise TypeError(f"tags takes a list of names, not a string: tags=[{tags!r}]")
-        self.tags = tuple(tags)
-        self.deprecated = deprecated
-        self.responses = _checked_responses(responses or {})
-        self.include = include
-
-    def merge(self, other: _Docs) -> _Docs:
-        """These (a group's) with `other`'s (a route's, or a nested group's):
-        tags added, responses replaced by status, deprecated or left out
-        if either is."""
-        merged = _Docs()
-        merged.tags = (*self.tags, *(tag for tag in other.tags if tag not in self.tags))
-        merged.deprecated = self.deprecated or other.deprecated
-        merged.responses = {**self.responses, **other.responses}
-        merged.include = self.include and other.include
-        return merged
-
-
-class AppGroup(_RouteDecorators):
-    """Registers handlers under a shared prefix and dependencies, and
-    OpenAPI's `tags`, `deprecated`, `responses` and `include_in_schema`
-    for all of them.
-
-        api = app.group("/api", dependencies=[Depends(signed_in)], tags=["api"])
-
-        @api.get("/users")           # GET /api/users, after signed_in
-        def list_users(request): ...
-    """
-
-    __slots__ = ("_app", "_routes", "_dependencies", "_host", "_docs")
-
-    def __init__(
-        self,
-        app: App,
-        routes: RouteGroup,
-        dependencies: Sequence[Any] = (),
-        host: _Host | None = None,
-        docs: _Docs | None = None,
-    ) -> None:
-        self._app = app
-        self._routes = routes
-        self._dependencies = tuple(dependencies)
-        self._host = host  # for `app.host()` groups: the host their routes answer on
-        self._docs = docs if docs is not None else _Docs()
-
-    def _plan_pattern(self, full_path: str) -> str:
-        """What a handler's plan is read against: the path, after the host
-        pattern for a host's routes, so `{tenant}` in the host is a
-        parameter like those of the path."""
-        if self._host is None:
-            return full_path
-        clash = set(self._host.params) & set(path_params(full_path))
-        if clash:
-            raise ValueError(f"{full_path!r}: {sorted(clash)} is both in the host {self._host.pattern!r} and the path")
-        return self._host.pattern + full_path
-
-    def route(
-        self,
-        path: str,
-        *,
-        method: str = "GET",
-        name: str | None = None,
-        status: int = 200,
-        dependencies: Sequence[Any] = (),
-        tags: Sequence[str] = (),
-        deprecated: bool = False,
-        responses: Mapping[int | str, Any] | None = None,
-        include_in_schema: bool = True,
-        max_body: int | None = None,
-    ) -> Callable[[Handler], Handler]:
-        """Decorator: registers the function as the handler for `path`, under
-        this group's prefix. Its own `dependencies` run after the group's;
-        its OpenAPI options add to the group's."""
-        _check_name_type(name)
-        _check_status(status)
-        docs = self._docs.merge(_Docs(tags, deprecated, responses, include_in_schema))
-
-        def register(func: Handler) -> Handler:
-            key = _route_name(func, self._app._handlers)
-            full_path = self._routes.full_path(path)
-            # Bad annotations fail here, at import.
-            plan = self._app._plan(func, self._plan_pattern(full_path), (*self._dependencies, *dependencies))
-            plan.status = status
-            if plan.response is not None and not _has_body(status):
-                raise TypeError(f"{plan.func.__qualname__}: a {status} response has no body, so no return model")
-            public = self._app._check_name(name, False, self._host, full_path)
-            self._routes.route(path, key, method=method)
-            self._app._handlers[key] = func
-            self._app._plans[key] = plan
-            self._app._docs[key] = docs
-            self._app._name_route(False, key, public or getattr(func, "__name__", None), name is not None, self._host, full_path)
-            if self._host is not None:
-                self._app._host_args[key] = _takes(func, self._host.params)
-            if max_body is not None:
-                self._app._body_limits.append((method, full_path, max_body))
-            return func
-
-        return register
-
-    def websocket(
-        self, path: str, *, name: str | None = None, dependencies: Sequence[Any] = ()
-    ) -> Callable[[WebSocketHandler], WebSocketHandler]:
-        """Decorator: registers the function as the WebSocket handler for
-        `path`, under this group's prefix. Its parameters and dependencies
-        work as for HTTP handlers (no body), the group's dependencies run
-        too, and one raising `HTTPException` refuses the connection (403).
-        Before hooks run on the handshake; after hooks don't. `name` is
-        what `url_for()` knows it by (the function's name by default)."""
-        _check_name_type(name)
-
-        def register(func: WebSocketHandler) -> WebSocketHandler:
-            key = _route_name(func, self._app._ws_handlers)
-            full_path = self._routes.full_path(path)
-            plan = self._app._plan(func, self._plan_pattern(full_path), (*self._dependencies, *dependencies), websocket=True)
-            public = self._app._check_name(name, True, self._host, full_path)
-            (self._host.ws_router if self._host else self._app._ws_router).route(full_path, key)
-            self._app._ws_handlers[key] = func
-            self._app._ws_plans[key] = plan
-            self._app._name_route(True, key, public or getattr(func, "__name__", None), name is not None, self._host, full_path)
-            if self._host is not None:
-                self._app._host_args[key] = _takes(func, self._host.params)
-            return func
-
-        return register
-
-    def group(
-        self,
-        prefix: str = "",
-        *,
-        dependencies: Sequence[Any] = (),
-        tags: Sequence[str] = (),
-        deprecated: bool = False,
-        responses: Mapping[int | str, Any] | None = None,
-        include_in_schema: bool = True,
-    ) -> AppGroup:
-        """Returns a nested group. Its `dependencies` run after this
-        group's; its OpenAPI options add to this group's."""
-        docs = self._docs.merge(_Docs(tags, deprecated, responses, include_in_schema))
-        return AppGroup(self._app, self._routes.group(prefix), (*self._dependencies, *dependencies), self._host, docs)
-
-    def __repr__(self) -> str:
-        host = f", host={self._host.pattern!r}" if self._host else ""
-        return f"AppGroup(prefix={self._routes.prefix!r}{host}, dependencies={list(self._dependencies)!r})"
-
-
-class _Host:
-    """The routes of one host pattern, `api.example.com` or
-    `{tenant}.example.com`: a router for HTTP and one for WebSockets."""
-
-    __slots__ = ("pattern", "params", "_labels", "router", "ws_router")
-
-    def __init__(self, pattern: str, constraints: Iterable[tuple[str, str]]) -> None:
-        self.pattern = pattern.lower().rstrip(".")
-        self._labels: list[tuple[bool, str]] = []  # (is a parameter, name or literal)
-        for label in self.pattern.split("."):
-            if label.startswith("{") and label.endswith("}") and label[1:-1].isidentifier():
-                self._labels.append((True, label[1:-1]))
-            elif label and label.isascii() and all(c.isalnum() or c in "-_" for c in label):
-                self._labels.append((False, label))
-            else:
-                raise ValueError(f"not a host pattern: {pattern!r} (labels are names, or {{param}} for any one)")
-        self.params = [name for is_param, name in self._labels if is_param]
-        self.router, self.ws_router = Router(), Router()
-        for name, regex in constraints:
-            self.router.constraint(name, regex)
-            self.ws_router.constraint(name, regex)
-
-    def match(self, labels: list[str]) -> dict[str, str] | None:
-        """The host's parameters if `labels` (`["acme", "example", "com"]`)
-        fit the pattern, else None. A parameter takes one whole label."""
-        if len(labels) != len(self._labels):
-            return None
-        params = {}
-        for (is_param, expected), label in zip(self._labels, labels):
-            if is_param:
-                if not label:  # `.example.com`: no tenant at all, not an empty one
-                    return None
-                params[expected] = label
-            elif label != expected:
-                return None
-        return params
-
-
-def _host_labels(request: Request) -> list[str]:
-    """The labels of the host the request is for, from its `Host` header,
-    without the port: `"Acme.example.com:8000"` -> `["acme", "example", "com"]`."""
-    host = (request.headers.get("host") or "").lower()
-    if host.startswith("["):  # an IPv6 address
-        return [host[: host.find("]") + 1]]
-    return host.rsplit(":", 1)[0].rstrip(".").split(".")
-
-
 class App(_RouteDecorators):
     """An ASGI application.
 
-        app = App()
+    app = App()
 
-        @app.get("/users/{id:int}")
-        def get_user(request, id):
-            return Response.json({"id": id})
+    @app.get("/users/{id:int}")
+    def get_user(request, id):
+        return Response.json({"id": id})
 
-        # uvicorn mymodule:app
+    # uvicorn mymodule:app
     """
 
     def __init__(self, router: Router | None = None) -> None:
         self.router = router if router is not None else Router()
         self._ws_router = Router()  # WebSocket routes: a path can have both
-        self._ws_handlers: dict[str, WebSocketHandler] = {}
-        self._plans: dict[str, Plan] = {}  # what each handler's annotations ask for
-        self._ws_plans: dict[str, Plan] = {}
+        # Each route, under its handler name in the router: HTTP, WebSocket.
+        self._routes: dict[str, _Route] = {}
+        self._ws_routes: dict[str, _Route] = {}
         self._hosts: list[_Host] = []  # app.host() patterns, the ones without parameters first
-        # Handler name -> the host parameters its function takes (None: all,
-        # it has **kwargs). Dependencies get them all, handlers what they ask.
-        self._host_args: dict[str, frozenset[str] | None] = {}
         self.local = LoopLocal()
         """Attributes per event loop, for what startup hooks open: see `LoopLocal`."""
         self._dependency_plans: dict[tuple, Plan] = {}  # (function, pattern, websocket) -> its plan
@@ -798,19 +136,15 @@ class App(_RouteDecorators):
         wherever the dependency is used. For tests:
         `app.dependency_overrides[current_user] = lambda: test_user`."""
         self._root = AppGroup(self, self.router.group())
-        self._handlers: dict[str, Handler] = {}
         self._on_startup: list[Hook] = []
         self._on_shutdown: list[Hook] = []
         self._exception_handlers: dict[int | type[Exception], ExceptionHandler] = {}
         self._body_limits: list[tuple[str, str, int]] = []  # (method, path, bytes), for the built-in server
         self._before_request: list[BeforeHook] = []
         self._after_request: list[AfterHook] = []
-        # For url_for(): (websocket, handler name) -> (route name, given with name=),
-        # and where each name given with name= points.
-        self._route_names: dict[tuple[bool, str], tuple[str, bool]] = {}
+        # Where each name given with name= points: (websocket, host, path).
         self._explicit_names: dict[str, tuple[bool, str | None, str]] = {}
         self._url_cache: tuple[tuple, Any] | None = None
-        self._docs: dict[str, _Docs] = {}  # handler name -> how it shows in OpenAPI
 
     def route(
         self,
@@ -899,7 +233,9 @@ class App(_RouteDecorators):
             found = _Host(pattern, self.router.constraints())
             self._hosts.append(found)
             self._hosts.sort(key=lambda h: bool(h.params))  # stable: literal hosts first, in order
-        return AppGroup(self, found.router.group(), dependencies, found, _Docs(tags, deprecated, responses, include_in_schema))
+        return AppGroup(
+            self, found.router.group(), dependencies, found, _Docs(tags, deprecated, responses, include_in_schema)
+        )
 
     def websocket(
         self, path: str, *, name: str | None = None, dependencies: Sequence[Any] = ()
@@ -949,7 +285,7 @@ class App(_RouteDecorators):
         from korvex import urls
 
         routers = [self.router, self._ws_router] + [r for h in self._hosts for r in (h.router, h.ws_router)]
-        signature = (len(self._route_names), *(getattr(r, "version", None) for r in routers))
+        signature = (len(self._routes), len(self._ws_routes), *(getattr(r, "version", None) for r in routers))
         if self._url_cache is None or self._url_cache[0] != signature:
             self._url_cache = (signature, urls.build_index(self))
         return self._url_cache[1]
@@ -967,13 +303,11 @@ class App(_RouteDecorators):
             raise ValueError(f"route name {name!r} is already taken by {kind}{taken[1] or ''}{taken[2]}")
         return name
 
-    def _name_route(self, websocket: bool, key: str, name: str | None, explicit: bool, host: _Host | None, path: str) -> None:
-        """Records the name of a route just registered."""
-        if name is None:
-            return
-        self._route_names[(websocket, key)] = (name, explicit)
-        if explicit:
-            self._explicit_names[name] = (websocket, host.pattern if host else None, path)
+    def _add_route(self, websocket: bool, key: str, route: _Route, host: _Host | None, path: str) -> None:
+        """Keeps a route just registered in a router, under its handler name."""
+        (self._ws_routes if websocket else self._routes)[key] = route
+        if route.explicit and route.name is not None:
+            self._explicit_names[route.name] = (websocket, host.pattern if host else None, path)
 
     def _plan(self, func: Callable, pattern: str, dependencies: Sequence[Any] = (), *, websocket: bool = False) -> Plan:
         return plan_for(func, pattern, dependencies=dependencies, websocket=websocket, cache=self._dependency_plans)
@@ -1042,7 +376,7 @@ class App(_RouteDecorators):
             return Response.json(self.openapi(title=title, version=version, description=description, host=host))
 
         self.router.route(openapi_path, "korvex.openapi")
-        self._handlers["korvex.openapi"] = serve_openapi
+        self._routes["korvex.openapi"] = _Route(serve_openapi)
         if docs_path is not None:
             page = openapi.swagger_ui(title, openapi_path)
 
@@ -1050,7 +384,7 @@ class App(_RouteDecorators):
                 return Response(page, headers=[("Content-Type", "text/html; charset=utf-8")])
 
             self.router.route(docs_path, "korvex.docs")
-            self._handlers["korvex.docs"] = serve_docs
+            self._routes["korvex.docs"] = _Route(serve_docs)
 
     def constraint(self, name: str, pattern: str) -> None:
         """Defines a route constraint, beyond `int`, `uuid` and `str`:
@@ -1076,7 +410,7 @@ class App(_RouteDecorators):
         registered on `app.router` (e.g. through a route group)."""
 
         def register(func: Handler) -> Handler:
-            self._handlers[name] = func
+            self._routes[name] = _Route(func, name=name)
             return func
 
         return register
@@ -1104,8 +438,7 @@ class App(_RouteDecorators):
         pattern = f"{prefix.rstrip('/')}/*path"
         self._check_name(name, False, None, pattern)
         self.router.route(pattern, key)
-        self._handlers[key] = serve
-        self._name_route(False, key, name or "static", name is not None, None, pattern)
+        self._add_route(False, key, _Route(serve, name=name or "static", explicit=name is not None), None, pattern)
 
     # Both `@app.on_startup` and `@app.on_startup()` work: the overloads
     # tell type checkers so, and _add_hook handles the two calls.
@@ -1190,7 +523,9 @@ class App(_RouteDecorators):
     @staticmethod
     async def _send_stream(response: StreamingResponse, send: Callable, head: bool, path: str) -> None:
         try:
-            await send({"type": "http.response.start", "status": response.status, "headers": _raw_headers(response, head)})
+            await send(
+                {"type": "http.response.start", "status": response.status, "headers": _raw_headers(response, head)}
+            )
             if not head:
                 async for chunk in response:
                     await send({"type": "http.response.body", "body": chunk, "more_body": True})
@@ -1246,10 +581,11 @@ class App(_RouteDecorators):
             raise HTTPException(404)
 
         handler_name, path_params, middleware_names = found
+        route = self._routes.get(handler_name)
         values = path_params  # what dependencies can read: the host's parameters too
         if host_params:
             values = {**host_params, **path_params}
-            path_params = {**self._host_params_for(handler_name, host_params), **path_params}
+            path_params = {**_host_params_for(route, host_params), **path_params}
         request.path_params = values
         if middleware_names:
             # Middleware names given to app.router directly: the App runs
@@ -1260,10 +596,10 @@ class App(_RouteDecorators):
                 "use dependencies=[Depends(...)] on the route or its group instead"
             )
 
-        if handler_name not in self._handlers:
+        if route is None:
             raise LookupError(f"no handler named {handler_name!r}; register one with @app.handler({handler_name!r})")
-        handler = self._handlers[handler_name]
-        plan = self._plan_of(handler_name)
+        handler = route.func
+        plan = route.plan if route.plan is not None else self._plan_of(handler_name)
         if not needs_plan(plan):  # no annotations to act on: called as before, at no cost
             return await _call(handler, request, **path_params)
         if not plan.dependencies:
@@ -1283,71 +619,15 @@ class App(_RouteDecorators):
                 await run.close()
         return response
 
-    def _host_params_for(self, name: str, host_params: dict[str, str]) -> dict[str, str]:
-        """The host parameters a handler takes: those it names, or all."""
-        taken = self._host_args.get(name)
-        return host_params if taken is None else {k: v for k, v in host_params.items() if k in taken}
-
     def _plan_of(self, handler_name: str) -> Plan:
-        """The handler's plan. Handlers attached with @app.handler get theirs
-        on first use, once their route's pattern is known."""
-        plan = self._plans.get(handler_name)
-        if plan is None:
+        """The plan of an HTTP route's handler. One attached with
+        @app.handler gets its plan on first use, once its route's pattern
+        is known."""
+        route = self._routes[handler_name]
+        if route.plan is None:
             pattern = next((path for path, _, name, _ in self.router.routes() if name == handler_name), "")
-            plan = self._plans[handler_name] = self._plan(self._handlers[handler_name], pattern)
-        return plan
-
-    async def _serve_websocket(
-        self,
-        path: str,
-        query_string: bytes,
-        headers: list,
-        client: tuple[str, int] | None,
-        scheme: str,
-        connection: Any,
-        incoming: asyncio.Queue,
-        writable: Callable[[int], Awaitable[None]] | None = None,
-    ) -> None:
-        """Runs a WebSocket from the built-in server through the same code
-        as under ASGI: it speaks ASGI messages over the Rust connection. A
-        send waits on `writable(connection.id)` while the client is behind."""
-        offered = next((v.decode("latin-1") for k, v in headers if k == b"sec-websocket-protocol"), "")
-        scope = {
-            "type": "websocket",
-            "path": unquote(path),
-            "query_string": query_string,
-            "headers": headers,
-            "client": client,
-            "scheme": scheme,
-            "subprotocols": [p.strip() for p in offered.split(",") if p.strip()],
-        }
-        connected = False
-
-        async def receive() -> dict:
-            nonlocal connected
-            if not connected:
-                connected = True
-                return {"type": "websocket.connect"}
-            return await incoming.get()
-
-        async def send(message: dict) -> None:
-            kind = message["type"]
-            if kind == "websocket.accept":
-                connection.accept(message.get("subprotocol"), message.get("headers") or [])
-            elif kind == "websocket.send":
-                if message.get("text") is not None:
-                    sent = connection.send_text(message["text"])
-                else:
-                    sent = connection.send_bytes(message.get("bytes") or b"")
-                if sent == 2 and writable is not None:
-                    await writable(connection.id)  # the client is behind: let it catch up
-            elif kind == "websocket.close":
-                connection.close(message.get("code", 1000), message.get("reason") or "")
-
-        try:
-            await self._websocket(scope, receive, send)
-        finally:
-            connection.finish()
+            route.plan = self._plan(route.func, pattern)
+        return route.plan
 
     async def _websocket(self, scope: dict, receive: Callable, send: Callable) -> None:
         """Runs a WebSocket connection: its handler, or a refusal (403) for
@@ -1367,14 +647,15 @@ class App(_RouteDecorators):
         if self._before_request and not await self._websocket_hooks_allow(websocket):
             await websocket.close()  # before accept: the client gets a 403
             return
-        if found is None or found[0] not in self._ws_handlers:
+        route = self._ws_routes.get(found[0]) if found is not None else None
+        if found is None or route is None:
             await websocket.close()
             return
-        name, path_params = found[0], found[1]
+        path_params = found[1]
         if host_params:
-            path_params = {**self._host_params_for(name, host_params), **path_params}
-        handler = self._ws_handlers[name]
-        plan = self._ws_plans.get(name)
+            path_params = {**_host_params_for(route, host_params), **path_params}
+        handler = route.func
+        plan = route.plan
         run = Run(self.dependency_overrides, self._dependency_plan) if plan is not None and plan.dependencies else None
         try:
             arguments: dict[str, Any] = dict(path_params)
@@ -1536,90 +817,14 @@ class App(_RouteDecorators):
             ),
         )
 
-    async def _serve_one(
-        self,
-        method: str,
-        path: str,
-        query_string: bytes,
-        headers: list,
-        body: bytes,
-        client: tuple[str, int] | None,
-        scheme: str,
-        responder: Any,
-        error: int = 0,
-        writable: Callable[[int], Awaitable[None]] | None = None,
-    ) -> int:
-        """Runs one request taken from the built-in server, through the same
-        dispatch as under ASGI, hands the response back to Rust, and returns
-        its status. `error` is a status the server already decided on (413,
-        408, 400): the request goes through the before hooks, then gets that
-        error's response, as if the route had raised `HTTPException`. A
-        streamed response waits on `writable(responder.id)` whenever its
-        client falls behind."""
-        scope = {
-            "type": "http",
-            "method": method,
-            "path": unquote(path),
-            "query_string": query_string,
-            "headers": headers,
-            "client": client,
-            "scheme": scheme,
-        }
-
-        async def receive() -> dict:
-            return {"type": "http.request", "body": body, "more_body": False}
-
-        response = await self._respond(scope, receive, error)
-        head = method == "HEAD"
-        raw_headers = _raw_headers(response, head)
-        if head:
-            responder.respond(response.status, raw_headers, b"")
-        elif isinstance(response, StreamingResponse):
-            responder.start_stream(response.status, raw_headers)
-            try:
-                async for chunk in response:
-                    sent = responder.send_chunk(chunk)
-                    if sent == 0:
-                        break  # the client is gone
-                    if sent == 2 and writable is not None:
-                        await writable(responder.id)  # the client is behind: let it catch up
-            finally:
-                responder.end_stream()
-                await _finish(response, path)
-        else:
-            responder.respond(response.status, raw_headers, response.body)
-        if head and isinstance(response, StreamingResponse):
-            await _finish(response, path)
-        return response.status
-
     def __repr__(self) -> str:
         return f"App(router={self.router!r})"
 
 
-def _parse_multipart(body: bytes, boundary: str) -> FormData:
-    """Splits a `multipart/form-data` body on its boundary. Each part is a
-    few header lines, a blank line, then the field's value."""
-    form: FormData = {}
-    for part in body.split(b"--" + boundary.encode())[1:]:
-        if part.startswith(b"--"):  # the closing boundary
-            break
-        head, _, data = part.removeprefix(b"\r\n").partition(b"\r\n\r\n")
-        headers = Message()
-        for line in head.decode("utf-8", "replace").split("\r\n"):
-            name, _, value = line.partition(":")
-            headers[name.strip()] = value.strip()
-        field = headers.get_param("name", header="content-disposition")
-        if not isinstance(field, str):
-            continue
-        data = data.removesuffix(b"\r\n")
-        filename = headers.get_filename()
-        value: str | UploadedFile
-        if filename is None:
-            value = data.decode(headers.get_content_charset() or "utf-8")
-        else:
-            value = UploadedFile(filename, headers.get_content_type(), data)
-        form.setdefault(field, []).append(value)
-    return form
+def _host_params_for(route: _Route | None, host_params: dict[str, str]) -> dict[str, str]:
+    """The host parameters a handler takes: those it names, or all."""
+    taken = route.host_args if route is not None else None
+    return host_params if taken is None else {k: v for k, v in host_params.items() if k in taken}
 
 
 def _raw_headers(response: Response, head: bool) -> list[tuple[bytes, bytes]]:
@@ -1628,26 +833,6 @@ def _raw_headers(response: Response, head: bool) -> list[tuple[bytes, bytes]]:
     if head and not isinstance(response, StreamingResponse) and "Content-Length" not in response.headers:
         response.headers.set("Content-Length", str(len(response.body)))
     return [(name.encode("latin-1"), value.encode("latin-1")) for name, value in response.headers]
-
-
-# Python 3.12+: a request handler that doesn't wait completes right away,
-# without going through the loop's queue. Older versions schedule it.
-_eager_task_factory = getattr(asyncio, "eager_task_factory", None)
-
-
-def _start_task(loop: asyncio.AbstractEventLoop, coroutine: Any) -> asyncio.Task:
-    if _eager_task_factory is not None:
-        return _eager_task_factory(loop, coroutine)
-    return loop.create_task(coroutine)
-
-
-def _takes(func: Callable[..., Any], names: Iterable[str]) -> frozenset[str] | None:
-    """Which of `names` `func` takes as keyword arguments; None if it takes
-    any (`**kwargs`)."""
-    parameters = inspect.signature(func).parameters
-    if any(p.kind is p.VAR_KEYWORD for p in parameters.values()):
-        return None
-    return frozenset(name for name in names if name in parameters)
 
 
 def _match(router: Router, request: Request) -> Any:
@@ -1660,55 +845,6 @@ def _match(router: Router, request: Request) -> Any:
         if request.method == "HEAD" and "GET" in exc.allowed:
             return router.match(request.path, method="GET")
         raise HTTPException(405, headers=[("Allow", ", ".join(exc.allowed))]) from None
-
-
-def _check_status(status: Any) -> None:
-    if not isinstance(status, int) or isinstance(status, bool) or not 100 <= status <= 599:
-        raise ValueError(f"status must be an HTTP status, 100 to 599, not {status!r}")
-
-
-def _has_body(status: int) -> bool:
-    """Whether a response with that status can have a body (RFC 9110)."""
-    return status >= 200 and status not in (204, 205, 304)
-
-
-def _checked_responses(responses: Mapping[Any, Any]) -> dict[str, Any]:
-    """`responses=`, checked when the route is registered, keyed by the
-    status as OpenAPI writes it (`"404"`, `"4XX"`, `"default"`)."""
-    checked: dict[str, Any] = {}
-    for status, value in responses.items():
-        if isinstance(status, bool) or not (
-            (isinstance(status, int) and 100 <= status <= 599)
-            or (isinstance(status, str) and (status == "default" or (len(status) == 3 and status[0] in "12345" and status[1:] == "XX")))
-        ):
-            raise ValueError(f"responses: {status!r} isn't a status (404), a range (\"4XX\") or \"default\"")
-        description, model = (value, None) if isinstance(value, str) else (None, value)
-        if isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], str):
-            description, model = value
-        if model is not None and _library(model) is None:
-            raise TypeError(
-                f"responses[{status!r}]: expected a description, a msgspec or pydantic model, or (description, model), not {value!r}"
-            )
-        checked[str(status)] = (description, model)
-    return checked
-
-
-def _check_name_type(name: Any) -> None:
-    if name is not None and (not isinstance(name, str) or not name):
-        raise ValueError(f"a route's name must be a non-empty string, not {name!r}")
-
-
-def _route_name(func: Callable[..., Any], taken: Mapping[str, Any]) -> str:
-    """The handler name a route is registered under: the function's own,
-    `module.qualname`, with `#2`, `#3`... once that's taken. Each route gets
-    its own name, so its own plan (dependencies included) and its own
-    function, even when one function serves two routes (stacked decorators)
-    or a factory registers functions of the same name in several groups."""
-    base = f"{func.__module__}.{func.__qualname__}"
-    name, n = base, 2
-    while name in taken:
-        name, n = f"{base}#{n}", n + 1
-    return name
 
 
 async def _finish(response: StreamingResponse, path: str) -> None:

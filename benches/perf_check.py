@@ -142,7 +142,9 @@ def measure(repeat: int = 5) -> dict[str, float]:
 
 def run(python: str) -> dict[str, float]:
     # -I: the Korvex installed for this interpreter, never a source tree nearby.
-    output = subprocess.run([python, "-I", str(Path(__file__).resolve()), "measure"], capture_output=True, text=True, check=True).stdout
+    output = subprocess.run(
+        [python, "-I", str(Path(__file__).resolve()), "measure"], capture_output=True, text=True, check=True
+    ).stdout
     return json.loads(output)
 
 

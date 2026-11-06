@@ -43,7 +43,10 @@ def make_app():
     async def body(request):
         return Response(
             await request.body(),
-            headers=[("Content-Type", request.headers.get("content-type") or "none"), ("X-Length", request.headers.get("content-length") or "none")],
+            headers=[
+                ("Content-Type", request.headers.get("content-type") or "none"),
+                ("X-Length", request.headers.get("content-length") or "none"),
+            ],
         )
 
     @app.post("/form")
@@ -143,7 +146,10 @@ def test_json_raw_body_and_content_length():
 
 def test_forms_and_files():
     with TestClient(make_app()) as client:
-        assert client.post("/form", form={"title": "a & b", "tags": ["x", "y"]}).json() == {"title": "a & b", "tags": ["x", "y"]}
+        assert client.post("/form", form={"title": "a & b", "tags": ["x", "y"]}).json() == {
+            "title": "a & b",
+            "tags": ["x", "y"],
+        }
         response = client.post(
             "/form",
             form={"title": "report"},
@@ -310,44 +316,42 @@ def ws_app():
 
 
 def test_websocket_messages_both_ways():
-    with TestClient(ws_app()) as client:
-        with client.websocket("/echo/lobby", subprotocols=["chat"], query={"n": 1}) as ws:
-            assert ws.subprotocol == "chat" and ws.headers["x-room"] == "lobby"
-            ws.send_text("hi")
-            assert ws.receive_text() == "lobby: hi 1"
-            ws.send_bytes(b"abc")
-            assert ws.receive_bytes() == b"cba"
-            ws.send_json("x")
-            assert ws.receive() == 'lobby: "x" 1'
-            ws.send_text("bye")
-            with pytest.raises(WebSocketDisconnect) as closed:
-                ws.receive()
-            assert closed.value.code == 4000
+    with TestClient(ws_app()) as client, client.websocket("/echo/lobby", subprotocols=["chat"], query={"n": 1}) as ws:
+        assert ws.subprotocol == "chat" and ws.headers["x-room"] == "lobby"
+        ws.send_text("hi")
+        assert ws.receive_text() == "lobby: hi 1"
+        ws.send_bytes(b"abc")
+        assert ws.receive_bytes() == b"cba"
+        ws.send_json("x")
+        assert ws.receive() == 'lobby: "x" 1'
+        ws.send_text("bye")
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive()
+        assert closed.value.code == 4000
 
 
 def test_websocket_refused_and_headers():
     with TestClient(ws_app()) as client:
-        with pytest.raises(WebSocketDisconnect):
-            with client.websocket("/guarded"):
-                pass
+        with pytest.raises(WebSocketDisconnect), client.websocket("/guarded"):
+            pass
         with client.websocket("/guarded", headers={"X-Token": "ok"}) as ws:
             assert ws.receive_json() == {"ok": True}
-        with pytest.raises(WebSocketDisconnect):
-            with client.websocket("/nowhere"):
-                pass
+        with pytest.raises(WebSocketDisconnect), client.websocket("/nowhere"):
+            pass
 
 
 def test_websocket_server_error_raised():
-    with TestClient(ws_app()) as client:
-        with pytest.raises(ValueError, match="ws kaboom"):
-            with client.websocket("/broken") as ws:
-                ws.receive()
+    with (
+        TestClient(ws_app()) as client,
+        pytest.raises(ValueError, match="ws kaboom"),
+        client.websocket("/broken") as ws,
+    ):
+        ws.receive()
 
 
 def test_websocket_receive_timeout():
-    with TestClient(ws_app()) as client, client.websocket("/echo/a") as ws:
-        with pytest.raises(TimeoutError):
-            ws.receive(timeout=0.01)
+    with TestClient(ws_app()) as client, client.websocket("/echo/a") as ws, pytest.raises(TimeoutError):
+        ws.receive(timeout=0.01)
 
 
 def test_sync_client_refuses_a_running_loop():
@@ -384,9 +388,8 @@ def test_startup_failure_is_raised():
     def start():
         raise OSError("no database")
 
-    with pytest.raises(RuntimeError, match="no database"):
-        with TestClient(app):
-            pass
+    with pytest.raises(RuntimeError, match="no database"), TestClient(app):
+        pass
 
 
 def test_any_asgi_app_even_without_lifespan():

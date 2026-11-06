@@ -4,6 +4,7 @@ what the routes really do."""
 from typing import Optional
 
 import pytest
+from support import request
 
 from korvex import App, Response
 
@@ -40,7 +41,7 @@ def sample_app(tmp_path):
         """Get one user."""
 
     @app.get("/items/{key:uuid}/{name}")
-    def get_item(request, key, name, page: int = 1, tags: list[str] = [], q: Optional[str] = None):
+    def get_item(request, key, name, page: int = 1, tags: list[str] = [], q: Optional[str] = None):  # noqa: B006 (as users write it)
         return Response.text("item")
 
     @app.put("/users/{id}")
@@ -81,7 +82,12 @@ def test_info_and_paths(document):
     assert document["openapi"] == "3.1.0"
     assert document["info"] == {"title": "Demo", "version": "1.0", "description": "A demo API"}
     assert sorted(document["paths"]) == [
-        "/files/{path}", "/health", "/items/{key}/{name}", "/users", "/users/{id}", "/v2/health",
+        "/files/{path}",
+        "/health",
+        "/items/{key}/{name}",
+        "/users",
+        "/users/{id}",
+        "/v2/health",
     ]  # no static files, no WebSocket
     assert sorted(document["paths"]["/users/{id}"]) == ["get", "put"]
 
@@ -95,7 +101,12 @@ def test_parameters_are_typed(document):
     item = params("/items/{key}/{name}")
     assert item["key"]["schema"] == {"type": "string", "format": "uuid"}
     assert item["name"]["schema"] == {"type": "string"}
-    assert item["page"] == {"name": "page", "in": "query", "required": False, "schema": {"type": "integer", "default": 1}}
+    assert item["page"] == {
+        "name": "page",
+        "in": "query",
+        "required": False,
+        "schema": {"type": "integer", "default": 1},
+    }
     assert item["tags"]["schema"] == {"type": "array", "items": {"type": "string"}}
     assert item["q"]["required"] is False
     assert params("/files/{path}")["path"]["schema"] == {"type": "string"}
@@ -107,7 +118,9 @@ def test_bodies_responses_and_models(document):
         "required": True,
         "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UserIn"}}},
     }
-    assert create["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/UserOut"}
+    assert create["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/UserOut"
+    }
     assert document["paths"]["/users/{id}"]["put"]["requestBody"]["required"] is False
     schemas = document["components"]["schemas"]
     assert {"UserIn", "UserOut", "Address", "ValidationError"} <= set(schemas)  # nested models included
@@ -135,32 +148,27 @@ def test_an_empty_app_is_still_valid():
 
 
 def test_docs_routes_serve_the_document_and_swagger_ui(tmp_path):
-    import json
-
-    from test_app import make_scope, response_from, run_app
 
     app = sample_app(tmp_path)
     app.docs(title="Demo <script>", version="2.0")
-    status, headers, body = response_from(run_app(app, make_scope("GET", "/openapi.json")))
-    document = json.loads(body)
+    response = request(app, "GET", "/openapi.json")
+    status, document = response.status, response.json()
     validator.validate(document)
     assert status == 200 and document["info"]["version"] == "2.0"
     assert "/openapi.json" not in document["paths"] and "/docs" not in document["paths"]
 
-    status, headers, body = response_from(run_app(app, make_scope("GET", "/docs")))
-    page = body.decode()
-    assert status == 200 and ("Content-Type", "text/html; charset=utf-8") in headers
+    response = request(app, "GET", "/docs")
+    page = response.text
+    assert response.status == 200 and response.headers["content-type"] == "text/html; charset=utf-8"
     assert 'url: "/openapi.json"' in page and "swagger-ui-bundle.js" in page
     assert "<title>Demo &lt;script&gt;</title>" in page  # the title can't inject markup
 
 
 def test_docs_page_can_be_left_out():
-    from test_app import make_scope, response_from, run_app
-
     app = App()
     app.docs(docs_path=None, openapi_path="/spec.json")
-    assert response_from(run_app(app, make_scope("GET", "/docs")))[0] == 404
-    assert response_from(run_app(app, make_scope("GET", "/spec.json")))[0] == 200
+    assert request(app, "GET", "/docs").status == 404
+    assert request(app, "GET", "/spec.json").status == 200
 
 
 def test_dependencies_headers_cookies_and_forms_are_described():
@@ -180,7 +188,12 @@ def test_dependencies_headers_cookies_and_forms_are_described():
         return id
 
     @app.get("/notes/{id:int}", dependencies=[Depends(current_user)])
-    def note(request, n: int = Depends(note_id), limit: Annotated[int, Depends(paging)] = 0, user: str = Depends(current_user)):
+    def note(
+        request,
+        n: int = Depends(note_id),
+        limit: Annotated[int, Depends(paging)] = 0,
+        user: str = Depends(current_user),
+    ):
         pass
 
     @app.get("/plain/{id:int}")

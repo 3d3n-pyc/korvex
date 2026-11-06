@@ -25,8 +25,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Optional
 
-from korvex.app import Request
 from korvex.errors import HTTPException
+from korvex.requests import Request
 
 __all__ = ["APIKey", "Bearer", "OAuth2Password", "SecurityScheme"]
 

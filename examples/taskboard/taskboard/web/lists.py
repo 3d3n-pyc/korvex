@@ -3,7 +3,6 @@
 import uuid
 
 from korvex import App, Depends, Request
-
 from taskboard.domain import TaskList
 from taskboard.services.lists import ListService
 from taskboard.services.tasks import TaskService

@@ -29,6 +29,7 @@ from typing import Any, NamedTuple, Union
 
 from korvex.errors import ValidationError
 from korvex.params import REQUIRED, Dependency, Source
+from korvex.requests import Request, UploadedFile, WebSocket
 from korvex.response import Response
 
 SCALARS = (str, int, float, bool, uuid.UUID, datetime.date, datetime.datetime)
@@ -46,7 +47,7 @@ def _error(loc: list, msg: str, kind: str) -> dict:
 
 
 def _library(tp: Any) -> str | None:
-    """"msgspec" or "pydantic" if `tp` is a model of that library, or a
+    """ "msgspec" or "pydantic" if `tp` is a model of that library, or a
     list of such models; None otherwise."""
     if typing.get_origin(tp) is list and len(typing.get_args(tp)) == 1:
         tp = typing.get_args(tp)[0]
@@ -84,9 +85,7 @@ class Model:
         try:
             return self._adapter.validate_json(data)
         except pydantic.ValidationError as error:
-            raise ValidationError(
-                [_error(["body", *e["loc"]], e["msg"], e["type"]) for e in error.errors()]
-            ) from None
+            raise ValidationError([_error(["body", *e["loc"]], e["msg"], e["type"]) for e in error.errors()]) from None
 
     def from_form(self, form: Mapping[str, list]) -> Any:
         """The model, from a form's fields: each model field from the form
@@ -116,9 +115,7 @@ class Model:
         try:
             return self._adapter.validate_python(data)
         except pydantic.ValidationError as error:
-            raise ValidationError(
-                [_error(["form", *e["loc"]], e["msg"], e["type"]) for e in error.errors()]
-            ) from None
+            raise ValidationError([_error(["form", *e["loc"]], e["msg"], e["type"]) for e in error.errors()]) from None
 
     def _fields(self) -> list[tuple[str, Any]]:
         """`(name in the request, annotation)` of each field of the model."""
@@ -162,7 +159,12 @@ def _msgspec_error(error: Exception, root: str = "body") -> dict:
     where = re.search(r" - at `\$(.*)`$", message)
     if where:
         message = message[: where.start()]
-        loc += [int(part) if part.isdigit() else part for part in re.findall(r"\.(\w+)|\[(\d+)\]", where.group(1)) for part in part if part]
+        loc += [
+            int(part) if part.isdigit() else part
+            for part in re.findall(r"\.(\w+)|\[(\d+)\]", where.group(1))
+            for part in part
+            if part
+        ]
     missing = re.match(r"Object missing required field `(\w+)`", message)
     if missing:
         loc.append(missing.group(1))
@@ -189,7 +191,7 @@ def _unwrap(tp: Any) -> tuple[Any, bool, bool]:
     `list[X]` or `X | None`."""
     optional = False
     origin = typing.get_origin(tp)
-    if origin is Union or (hasattr(types, "UnionType") and origin is getattr(types, "UnionType")):
+    if origin is Union or (hasattr(types, "UnionType") and origin is types.UnionType):
         args = [a for a in typing.get_args(tp) if a is not type(None)]
         optional = len(args) < len(typing.get_args(tp))
         tp = args[0] if len(args) == 1 else tp
@@ -237,8 +239,6 @@ def scalar_schema(tp: Any) -> dict:
         datetime.datetime: {"type": "string", "format": "date-time"},
     }.get(inner, {"type": "string"})
     return {"type": "array", "items": schema} if is_list else schema
-
-
 
 
 # --- a handler's plan ---
@@ -392,7 +392,7 @@ class Plan:
                     errors.extend(error.errors)
             for param in self.form:
                 values = form.get(param.key) or []
-                if param.inner is not str and param.inner is not _UPLOADED_FILE:
+                if param.inner is not str and param.inner is not UploadedFile:
                     values = [v for v in values if v != ""]  # an empty field: not given
                 _take(param, values, kwargs, errors)
         if self.body is not None and self.body_model is not None:
@@ -417,7 +417,9 @@ class Plan:
         if isinstance(result, Response):
             return result
         if self.response is not None:
-            return Response(self.response.encode(result), status=self.status, headers=[("Content-Type", "application/json")])
+            return Response(
+                self.response.encode(result), status=self.status, headers=[("Content-Type", "application/json")]
+            )
         if result is None and self.empty:
             return Response(status=self.status)
         return result  # not a Response: the App answers a 500 that says so
@@ -488,9 +490,6 @@ class Run:
             raise raised
 
 
-_UPLOADED_FILE: Any = None  # korvex.app.UploadedFile, set by plan_for (app.py imports this module)
-
-
 def _take(param: Param, values: list | None, kwargs: dict, errors: list, first: bool = False) -> None:
     """Converts a parameter's raw values, or uses its default."""
     if not values:
@@ -510,7 +509,7 @@ def _take(param: Param, values: list | None, kwargs: dict, errors: list, first: 
 
 def _convert_field(value: Any, tp: Any) -> Any:
     """Like `_convert`, for a value that may be a form's file."""
-    if tp is _UPLOADED_FILE:
+    if tp is UploadedFile:
         if isinstance(value, str):
             raise ValueError("expected a file")
         return value
@@ -520,7 +519,7 @@ def _convert_field(value: Any, tp: Any) -> Any:
 
 
 def _invalid(param: Param) -> dict:
-    name = "file" if param.inner is _UPLOADED_FILE else _TYPE_NAMES.get(param.inner, param.inner)
+    name = "file" if param.inner is UploadedFile else _TYPE_NAMES.get(param.inner, param.inner)
     return _error([param.source, param.key], f"Input should be a valid {name}", "type_error")
 
 
@@ -545,7 +544,8 @@ def _unique(errors: list[dict]) -> list[dict]:
 
 
 def _is_kind(func: Callable, test: Callable[[Any], bool]) -> bool:
-    return test(func) or (not inspect.isfunction(func) and test(getattr(func, "__call__", None)))
+    # The method itself, to test what kind it is, not whether there is one.
+    return test(func) or (not inspect.isfunction(func) and test(getattr(func, "__call__", None)))  # noqa: B004
 
 
 def _split(hint: Any) -> tuple[Any, Source | Dependency | None]:
@@ -561,7 +561,7 @@ def _split(hint: Any) -> tuple[Any, Source | Dependency | None]:
 def _hints(func: Callable) -> dict[str, Any]:
     target = func.__init__ if inspect.isclass(func) else func
     if not (inspect.isfunction(target) or inspect.ismethod(target)):
-        target = getattr(target, "__call__", target)  # a callable object
+        target = getattr(target, "__call__", target)  # noqa: B004 (a callable object: its method's hints)
     return typing.get_type_hints(target, include_extras=True)
 
 
@@ -579,10 +579,6 @@ def plan_for(
     parameter is the request (or WebSocket); a dependency's parameters all
     come from somewhere. `dependencies` are the route's own. Raises
     TypeError for a parameter whose origin can't be told."""
-    from korvex.app import Request, UploadedFile, WebSocket  # here: app.py imports this module
-
-    global _UPLOADED_FILE
-    _UPLOADED_FILE = UploadedFile
     where = getattr(func, "__qualname__", repr(func))
     if func in _chain:
         cycle = " -> ".join(getattr(f, "__qualname__", repr(f)) for f in (*_chain, func))

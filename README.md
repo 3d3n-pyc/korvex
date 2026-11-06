@@ -1,17 +1,73 @@
 # Korvex
 
+[![PyPI](https://img.shields.io/pypi/v/korvex.svg)](https://pypi.org/project/korvex/)
+[![Python versions](https://img.shields.io/pypi/pyversions/korvex.svg)](https://pypi.org/project/korvex/)
 [![CI](https://github.com/3d3n-pyc/korvex/actions/workflows/ci.yml/badge.svg)](https://github.com/3d3n-pyc/korvex/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A fast router for Python, written in Rust, with an ASGI app on top and a
-built-in server to run it.
+A fast Python web framework. Its router and HTTP server are written in
+Rust; around them, a small ASGI framework: typed parameters validated
+with msgspec or pydantic, dependencies, WebSockets, OpenAPI with Swagger
+UI, a test client and ready-made middleware. It runs on any ASGI server,
+or on its own, with workers and threads (in parallel on free-threaded
+Python).
 
-Korvex is young (alpha). It's fast (see [Performance](#performance)), but it
-lacks some of what full frameworks offer: validation, OpenAPI. The [roadmap](ROADMAP.md) lists what's coming.
+Korvex is young (alpha): the API can still change before 1.0, each change
+listed in the [changelog](CHANGELOG.md) with how to update. The
+[roadmap](ROADMAP.md) says what comes next.
 
 ```sh
 pip install korvex
 ```
+
+## Quickstart
+
+```python
+import msgspec                       # or pydantic: pip install korvex msgspec
+
+from korvex import App, HTTPException
+
+
+class Task(msgspec.Struct):
+    id: int
+    title: str
+
+
+app = App()
+app.docs(title="Tasks")              # OpenAPI at /openapi.json, Swagger UI at /docs
+TASKS = {1: Task(1, "Write the docs")}
+
+
+@app.get("/tasks/{id:int}", responses={404: "No such task"})
+def get_task(request, id: int) -> Task:
+    """Get a task"""
+    if id not in TASKS:
+        raise HTTPException(404, "no such task")
+    return TASKS[id]
+
+
+if __name__ == "__main__":
+    app.run()                        # http://127.0.0.1:8000/tasks/1
+```
+
+And its test:
+
+```python
+from korvex.testing import TestClient
+
+def test_get_task():
+    with TestClient(app) as client:
+        assert client.get("/tasks/1").json() == {"id": 1, "title": "Write the docs"}
+        assert client.get("/tasks/2").status == 404
+```
+
+**Contents:** [the router](#the-router) ·
+[the ASGI app](#the-asgi-app) · [validation](#validation) ·
+[dependencies](#dependencies) · [WebSockets](#websockets) ·
+[ready-made hooks](#ready-made-hooks) · [testing](#testing) ·
+[the built-in server](#the-built-in-server) · [performance](#performance) ·
+[deployment guide](docs/deployment.md) · [examples](examples/) ·
+[contributing](CONTRIBUTING.md)
 
 ## The router
 
@@ -25,9 +81,9 @@ router = Router()
 router.get("/users/{id:int}", "get_user")
 router.post("/users", "create_user", middleware=["auth"])
 
-router.match("/users/42")         # ("get_user", {"id": 42}, ())
-router.match("/users", "POST")    # ("create_user", {}, ("auth",))
-router.match("/nope")             # None
+router.match("/users/42")  # ("get_user", {"id": 42}, ())
+router.match("/users", "POST")  # ("create_user", {}, ("auth",))
+router.match("/nope")  # None
 router.match("/users", "DELETE")  # raises MethodNotAllowed, .allowed == ["POST"]
 ```
 
@@ -50,8 +106,8 @@ order their routes were registered), then `{id}`, then `*path`.
 Define your own constraints as regexes, before the routes that use them:
 
 ```python
-router.constraint("slug", r"[a-z0-9]+(?:-[a-z0-9]+)*")   # app.constraint() for an App
-router.get("/posts/{post:slug}", "get_post")             # /posts/hello-world, not /posts/Hello
+router.constraint("slug", r"[a-z0-9]+(?:-[a-z0-9]+)*")  # app.constraint() for an App
+router.get("/posts/{post:slug}", "get_post")  # /posts/hello-world, not /posts/Hello
 ```
 
 The whole segment must match. The regex is compiled and matched in Rust
@@ -84,10 +140,10 @@ are immutable: `params` is a read-only mapping and `middleware` a tuple.
 
 ```python
 api = router.group("/api", middleware=["auth"])
-api.get("/users", "list_users")             # GET /api/users, middleware ("auth",)
+api.get("/users", "list_users")  # GET /api/users, middleware ("auth",)
 
 admin = api.group("/admin", middleware=["admin"])
-admin.get("/stats", "stats")                # GET /api/admin/stats, middleware ("auth", "admin")
+admin.get("/stats", "stats")  # GET /api/admin/stats, middleware ("auth", "admin")
 ```
 
 ## The ASGI app
@@ -100,9 +156,11 @@ from korvex import App, Depends, Header, HTTPException, Response
 
 app = App()
 
+
 def signed_in(authorization: str = Header("")) -> None:
     if not authorization:
         raise HTTPException(401, "sign in first")  # stops here
+
 
 @app.get("/users/{id:int}", dependencies=[Depends(signed_in)])
 async def get_user(request, id):
@@ -189,13 +247,16 @@ Type annotations say where a handler's parameters come from. Models can be
 ```python
 import msgspec
 
+
 class UserIn(msgspec.Struct):
     name: str
     age: int
 
+
 class UserOut(msgspec.Struct):
     id: int
     name: str
+
 
 @app.post("/users")
 async def create(request, body: UserIn, notify: bool = False) -> UserOut:
@@ -223,16 +284,16 @@ Headers, cookies and form fields are read the same way, with `Header()`,
 ```python
 from korvex import Cookie, Form, Header, Query, UploadedFile
 
+
 @app.post("/photos")
 async def upload(
     request,
-    title: str = Form(),                         # a form field, urlencoded or multipart
-    photo: UploadedFile = Form(),                # a file from a multipart form
-    x_client: str = Header("web"),               # the X-Client header
-    theme: str = Cookie("light"),                # the theme cookie
+    title: str = Form(),  # a form field, urlencoded or multipart
+    photo: UploadedFile = Form(),  # a file from a multipart form
+    x_client: str = Header("web"),  # the X-Client header
+    theme: str = Cookie("light"),  # the theme cookie
     page_size: int = Query(20, alias="page-size"),
-):
-    ...
+): ...
 ```
 
 - `x_client` reads `X-Client`: underscores become hyphens, case doesn't
@@ -254,24 +315,29 @@ other dependencies), plus the request if it asks for it:
 from typing import Annotated, Optional
 from korvex import Cookie, Depends, HTTPException
 
+
 async def current_user(session: Optional[str] = Cookie(None)) -> User:
     user = await users.by_session(session)
     if user is None:
         raise HTTPException(401, "sign in first")
     return user
 
+
 CurrentUser = Annotated[User, Depends(current_user)]
+
 
 async def database():
     connection = await pool.acquire()
     try:
-        yield connection                     # the handler runs here
+        yield connection  # the handler runs here
     finally:
         await pool.release(connection)
+
 
 @app.get("/tasks")
 async def tasks(request, user: CurrentUser, db=Depends(database)) -> list[Task]:
     return await db.tasks_of(user.id)
+
 
 api = app.group("/api", dependencies=[Depends(current_user)])  # checks every route in it
 ```
@@ -412,11 +478,12 @@ both well, and the app does less.
 ```python
 from korvex.testing import TestClient
 
+
 def test_tasks():
-    with TestClient(app) as client:              # startup hooks, then shutdown
+    with TestClient(app) as client:  # startup hooks, then shutdown
         assert client.post("/login", form={"password": "s3cret"}).status == 303
         response = client.get("/api/tasks", query={"done": "false"})
-        assert response.json() == []             # the session cookie was sent back
+        assert response.json() == []  # the session cookie was sent back
 
         with client.websocket("/live") as ws:
             assert ws.receive_json()["event"] == "presence"
@@ -482,7 +549,8 @@ the loop that made them. `app.local` keeps attributes per event loop:
 ```python
 @app.on_startup
 async def connect():
-    app.local.pool = await asyncpg.create_pool(DATABASE_URL)   # this loop's pool
+    app.local.pool = await asyncpg.create_pool(DATABASE_URL)  # this loop's pool
+
 
 @app.get("/users/{id:int}")
 async def get_user(request, id):
@@ -707,16 +775,18 @@ its own, the server 4, each server 3 workers. Two runs:
 Reproduce with `uv run python benches/database.py` (needs podman or
 docker for PostgreSQL, and oha).
 
-## Development
+## Contributing
 
 ```sh
-uv run maturin develop --release   # build the Rust extension
+uv sync                            # the tools, and Korvex built from source
 uv run pytest                      # Python tests
 cargo test                         # Rust tests
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), and [ROADMAP.md](ROADMAP.md) for
-what's planned.
+[CONTRIBUTING.md](CONTRIBUTING.md) has the layout of the code and every
+check CI runs; [ROADMAP.md](ROADMAP.md) what's planned. Report a
+vulnerability privately, as [SECURITY.md](SECURITY.md) explains. Everyone
+taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 

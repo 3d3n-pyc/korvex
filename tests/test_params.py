@@ -1,21 +1,20 @@
 """Tests for parameters read from headers, cookies, forms and aliased query
 fields: Header(), Cookie(), Form() and Query()."""
 
-import json
 from datetime import date
 from typing import Annotated, Optional
 
 import pytest
-from test_app import make_scope, response_from, run_app
+from support import request
 
 from korvex import App, Cookie, Form, Header, Query, Response, UploadedFile
 
 
 def call(app, path="/", headers=(), query=b"", method="GET", body=b""):
-    scope = make_scope(method, path, headers=list(headers), query_string=query)
-    status, response_headers, raw = response_from(run_app(app, scope, body=body))
-    is_json = ("Content-Type", "application/json") in response_headers
-    return status, json.loads(raw) if is_json else raw.decode()
+    """`(status, JSON or text)` of one request."""
+    response = request(app, method, f"{path}?{query.decode()}" if query else path, headers=list(headers), body=body)
+    is_json = response.headers.get("content-type") == "application/json"
+    return response.status, response.json() if is_json else response.text
 
 
 def echo(**values):
@@ -26,7 +25,13 @@ def test_headers():
     app = App()
 
     @app.get("/")
-    def read(request, x_client: str = Header(), x_retries: int = Header(0), accept: list[str] = Header([]), ua: Optional[str] = Header(None, alias="User-Agent")):
+    def read(
+        request,
+        x_client: str = Header(),
+        x_retries: int = Header(0),
+        accept: list[str] = Header([]),
+        ua: Optional[str] = Header(None, alias="User-Agent"),
+    ):
         return echo(client=x_client, retries=x_retries, accept=accept, ua=ua)
 
     status, body = call(app, headers=[("X-Client", "web"), ("Accept", "a"), ("Accept", "b"), ("User-Agent", "curl")])
@@ -47,7 +52,10 @@ def test_cookies():
     def read(request, session: str = Cookie(), theme: str = Cookie("light"), visits: int = Cookie(0, alias="n")):
         return echo(session=session, theme=theme, visits=visits)
 
-    assert call(app, headers=[("Cookie", "session=abc; n=3")]) == (200, {"session": "abc", "theme": "light", "visits": 3})
+    assert call(app, headers=[("Cookie", "session=abc; n=3")]) == (
+        200,
+        {"session": "abc", "theme": "light", "visits": 3},
+    )
     status, body = call(app)
     assert status == 422 and body["detail"][0]["loc"] == ["cookie", "session"]
 
@@ -80,14 +88,23 @@ def test_urlencoded_forms():
     app = App()
 
     @app.post("/")
-    def submit(request, name: str = Form(), age: int = Form(), note: str = Form(""), tags: list[str] = Form([]), score: Optional[float] = Form(None)):
+    def submit(
+        request,
+        name: str = Form(),
+        age: int = Form(),
+        note: str = Form(""),
+        tags: list[str] = Form([]),
+        score: Optional[float] = Form(None),
+    ):
         return echo(name=name, age=age, note=note, tags=tags, score=score)
 
     form = [("Content-Type", "application/x-www-form-urlencoded")]
     status, body = call(app, method="POST", headers=form, body=b"name=Ada&age=36&tags=a&tags=b&score=")
     assert (status, body) == (200, {"name": "Ada", "age": 36, "note": "", "tags": ["a", "b"], "score": None})
 
-    status, body = call(app, method="POST", headers=form, body=b"name=&age=")  # empty text is text; an empty number is missing
+    status, body = call(
+        app, method="POST", headers=form, body=b"name=&age="
+    )  # empty text is text; an empty number is missing
     assert status == 422 and body["detail"] == [{"loc": ["form", "age"], "msg": "Field required", "type": "missing"}]
 
     status, _ = call(app, method="POST", headers=[("Content-Type", "application/json")], body=b"{}")
@@ -108,7 +125,10 @@ def test_files_in_multipart_forms():
         f"--{boundary}--\r\n"
     ).encode()
     headers = [("Content-Type", f"multipart/form-data; boundary={boundary}")]
-    assert call(app, method="POST", headers=headers, body=parts) == (200, {"title": "Holiday", "name": "a.txt", "size": 5})
+    assert call(app, method="POST", headers=headers, body=parts) == (
+        200,
+        {"title": "Holiday", "name": "a.txt", "size": 5},
+    )
 
     swapped = (  # a file where text is expected, and text where a file is
         f'--{boundary}\r\nContent-Disposition: form-data; name="title"; filename="t.txt"\r\n\r\nx\r\n'
@@ -140,7 +160,9 @@ def test_the_body_can_be_read_by_the_handler_too():
     async def submit(request, name: str = Form()):
         return echo(name=name, raw=(await request.body()).decode(), form=(await request.form())["name"])
 
-    status, body = call(app, method="POST", headers=[("Content-Type", "application/x-www-form-urlencoded")], body=b"name=Ada")
+    status, body = call(
+        app, method="POST", headers=[("Content-Type", "application/x-www-form-urlencoded")], body=b"name=Ada"
+    )
     assert body == {"name": "Ada", "raw": "name=Ada", "form": ["Ada"]}
 
 
@@ -226,9 +248,14 @@ def test_a_model_filled_from_a_form(library):
     form = [("Content-Type", "application/x-www-form-urlencoded")]
     sent = b"name=Ada&age=36&tags=a&tags=b&newsletter=on&birthday=1815-12-10&nickname="
     status, body = call(app, "/signup", method="POST", headers=form, body=sent)
-    assert (status, body) == (200, {"name": "Ada", "age": 36, "tags": ["a", "b"], "newsletter": True, "birthday": "1815-12-10", "nickname": ""})
+    assert (status, body) == (
+        200,
+        {"name": "Ada", "age": 36, "tags": ["a", "b"], "newsletter": True, "birthday": "1815-12-10", "nickname": ""},
+    )
 
-    status, body = call(app, "/signup", method="POST", headers=form, body=b"name=Ada&age=&birthday=")  # empty: not given
+    status, body = call(
+        app, "/signup", method="POST", headers=form, body=b"name=Ada&age=&birthday="
+    )  # empty: not given
     assert status == 422
     assert [e["loc"] for e in body["detail"]] == [["form", "age"]]
 
@@ -260,7 +287,10 @@ def test_a_form_model_next_to_a_file_and_left_out():
         f"--{boundary}--\r\n"
     ).encode()
     headers = [("Content-Type", f"multipart/form-data; boundary={boundary}")]
-    assert call(app, "/photos", method="POST", headers=headers, body=parts) == (200, {"title": "Holiday", "public": False, "size": 5})
+    assert call(app, "/photos", method="POST", headers=headers, body=parts) == (
+        200,
+        {"title": "Holiday", "public": False, "size": 5},
+    )
     assert call(app, "/maybe", method="POST") == (200, {"info": None})
 
 

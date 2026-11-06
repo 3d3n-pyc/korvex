@@ -2,21 +2,20 @@
 teardown of those that yield, overrides, and WebSockets."""
 
 import asyncio
-import json
+import contextlib
 from typing import Annotated, Optional
 
 import pytest
-from test_app import make_scope, response_from, run_app
-from test_websocket import run_ws, ws_scope
+from support import request, run_ws, ws_scope
 
 from korvex import App, Cookie, Depends, Header, HTTPException, Request, Response, WebSocket
 
 
 def call(app, path="/", headers=(), query=b"", method="GET", body=b""):
-    scope = make_scope(method, path, headers=list(headers), query_string=query)
-    status, response_headers, raw = response_from(run_app(app, scope, body=body))
-    is_json = ("Content-Type", "application/json") in response_headers
-    return status, json.loads(raw) if is_json else raw.decode()
+    """`(status, JSON or text)` of one request."""
+    response = request(app, method, f"{path}?{query.decode()}" if query else path, headers=list(headers), body=body)
+    is_json = response.headers.get("content-type") == "application/json"
+    return response.status, response.json() if is_json else response.text
 
 
 USERS = {"t1": "ada", "t2": "bob"}
@@ -181,10 +180,8 @@ def test_a_teardown_that_catches_the_error_does_not_swallow_it():
     app = App()
 
     def lenient():
-        try:
+        with contextlib.suppress(Exception):  # caught, not re-raised
             yield
-        except Exception:
-            pass  # caught, not re-raised
 
     @app.get("/")
     def read(request, _: None = Depends(lenient)):
@@ -228,7 +225,8 @@ def test_a_streamed_response_keeps_its_dependencies_until_sent():
     assert call(app) == (200, "012")
     assert events == ["open", "chunk 0 with r", "chunk 1 with r", "chunk 2 with r", "close"]
     events.clear()
-    status, _, body = response_from(run_app(app, make_scope("HEAD", "/")))
+    response = request(app, "HEAD", "/")
+    assert (response.status, response.body) == (200, b"")
     assert events == ["open", "close"]  # not sent, still torn down
 
 
@@ -271,7 +269,9 @@ def test_dependencies_can_read_path_parameters_and_the_body():
     def update(request, id: int, note: Note, owner: str = Depends(note_owner)):
         return Response.json({"id": id, "text": note.text, "owner": owner})
 
-    status, body = call(app, "/notes/7", method="PUT", headers=[("Content-Type", "application/json")], body=b'{"text": "hi"}')
+    status, body = call(
+        app, "/notes/7", method="PUT", headers=[("Content-Type", "application/json")], body=b'{"text": "hi"}'
+    )
     assert body == {"id": 7, "text": "hi", "owner": "7:hi"}
 
 

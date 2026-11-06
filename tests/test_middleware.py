@@ -6,8 +6,7 @@ import re
 import sys
 
 import pytest
-
-from test_app import make_scope, response_from, run_app
+from support import make_scope, request, run_app
 
 from korvex import App, HTTPException, Response
 from korvex.middleware import MemoryStore, RequestIdFilter, cors, current_request_id, rate_limit, request_id
@@ -31,9 +30,9 @@ def cors_app(**options):
 
 
 def call(app, method, path, **headers):
-    scope = make_scope(method, path, headers=[(k.replace("_", "-"), v) for k, v in headers.items()])
-    status, response_headers, body = response_from(run_app(app, scope))
-    return status, dict(response_headers), body
+    """`(status, headers, body)` of one request; `X_Client="a"` sends `X-Client: a`."""
+    response = request(app, method, path, headers=[(k.replace("_", "-"), v) for k, v in headers.items()])
+    return response.status, dict(response.headers), response.body
 
 
 def preflight(app, origin=SITE, method="POST", request_headers=None):
@@ -298,9 +297,8 @@ def compress_app(**options):
 
 
 def get_with(app, path, accept=None):
-    headers = [("Accept-Encoding", accept)] if accept is not None else []
-    status, headers, body = response_from(run_app(app, make_scope("GET", path, headers=headers)))
-    return status, {k.lower(): v for k, v in headers}, body
+    response = request(app, "GET", path, headers=[("Accept-Encoding", accept)] if accept is not None else [])
+    return response.status, {k.lower(): v for k, v in response.headers}, response.body
 
 
 def test_compress_picks_the_best_encoding_the_client_takes():
@@ -358,9 +356,9 @@ def test_compress_zstd_on_python_3_14():
 
 
 def test_compress_leaves_brotli_out_on_free_threaded_python(monkeypatch):
-    import korvex.middleware
+    from korvex.middleware import _compression
 
-    monkeypatch.setattr(korvex.middleware, "_gil_disabled", lambda: True)
+    monkeypatch.setattr(_compression, "_gil_disabled", lambda: True)
     app = compress_app()
     assert get_with(app, "/big", "br, gzip")[1]["content-encoding"] == "gzip"  # br isn't offered
 
@@ -390,8 +388,7 @@ def test_security_headers_defaults_and_overrides():
         return Response.text("widget", headers=[("X-Frame-Options", "SAMEORIGIN")])
 
     def headers_of(path, scheme="http"):
-        scope = {**make_scope("GET", path), "scheme": scheme}
-        return {k.lower(): v for k, v in response_from(run_app(app, scope))[1]}
+        return {k.lower(): v for k, v in request(app, "GET", f"{scheme}://testserver{path}").headers}
 
     plain = headers_of("/")
     assert plain["x-frame-options"] == "DENY" and plain["x-content-type-options"] == "nosniff"
@@ -414,7 +411,7 @@ def test_security_headers_can_be_left_out():
     def home(request):
         return Response.text("home")
 
-    headers = {k.lower(): v for k, v in response_from(run_app(app, {**make_scope("GET", "/"), "scheme": "https"}))[1]}
+    headers = request(app, "GET", "https://testserver/").headers
     assert headers["strict-transport-security"] == "max-age=600; includeSubDomains; preload"
     assert "x-frame-options" not in headers and "referrer-policy" not in headers
     with pytest.raises(ValueError):

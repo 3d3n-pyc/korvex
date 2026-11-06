@@ -5,25 +5,44 @@ build-backend = "maturin"
 [project]
 name = "korvex"
 dynamic = ["version"]
-description = "A high-performance Rust-powered router for Python, with an optional ASGI layer for hosting it directly"
+description = "A fast Python web framework with a Rust router and HTTP server: ASGI, validation, dependencies, OpenAPI"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-keywords = ["router", "routing", "asgi", "rust", "pyo3", "radix-tree"]
+authors = [{ name = "Maxime Lefevre" }]
+keywords = ["web", "framework", "asgi", "http", "server", "router", "rust", "openapi", "websocket", "free-threading"]
 classifiers = [
     "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Framework :: AsyncIO",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Free Threading :: 2 - Beta",
+    "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Rust",
     "Topic :: Internet :: WWW/HTTP",
-    "Framework :: AsyncIO",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
     "Typing :: Typed",
 ]
 
 [project.urls]
-Repository = "https://github.com/3d3n-pyc/korvex"
+Homepage = "https://github.com/3d3n-pyc/korvex"
+Documentation = "https://github.com/3d3n-pyc/korvex#readme"
+Changelog = "https://github.com/3d3n-pyc/korvex/blob/main/CHANGELOG.md"
 Issues = "https://github.com/3d3n-pyc/korvex/issues"
+Repository = "https://github.com/3d3n-pyc/korvex"
 
 [project.scripts]
 korvex = "korvex.cli:main"
@@ -37,24 +56,32 @@ brotli = ["brotli>=1.1"]
 module-name = "korvex._core"
 
 [dependency-groups]
+# What the tests, the linters and `maturin develop` need: `uv sync` installs it.
 dev = [
+    "brotli>=1.2.1",
+    "coverage>=7.10",
+    "maturin>=1.14,<2.0",
+    "msgspec>=0.20.0",
+    "openapi-spec-validator>=0.7.2",
+    "pre-commit>=4.0",
+    "pydantic>=2.13.5",
+    "pyright>=1.1.400",
+    "pytest>=8.4.2",
+    "redis>=7.0.1",
+    "ruff>=0.14",
+]
+# The frameworks, servers and tools the benchmarks compare: `uv sync --group bench`.
+bench = [
     "asyncpg>=0.32.0",
     "blacksheep>=2.4.2",
-    "brotli>=1.2.1",
     "django>=4.2.30",
     "falcon>=4.4.0",
     "fastapi>=0.128.8",
     "flask>=3.1.3",
     "granian>=2.5.7",
     "litestar>=2.25.0",
-    "maturin>=1.14,<2.0",
-    "msgspec>=0.20.0",
-    "openapi-spec-validator>=0.7.2",
     "psutil>=7.2.2",
-    "pydantic>=2.13.5",
-    "pytest>=8.4.2",
     "pytest-benchmark>=5.2.3",
-    "redis>=7.0.1",
     "robyn>=0.88.0",
     "sanic>=25.3.0",
     "starlette>=0.49.3",
@@ -63,3 +90,45 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.format]
+exclude = ["*.md"]  # code in the docs keeps its aligned comments
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",   # the formatter wraps code; a long string or comment can stay
+    "UP007",  # X | Y: Korvex reads handlers' annotations at runtime, and on
+    "UP045",  # Python 3.9 they must be Optional[X] / Union[X, Y]
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# Where a parameter comes from, given as its default, as in FastAPI.
+extend-immutable-calls = [
+    "korvex.Cookie", "korvex.Depends", "korvex.Form", "korvex.Header", "korvex.Query",
+    "korvex.params.Cookie", "korvex.params.Depends", "korvex.params.Form", "korvex.params.Header", "korvex.params.Query",
+    "fastapi.Depends",  # in the benchmarks
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["korvex", "taskboard"]
+
+[tool.pyright]
+include = ["korvex"]
+pythonVersion = "3.9"
+typeCheckingMode = "standard"
+
+[tool.coverage.run]
+source = ["korvex"]
+branch = true
+parallel = true
+patch = ["subprocess", "fork"]  # the built-in server and the CLI run in other processes
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "\\.\\.\\."]
