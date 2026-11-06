@@ -2,18 +2,22 @@
 
 ## Unreleased
 
-- The comparisons are measured again, with Korvex 0.14: the servers
+- **The built-in server is 11% faster than in 0.14.0**, 2% faster than in
+  0.6. From 0.7 on, each request checked its handler's plan (the
+  validation 0.7 added) before calling it: 0.2 µs alone, but on a core
+  that also runs the server's Rust thread and the kernel's network stack,
+  with a full instruction cache, it cost 3 to 8% (perf: the same
+  instructions, 8% more cycles, 7% more instruction cache misses). A
+  route now works out once how to call a handler with nothing to read
+  from the request. In-process, a GET answered with JSON is 4.5% faster.
+- The comparisons are measured again, after this change: the servers
   (`benches/servers.py`) and the frameworks under load
   (`benches/load_test.py`), which dated from 0.6, and validation and
   dependencies in-process. FastrAPI joins the servers, run from one
-  process with sync handlers (its only working setup in 0.2.11).
-- Korvex is still first, by less than before: its built-in server serves
-  115k requests/s at 1,000 clients on 4 cores, Granian 114k, FastrAPI 64k;
-  on one core under uvicorn, 30.7k against Starlette's best case 30.4k.
-  The other servers and frameworks measure within 5% of their numbers in
-  0.6, while Korvex lost 8%: version by version, one worker on one core,
-  it all came with 0.7 (6.5%), nothing since. The cause isn't found yet;
-  the roadmap now has finding it and winning it back before 1.0.
+  process with sync handlers (its only working setup in 0.2.11). Korvex's
+  built-in server serves 132k requests/s at 1,000 clients on 4 cores,
+  Granian 123k, FastrAPI 69k; on one core under uvicorn, Korvex 31.9k,
+  Falcon 31.5k, Starlette 31.1k at best.
 
 ## 0.14.0
 

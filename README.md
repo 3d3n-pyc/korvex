@@ -89,11 +89,11 @@ workers:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/servers-dark.svg">
-  <img alt="Requests per second on the same 4 CPU cores, with 200 and 1,000 clients: Korvex built-in server 111.3k and 115.2k, Granian with the Korvex app 106.0k and 114.0k, uvicorn with the Korvex app 103.8k and 98.5k, Robyn 94.3k and 85.6k, FastrAPI 59.7k and 63.9k." src="docs/servers-light.svg">
+  <img alt="Requests per second on the same 4 CPU cores, with 200 and 1,000 clients: Korvex built-in server 127.0k and 131.9k, Granian with the Korvex app 121.3k and 123.1k, uvicorn with the Korvex app 109.1k and 104.3k, Robyn 96.6k and 91.7k, FastrAPI 60.8k and 69.3k." src="docs/servers-light.svg">
 </picture>
 
-- On one core with uvicorn, Korvex serves 30.7k requests/s; Starlette
-  2.8k to 30.4k, FastAPI 1.6k to 11.6k.
+- On one core with uvicorn, Korvex serves 31.9k requests/s; Falcon
+  31.5k, Starlette 2.9k to 31.1k, FastAPI 1.5k to 12.9k.
 - With validation, a request takes 18.1 µs in Korvex, 72.6 µs in FastAPI.
 - On free-threaded Python, one worker with 3 threads serves 57% more than
   one thread, with a third of the memory of 4 workers.

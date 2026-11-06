@@ -5,7 +5,7 @@ Where Korvex is going. Versions are a rough order, not promises.
 ## Where it stands (0.14)
 
 - **Fast.** On one CPU core, Korvex is among the fastest of the frameworks
-  tested (30.7k requests/s, Starlette's best case 30.4k, Falcon 29.0k).
+  tested (31.9k requests/s, Falcon 31.5k, Starlette's best case 31.1k).
   Its built-in server serves more than uvicorn, Granian, Robyn and
   FastrAPI on the same cores, with the least memory (see
   [Performance](docs/performance.md)).
@@ -69,9 +69,6 @@ listed in the changelog with how to update; after, it stays.
   deprecated feature warns for at least two minor versions before it goes.
 - A documentation site, built from `docs/` and the examples.
 - A built-in server that's solid in production behind a reverse proxy.
-- Win back the 7% per core the built-in server lost with 0.7, measured
-  version by version: its cause is still to find (not the Python code 0.7
-  added to the request path, nor the garbage collector).
 - At least a few projects running it in production.
 
 ## After 1.0

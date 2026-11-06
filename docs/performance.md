@@ -7,37 +7,41 @@ relying on any of them.
 ## Servers
 
 The same app, served by each server on the same 4 CPU cores, each with its
-best number of workers. Measured with Korvex 0.14 and FastrAPI 0.2.11:
+best number of workers. Measured with Korvex's main branch after 0.14.0
+(with the change below) and FastrAPI 0.2.11:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="servers-dark.svg">
-  <img alt="Requests per second on the same 4 CPU cores, with 200 and 1,000 clients: Korvex built-in server 111.3k and 115.2k, Granian + Korvex app 106.0k and 114.0k, uvicorn + Korvex app 103.8k and 98.5k, Robyn 94.3k and 85.6k, FastrAPI 59.7k and 63.9k." src="servers-light.svg">
+  <img alt="Requests per second on the same 4 CPU cores, with 200 and 1,000 clients: Korvex built-in server 127.0k and 131.9k, Granian + Korvex app 121.3k and 123.1k, uvicorn + Korvex app 109.1k and 104.3k, Robyn 96.6k and 91.7k, FastrAPI 60.8k and 69.3k." src="servers-light.svg">
 </picture>
 
 | Server | Requests/s, 200 clients | 1,000 clients | RAM |
 |---|---|---|---|
-| **Korvex built-in** (3 workers) | **111.3k** | **115.2k** | **124 MB** |
-| Granian + Korvex app (3 workers) | 106.0k | 114.0k | 198 MB |
-| uvicorn + Korvex app (4 workers) | 103.8k | 98.5k | 206 MB |
-| Robyn (4 processes, 2 threads each) | 94.3k | 85.6k | 230 MB |
-| FastrAPI (1 process) | 59.7k | 63.9k | 114 MB |
+| **Korvex built-in** (3 workers) | **127.0k** | **131.9k** | **124 MB** |
+| Granian + Korvex app (3 workers) | 121.3k | 123.1k | 198 MB |
+| uvicorn + Korvex app (4 workers) | 109.1k | 104.3k | 205 MB |
+| Robyn (4 processes, 2 threads each) | 96.6k | 91.7k | 231 MB |
+| FastrAPI (1 process) | 60.8k | 69.3k | 115 MB |
 
-- Granian is a Rust ASGI server too: it comes close, within 1% at 1,000
-  clients and 5% at 200. The built-in server skips the ASGI layer, and
-  uses 40% less memory.
+- Granian is a Rust ASGI server too, and comes second: the built-in
+  server serves 5 to 7% more, because it skips the ASGI layer, with 40%
+  less memory.
 - Robyn and FastrAPI run their own version of the app with their own
   Rust server. FastrAPI runs one process (it has no workers option, and a
   second process can't share the port): its Rust side uses the 4 cores,
   but one Python process, under the GIL, runs every handler. Its handlers
   are sync: in 0.2.11, async ones answer a 500.
 - No request failed.
-- The built-in server served 126k and 130k requests/s when this was first
-  measured, with Korvex 0.6. The others come within 5% of their numbers
-  then, so the machine hasn't changed; Korvex has. Measured version by
-  version, one worker on one core, the loss came at once with 0.7 (6.5%),
-  and nothing since. Its cause isn't found yet: the Python code 0.7 added
-  to the request path costs a tenth of it, and it isn't the garbage
-  collector.
+- From 0.7 to 0.14.0, the built-in server served 3 to 8% less per core
+  than in 0.6 (measured version by version, one worker on one core). Each
+  request checked its handler's plan, the validation 0.7 added, before
+  calling it. Alone that's 0.2 µs, but the core also runs the server's
+  Rust thread and the kernel's network stack, and its instruction cache
+  is full: perf showed the same instructions (+1.6%) taking 8% more
+  cycles, with 7% more instruction cache misses and 10% more branch
+  misses. A route now works out once how to call a handler with nothing
+  to read, and the built-in server serves 11% more than 0.14.0, 2% more
+  than 0.6.
 
 Reproduce with `uv run --group bench python benches/servers.py` (needs `cargo install oha`,
 takes about 5 minutes).
@@ -47,29 +51,28 @@ takes about 5 minutes).
 The same small app (1,000 routes, one JSON endpoint) in each framework,
 served the same way (uvicorn, one worker, one CPU core) and flooded with
 requests to random URLs by [oha](https://github.com/hatoo/oha). Measured
-with Korvex 0.14:
+with Korvex's main branch after 0.14.0:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="load-dark.svg">
-  <img alt="Requests per second on one CPU core with 200 clients: Korvex 30.7k, Starlette 2.8k to 30.4k, Falcon 29.0k, Litestar 17.6k, Sanic 14.9k, FastAPI 1.6k to 11.6k, BlackSheep 6.6k, Django 1.1k to 2.1k." src="load-light.svg">
+  <img alt="Requests per second on one CPU core with 200 clients: Korvex 31.9k, Falcon 31.5k, Starlette 2.9k to 31.1k, Litestar 18.2k, Sanic 15.8k, FastAPI 1.5k to 12.9k, BlackSheep 7.0k, Django 1.1k to 2.4k." src="load-light.svg">
 </picture>
 
 | Framework | Requests/s, 200 clients | p99 latency, 1,000 clients | RAM at rest, peak |
 |---|---|---|---|
-| **Korvex** | **30.7k** | **29 ms** | **38 MB, 49 MB** |
-| Starlette | 2.8k to 30.4k | 34 to 202 ms | 40 MB, 49 MB |
-| Falcon | 29.0k | 29 ms | 61 MB, 63 MB |
-| Litestar | 17.6k | 40 ms | 85 MB, 92 MB |
-| Sanic | 14.9k | 131 ms | 63 MB, 105 MB |
-| FastAPI | 1.6k to 11.6k | 59 to 378 ms | 67 MB, 77 MB |
-| BlackSheep | 6.6k | 73 ms | 51 MB, 59 MB |
-| Django | 1.1k to 2.1k | 1.3 s to 1.6 s | 52 MB, 147 MB |
+| **Korvex** | **31.9k** | **28 ms** | **39 MB, 50 MB** |
+| Falcon | 31.5k | 31 ms | 60 MB, 63 MB |
+| Starlette | 2.9k to 31.1k | 29 to 169 ms | 39 MB, 49 MB |
+| Litestar | 18.2k | 39 ms | 79 MB, 89 MB |
+| Sanic | 15.8k | 111 ms | 60 MB, 106 MB |
+| FastAPI | 1.5k to 12.9k | 57 to 388 ms | 66 MB, 77 MB |
+| BlackSheep | 7.0k | 72 ms | 51 MB, 59 MB |
+| Django | 1.1k to 2.4k | 1.2 s to 1.6 s | 49 MB, 136 MB |
 
 - Every framework uses a full CPU core under load, so requests per second
   is also how much work each one gets out of that core.
-- Starlette in its best case comes within 1% of Korvex, Falcon within 6%.
-  Korvex served 8% more when this was first measured, with 0.6 (see
-  Servers above).
+- Falcon comes within 1% of Korvex, and Starlette in its best case
+  within 3%.
 - Starlette, FastAPI and Django try routes one by one: the ranges go from
   the tested route declared after the 1,000 others to declared first.
   BlackSheep tries them one by one too, but sorts them itself, deepest
