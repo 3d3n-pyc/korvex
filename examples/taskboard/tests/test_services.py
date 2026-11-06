@@ -1,5 +1,6 @@
 """The app's rules, tested on the services directly: no HTTP involved."""
 
+import asyncio
 import uuid
 from datetime import date, timedelta
 
@@ -158,16 +159,19 @@ def test_changes_are_announced(with_services):
 
 
 def test_a_listener_that_falls_behind_is_cut_off():
-    bus = EventBus(queue_size=2)
-    slow, fast = bus.subscribe(), bus.subscribe()
-    for n in range(3):
-        bus.publish(TaskDeleted(uuid.UUID(int=n), uuid.UUID(int=0)))
-        fast.get_nowait()
-    assert bus.listeners == 1
-    left = [slow.get_nowait() for _ in range(slow.qsize())]
-    assert left[-1] is None  # told it was cut off (its page closes and reloads)
-    bus.publish(TaskDeleted(uuid.UUID(int=9), uuid.UUID(int=0)))
-    assert slow.empty()  # and gets nothing more
+    async def scenario():  # in a loop: Python 3.9's queues need one when created
+        bus = EventBus(queue_size=2)
+        slow, fast = bus.subscribe(), bus.subscribe()
+        for n in range(3):
+            bus.publish(TaskDeleted(uuid.UUID(int=n), uuid.UUID(int=0)))
+            fast.get_nowait()
+        assert bus.listeners == 1
+        left = [slow.get_nowait() for _ in range(slow.qsize())]
+        assert left[-1] is None  # told it was cut off (its page closes and reloads)
+        bus.publish(TaskDeleted(uuid.UUID(int=9), uuid.UUID(int=0)))
+        assert slow.empty()  # and gets nothing more
+
+    asyncio.run(scenario())
 
 
 def test_sessions(with_services):
