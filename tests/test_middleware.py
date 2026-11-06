@@ -357,9 +357,9 @@ def test_compress_zstd_on_python_3_14():
 
 
 def test_compress_leaves_brotli_out_on_free_threaded_python(monkeypatch):
-    import korvex.middleware
+    from korvex.middleware import _compression
 
-    monkeypatch.setattr(korvex.middleware, "_gil_disabled", lambda: True)
+    monkeypatch.setattr(_compression, "_gil_disabled", lambda: True)
     app = compress_app()
     assert get_with(app, "/big", "br, gzip")[1]["content-encoding"] == "gzip"  # br isn't offered
 

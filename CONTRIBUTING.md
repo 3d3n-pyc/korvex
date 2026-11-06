@@ -34,7 +34,8 @@ korvex/
   openapi.py  the OpenAPI document and the Swagger UI page
   security.py security schemes: Bearer(), APIKey(), OAuth2Password()
   urls.py     reverse URLs: url_for()
-  middleware.py ready-made hooks: cors(), request_id(), rate_limit()
+  middleware/ ready-made hooks, one module each: cors(), request_id(),
+              rate_limit(), compress(), security_headers()
   testing.py  TestClient and AsyncTestClient: the app in-process, for tests
   serve.py    App.run(): one process, or a supervisor and its workers
   cli.py      the `korvex run` command
