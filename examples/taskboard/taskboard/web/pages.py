@@ -11,7 +11,7 @@ STATIC = Path(__file__).parent.parent / "static"
 
 
 def register(app: App, db: Database) -> None:
-    @app.get("/")
+    @app.get("/", include_in_schema=False)
     def board(request: Request) -> Response:
         """The board's page"""
         return Response.file(STATIC / "index.html")

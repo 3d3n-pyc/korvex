@@ -2,7 +2,7 @@
 
 Where Korvex is going. Versions are a rough order, not promises.
 
-## Where it stands (0.12)
+## Where it stands (0.13)
 
 - **Fast.** On one CPU core, Korvex serves the most requests per second of
   the frameworks tested, with the least memory. Its built-in server serves
@@ -15,7 +15,9 @@ Where Korvex is going. Versions are a rough order, not promises.
   type annotations with msgspec or pydantic, headers, cookies and forms
   (models too) as parameters, and dependencies, which guard routes,
   groups and WebSockets; custom route constraints and host-based
-  routing; an OpenAPI document and Swagger UI; a built-in server with
+  routing; reverse URLs (`url_for`); an OpenAPI document with statuses,
+  tags, documented errors and security schemes, and Swagger UI; a test
+  client that runs the app in-process; a built-in server with
   workers, threads (in parallel on free-threaded Python), graceful
   shutdown, size limits, timeouts, backpressure and WebSocket pings; and a
   deployment guide.
@@ -51,29 +53,16 @@ development, or a platform whose load balancer doesn't do everything.
 
 ## Until 1.0
 
-The API's open questions (0.10), ready-made middleware (0.11) and more
-than one core per worker (0.12) are done. Compared with FastAPI,
-Starlette and Litestar, three things are still missing that everyone
-expects and that shape the API, so they come before it's frozen. Until
-1.0, a version may still break things, each break listed in the
-changelog with how to update: no one runs Korvex in production yet, and
-an API changes for free now, not after.
+The API's open questions (0.10), ready-made middleware (0.11), more
+than one core per worker (0.12), and what everyone expects from a
+framework (0.13: a test client, reverse URLs, a richer OpenAPI with
+security schemes) are done. Until 1.0, a version may still break things,
+each break listed in the changelog with how to update: no one runs
+Korvex in production yet, and an API changes for free now, not after.
 
-### 0.13: what everyone expects
-
-- **A test client**: `TestClient(app)` with `get()`, `post()`... and
-  WebSockets, running the app in-process with its lifespan and cookies,
-  like Starlette's and Litestar's. Today tests drive raw ASGI messages
-  (the taskboard example wrote its own client).
-- **Reverse URLs**: `app.url_for(name, **params)` (and on the request),
-  to build a link to a route without writing its path again. Routes
-  already have names.
-- **Richer OpenAPI**, whose options go on the route decorators: a status
-  code per route, `tags`, `deprecated`, documented error responses, and
-  security schemes (Bearer, API key, OAuth2) so Swagger UI can sign in.
-
-Then **a review of the whole public API** (names, arguments, what's
-exported, errors), the last chance to change it freely.
+Next is **a review of the whole public API** (names, arguments, what's
+exported, errors, consistency between similar parts), the last chance to
+change it freely.
 
 ## 1.0
 

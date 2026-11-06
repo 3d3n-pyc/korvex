@@ -5,7 +5,7 @@ import pytest
 
 def create(client, list_id, **fields):
     response = client.post("/api/tasks", json={"list_id": list_id, "title": "A task", **fields})
-    assert response.status == 200, response.text
+    assert response.status == 201, response.text
     return response.json()
 
 

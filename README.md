@@ -159,6 +159,17 @@ uvicorn mymodule:app
   which answer on every host. `/docs` documents the routes of the host
   it's served from, and `app.openapi(host=...)` those of any host. In the
   built-in server, a route's `max_body` applies to its path on every host.
+- `app.url_for("get_user", id=42)` gives a route's path, `/users/42`,
+  without writing it again; `request.url_for(...)` the full URL
+  (`https://example.com/users/42`, with the route's own host for an
+  `app.host()` route). A route is named after its function, or
+  `name="user"` on its decorator; `url_for("static", path="css/app.css")`
+  links to a file of `app.static()`. Values are percent-encoded and
+  checked against the route's constraints and annotations, and the path
+  must reach that route: anything else raises an error, instead of a link
+  that leads to a 404. When two routes share a function's name (a
+  factory registering the same functions in several groups), `url_for()`
+  asks for a `name=` to tell them apart.
 - Routes registered on `app.router` directly are linked to a function
   with `@app.handler("name")`. The App doesn't run the router's middleware
   names: a route that has some answers a 500, rather than run without
@@ -288,6 +299,42 @@ handler's docstring (its first line as the summary).
 Swagger UI at `/docs` to try the API from a browser (loaded from a CDN;
 `docs_path=None` leaves it out).
 
+The route decorators, groups and hosts take what else it should say:
+
+```python
+from korvex.security import Bearer
+
+bearer = Bearer()  # Authorization: Bearer <token>; a 401 without one
+
+async def current_user(token: str = Depends(bearer)) -> User: ...
+
+api = app.group("/api", dependencies=[Depends(current_user)], tags=["tasks"])
+
+@api.post("/tasks", status=201, responses={409: ("Title taken", Conflict)})
+def create_task(request, body: NewTask) -> Task: ...
+
+@api.delete("/tasks/{id:uuid}", status=204, responses={404: "No such task"})
+def delete_task(request, id) -> None: ...      # `-> None`: an empty response
+
+@app.get("/v1/tasks", deprecated=True)         # include_in_schema=False hides one
+```
+
+- `status` is the response's when the handler returns a model, or `None`
+  with a `-> None` annotation (an empty response). A `Response` it
+  returns keeps its own. It's the success documented.
+- `tags`, `deprecated`, `responses` and `include_in_schema` on a group
+  apply to its routes: tags add up, a route's responses replace the
+  group's for the same status. A response is a description, a model, or
+  both: `{404: "No such task"}`, `{409: Conflict}`, `{409: ("Title
+  taken", Conflict)}`; `"4XX"` and `"default"` work too.
+- `korvex.security` has `Bearer()`, `APIKey(header=... | query=... |
+  cookie=...)` and `OAuth2Password(token_url, scopes=...)`: dependencies
+  that give the credential (a `str`) and answer 401 without one
+  (`required=False` gives `None` instead). Checking it is up to the
+  dependency that takes it. Every route that depends on a scheme, even
+  through other dependencies or its group, lists it in OpenAPI, so
+  Swagger UI's "Authorize" button sends it.
+
 ### WebSockets
 
 ```python
@@ -357,6 +404,45 @@ cors(app, allow_origins=["https://example.com"], allow_credentials=True)
 
 Behind a reverse proxy, let it compress and add headers instead: it does
 both well, and the app does less.
+
+### Testing
+
+`korvex.testing` runs the app in-process, without a server:
+
+```python
+from korvex.testing import TestClient
+
+def test_tasks():
+    with TestClient(app) as client:              # startup hooks, then shutdown
+        assert client.post("/login", form={"password": "s3cret"}).status == 303
+        response = client.get("/api/tasks", query={"done": "false"})
+        assert response.json() == []             # the session cookie was sent back
+
+        with client.websocket("/live") as ws:
+            assert ws.receive_json()["event"] == "presence"
+```
+
+- `get()`, `post()`, `put()`, `patch()`, `delete()`, `head()`, `options()`
+  take `query=`, `headers=`, `cookies=`, and a body as `json=`, `form=`
+  (with `files={"doc": ("a.pdf", data, "application/pdf")}` for a
+  multipart form) or raw `body=`. A response has `status`, `headers`,
+  `body`, `text` and `json()`.
+- Within `with`, the app's lifespan runs: startup hooks on entry (so
+  `app.local` is filled), shutdown hooks on exit. Every request runs on
+  the same event loop.
+- Cookies the app sets are kept in `client.cookies` and sent back (Secure
+  ones over https only). `follow_redirects=True` follows a redirect.
+- A full URL (`client.get("https://acme.example.com/")`) sets the scheme
+  and the host, for `app.host()` routes.
+- `client.stream("GET", "/events")` gives the response before its body,
+  read with `iter_bytes()`; leaving the block stops the stream, as a
+  client going away would.
+- An error the app answers with a 500 is raised in the test, with its
+  traceback (`raise_server_errors=False` gets the 500). A request or a
+  WebSocket message that doesn't come within `timeout` (5 seconds) raises
+  `TimeoutError` instead of hanging the test.
+- In `async` tests, `AsyncTestClient` does the same, awaited:
+  `async with AsyncTestClient(app) as client: await client.get("/")`.
 
 More in [`examples/`](examples/), up to a [complete app](examples/taskboard/)
 laid out like a real project. To put it in production (behind nginx or

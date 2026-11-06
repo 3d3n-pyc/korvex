@@ -248,12 +248,24 @@ def test_sigterm_lets_requests_in_progress_finish(workers, threads):
         slow = pool.submit(fetch, f"{base}/slow")
         time.sleep(0.3)  # the request is now being handled
         process.send_signal(signal.SIGTERM)
-        time.sleep(0.2)
-        with pytest.raises(OSError):  # no new connections once stopping
-            socket.create_connection(("127.0.0.1", port), timeout=0.5)
+        assert _refused_within(port, 0.6)  # no new connections once stopping, the slow request still running
         assert slow.result(timeout=5) == (200, slow.result()[1], b"slow done")
     output, _ = process.communicate(timeout=10)
     assert process.returncode == 0 and "STOPPED" in output
+
+
+def _refused_within(port: int, seconds: float) -> bool:
+    """Whether new connections get refused within `seconds`: how long the
+    sockets take to close varies with the machine (a few threads on a slow
+    CI runner took more than 0.2 s)."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
+        except OSError:
+            return True
+        time.sleep(0.02)
+    return False
 
 
 def test_graceful_timeout_gives_up_on_slow_requests():

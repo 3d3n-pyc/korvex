@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, unquote
 from korvex._core import MethodNotAllowed
 from korvex.errors import Abort, HTTPException, ValidationError
 from korvex.response import Headers, JSONValue, Response, StreamingResponse
-from korvex.schema import Plan, Run, needs_plan, path_params, plan_for
+from korvex.schema import Plan, Run, _library, needs_plan, path_params, plan_for
 from korvex.router import RouteGroup, Router
 
 # `Union`/`Optional` rather than `|`: these lines run at import time, and
@@ -126,9 +126,11 @@ FormData = dict[str, list[Union[str, UploadedFile]]]
 class Request:
     """An incoming HTTP request."""
 
-    __slots__ = ("method", "path", "headers", "query_params", "path_params", "client", "scheme", "_receive", "_cookies", "_body", "_form")
+    __slots__ = ("method", "path", "headers", "query_params", "path_params", "client", "scheme", "app", "_receive", "_cookies", "_body", "_form")
 
-    def __init__(self, scope: dict, receive: Callable[[], Awaitable[dict]], path_params: Mapping[str, Any]) -> None:
+    def __init__(
+        self, scope: dict, receive: Callable[[], Awaitable[dict]], path_params: Mapping[str, Any], app: App | None = None
+    ) -> None:
         self.method: str = scope.get("method", "GET")  # a WebSocket handshake is a GET
         self.path: str = scope["path"]
         client = scope.get("client")
@@ -139,6 +141,8 @@ class Request:
         self.headers = Headers((k.decode("latin-1"), v.decode("latin-1")) for k, v in scope["headers"])
         self.query_params: dict[str, list[str]] = parse_qs(scope.get("query_string", b"").decode("latin-1"))
         self.path_params = path_params
+        self.app = app
+        """The `App` handling the request."""
         self._receive = receive
         self._cookies: dict[str, str] | None = None
         self._body: bytes | None = None
@@ -198,6 +202,23 @@ class Request:
             raise HTTPException(400, "invalid form encoding") from None
         raise HTTPException(415, "expected a form (urlencoded or multipart)")
 
+    def url_for(self, name: str, /, **params: Any) -> str:
+        """The full URL of the route named `name`, like `App.url_for()`
+        gives its path: `"https://example.com/users/42"`. The scheme is
+        the request's (`ws` or `wss` for a WebSocket route). The host is
+        the route's own for an `app.host()` route, its parameters given
+        here too (`tenant="acme"`), with the request's port; for other
+        routes, it's the request's `Host` header.
+
+        That header comes from the client: for a link sent elsewhere (an
+        email to reset a password), build it from a base URL you
+        configure and `app.url_for()`, not from the request."""
+        if self.app is None:
+            raise RuntimeError("this request doesn't come from an App: url_for() needs one to find the route")
+        from korvex import urls
+
+        return urls.url_for(self, urls.lookup(self.app._url_index(), name), params)
+
     def __repr__(self) -> str:
         return f"Request({self.method} {self.path!r})"
 
@@ -225,8 +246,10 @@ class WebSocket(Request):
 
     __slots__ = ("subprotocols", "_send", "_connected", "_accepted", "_closed")
 
-    def __init__(self, scope: dict, receive: Callable, send: Callable, path_params: Mapping[str, Any]) -> None:
-        super().__init__(scope, receive, path_params)
+    def __init__(
+        self, scope: dict, receive: Callable, send: Callable, path_params: Mapping[str, Any], app: App | None = None
+    ) -> None:
+        super().__init__(scope, receive, path_params, app)
         self._send = send
         self._connected = False
         self._accepted = False
@@ -323,10 +346,21 @@ WebSocketHandler = Callable[..., Awaitable[None]]
 
 class _RouteDecorators:
     """`@get(path)` and friends, for any class with a `route()` decorator.
-    `dependencies` (`[Depends(func), ...]`) run before the handler, for
-    what they check rather than what they return. `max_body` (bytes)
-    raises or lowers the built-in server's body size limit for that route;
-    ASGI servers ignore it."""
+
+    - `name`: what `url_for()` knows the route by (the function's name by
+      default).
+    - `status`: the status of the response made from what the handler
+      returns, a model or `None` (annotated `-> None`, for an empty
+      response: `status=204`). A `Response` it returns keeps its own.
+      OpenAPI documents it as the route's success.
+    - `dependencies` (`[Depends(func), ...]`): run before the handler, for
+      what they check rather than what they return.
+    - `tags`, `deprecated`, `responses` and `include_in_schema`: how the
+      route shows in OpenAPI. `responses` documents other answers, by
+      status: `{404: "No such task"}`, `{409: Conflict}` (a model), or
+      `{409: ("Name taken", Conflict)}`.
+    - `max_body` (bytes): raises or lowers the built-in server's body size
+      limit for that route; ASGI servers ignore it."""
 
     __slots__ = ()
 
@@ -335,7 +369,13 @@ class _RouteDecorators:
         path: str,
         *,
         method: str = "GET",
+        name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
         raise NotImplementedError
@@ -344,82 +384,242 @@ class _RouteDecorators:
         self,
         path: str,
         *,
+        name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="GET", dependencies=dependencies, max_body=max_body)
+        return self.route(
+            path,
+            method="GET",
+            name=name,
+            status=status,
+            dependencies=dependencies,
+            tags=tags,
+            deprecated=deprecated,
+            responses=responses,
+            include_in_schema=include_in_schema,
+            max_body=max_body,
+        )
 
     def post(
         self,
         path: str,
         *,
+        name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="POST", dependencies=dependencies, max_body=max_body)
+        return self.route(
+            path,
+            method="POST",
+            name=name,
+            status=status,
+            dependencies=dependencies,
+            tags=tags,
+            deprecated=deprecated,
+            responses=responses,
+            include_in_schema=include_in_schema,
+            max_body=max_body,
+        )
 
     def put(
         self,
         path: str,
         *,
+        name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="PUT", dependencies=dependencies, max_body=max_body)
+        return self.route(
+            path,
+            method="PUT",
+            name=name,
+            status=status,
+            dependencies=dependencies,
+            tags=tags,
+            deprecated=deprecated,
+            responses=responses,
+            include_in_schema=include_in_schema,
+            max_body=max_body,
+        )
 
     def patch(
         self,
         path: str,
         *,
+        name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="PATCH", dependencies=dependencies, max_body=max_body)
+        return self.route(
+            path,
+            method="PATCH",
+            name=name,
+            status=status,
+            dependencies=dependencies,
+            tags=tags,
+            deprecated=deprecated,
+            responses=responses,
+            include_in_schema=include_in_schema,
+            max_body=max_body,
+        )
 
     def delete(
         self,
         path: str,
         *,
+        name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="DELETE", dependencies=dependencies, max_body=max_body)
+        return self.route(
+            path,
+            method="DELETE",
+            name=name,
+            status=status,
+            dependencies=dependencies,
+            tags=tags,
+            deprecated=deprecated,
+            responses=responses,
+            include_in_schema=include_in_schema,
+            max_body=max_body,
+        )
 
     def head(
         self,
         path: str,
         *,
+        name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="HEAD", dependencies=dependencies, max_body=max_body)
+        return self.route(
+            path,
+            method="HEAD",
+            name=name,
+            status=status,
+            dependencies=dependencies,
+            tags=tags,
+            deprecated=deprecated,
+            responses=responses,
+            include_in_schema=include_in_schema,
+            max_body=max_body,
+        )
 
     def options(
         self,
         path: str,
         *,
+        name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="OPTIONS", dependencies=dependencies, max_body=max_body)
+        return self.route(
+            path,
+            method="OPTIONS",
+            name=name,
+            status=status,
+            dependencies=dependencies,
+            tags=tags,
+            deprecated=deprecated,
+            responses=responses,
+            include_in_schema=include_in_schema,
+            max_body=max_body,
+        )
+
+
+class _Docs:
+    """How a route, or a group's routes, show in OpenAPI."""
+
+    __slots__ = ("tags", "deprecated", "responses", "include")
+
+    def __init__(
+        self,
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include: bool = True,
+    ) -> None:
+        if isinstance(tags, str):
+            raise TypeError(f"tags takes a list of names, not a string: tags=[{tags!r}]")
+        self.tags = tuple(tags)
+        self.deprecated = deprecated
+        self.responses = _checked_responses(responses or {})
+        self.include = include
+
+    def merge(self, other: _Docs) -> _Docs:
+        """These (a group's) with `other`'s (a route's, or a nested group's):
+        tags added, responses replaced by status, deprecated or left out
+        if either is."""
+        merged = _Docs()
+        merged.tags = (*self.tags, *(tag for tag in other.tags if tag not in self.tags))
+        merged.deprecated = self.deprecated or other.deprecated
+        merged.responses = {**self.responses, **other.responses}
+        merged.include = self.include and other.include
+        return merged
 
 
 class AppGroup(_RouteDecorators):
-    """Registers handlers under a shared prefix and dependencies.
+    """Registers handlers under a shared prefix and dependencies, and
+    OpenAPI's `tags`, `deprecated`, `responses` and `include_in_schema`
+    for all of them.
 
-        api = app.group("/api", dependencies=[Depends(signed_in)])
+        api = app.group("/api", dependencies=[Depends(signed_in)], tags=["api"])
 
         @api.get("/users")           # GET /api/users, after signed_in
         def list_users(request): ...
     """
 
-    __slots__ = ("_app", "_routes", "_dependencies", "_host")
+    __slots__ = ("_app", "_routes", "_dependencies", "_host", "_docs")
 
-    def __init__(self, app: App, routes: RouteGroup, dependencies: Sequence[Any] = (), host: _Host | None = None) -> None:
+    def __init__(
+        self,
+        app: App,
+        routes: RouteGroup,
+        dependencies: Sequence[Any] = (),
+        host: _Host | None = None,
+        docs: _Docs | None = None,
+    ) -> None:
         self._app = app
         self._routes = routes
         self._dependencies = tuple(dependencies)
         self._host = host  # for `app.host()` groups: the host their routes answer on
+        self._docs = docs if docs is not None else _Docs()
 
     def _plan_pattern(self, full_path: str) -> str:
         """What a handler's plan is read against: the path, after the host
@@ -437,53 +637,84 @@ class AppGroup(_RouteDecorators):
         path: str,
         *,
         method: str = "GET",
+        name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
         """Decorator: registers the function as the handler for `path`, under
-        this group's prefix. Its own `dependencies` run after the group's."""
+        this group's prefix. Its own `dependencies` run after the group's;
+        its OpenAPI options add to the group's."""
+        _check_name_type(name)
+        _check_status(status)
+        docs = self._docs.merge(_Docs(tags, deprecated, responses, include_in_schema))
 
         def register(func: Handler) -> Handler:
-            name = _route_name(func, self._app._handlers)
+            key = _route_name(func, self._app._handlers)
             full_path = self._routes.full_path(path)
             # Bad annotations fail here, at import.
             plan = self._app._plan(func, self._plan_pattern(full_path), (*self._dependencies, *dependencies))
-            self._routes.route(path, name, method=method)
-            self._app._handlers[name] = func
-            self._app._plans[name] = plan
+            plan.status = status
+            if plan.response is not None and not _has_body(status):
+                raise TypeError(f"{plan.func.__qualname__}: a {status} response has no body, so no return model")
+            public = self._app._check_name(name, False, self._host, full_path)
+            self._routes.route(path, key, method=method)
+            self._app._handlers[key] = func
+            self._app._plans[key] = plan
+            self._app._docs[key] = docs
+            self._app._name_route(False, key, public or getattr(func, "__name__", None), name is not None, self._host, full_path)
             if self._host is not None:
-                self._app._host_args[name] = _takes(func, self._host.params)
+                self._app._host_args[key] = _takes(func, self._host.params)
             if max_body is not None:
                 self._app._body_limits.append((method, full_path, max_body))
             return func
 
         return register
 
-    def websocket(self, path: str, *, dependencies: Sequence[Any] = ()) -> Callable[[WebSocketHandler], WebSocketHandler]:
+    def websocket(
+        self, path: str, *, name: str | None = None, dependencies: Sequence[Any] = ()
+    ) -> Callable[[WebSocketHandler], WebSocketHandler]:
         """Decorator: registers the function as the WebSocket handler for
         `path`, under this group's prefix. Its parameters and dependencies
         work as for HTTP handlers (no body), the group's dependencies run
         too, and one raising `HTTPException` refuses the connection (403).
-        Before hooks run on the handshake; after hooks don't."""
+        Before hooks run on the handshake; after hooks don't. `name` is
+        what `url_for()` knows it by (the function's name by default)."""
+        _check_name_type(name)
 
         def register(func: WebSocketHandler) -> WebSocketHandler:
-            name = _route_name(func, self._app._ws_handlers)
+            key = _route_name(func, self._app._ws_handlers)
             full_path = self._routes.full_path(path)
             plan = self._app._plan(func, self._plan_pattern(full_path), (*self._dependencies, *dependencies), websocket=True)
-            (self._host.ws_router if self._host else self._app._ws_router).route(full_path, name)
-            self._app._ws_handlers[name] = func
-            self._app._ws_plans[name] = plan
+            public = self._app._check_name(name, True, self._host, full_path)
+            (self._host.ws_router if self._host else self._app._ws_router).route(full_path, key)
+            self._app._ws_handlers[key] = func
+            self._app._ws_plans[key] = plan
+            self._app._name_route(True, key, public or getattr(func, "__name__", None), name is not None, self._host, full_path)
             if self._host is not None:
-                self._app._host_args[name] = _takes(func, self._host.params)
+                self._app._host_args[key] = _takes(func, self._host.params)
             return func
 
         return register
 
     def group(
-        self, prefix: str = "", *, dependencies: Sequence[Any] = ()
+        self,
+        prefix: str = "",
+        *,
+        dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
     ) -> AppGroup:
-        """Returns a nested group. Its `dependencies` run after this group's."""
-        return AppGroup(self._app, self._routes.group(prefix), (*self._dependencies, *dependencies), self._host)
+        """Returns a nested group. Its `dependencies` run after this
+        group's; its OpenAPI options add to this group's."""
+        docs = self._docs.merge(_Docs(tags, deprecated, responses, include_in_schema))
+        return AppGroup(self._app, self._routes.group(prefix), (*self._dependencies, *dependencies), self._host, docs)
 
     def __repr__(self) -> str:
         host = f", host={self._host.pattern!r}" if self._host else ""
@@ -574,26 +805,74 @@ class App(_RouteDecorators):
         self._body_limits: list[tuple[str, str, int]] = []  # (method, path, bytes), for the built-in server
         self._before_request: list[BeforeHook] = []
         self._after_request: list[AfterHook] = []
+        # For url_for(): (websocket, handler name) -> (route name, given with name=),
+        # and where each name given with name= points.
+        self._route_names: dict[tuple[bool, str], tuple[str, bool]] = {}
+        self._explicit_names: dict[str, tuple[bool, str | None, str]] = {}
+        self._url_cache: tuple[tuple, Any] | None = None
+        self._docs: dict[str, _Docs] = {}  # handler name -> how it shows in OpenAPI
 
     def route(
         self,
         path: str,
         *,
         method: str = "GET",
+        name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        """Decorator: registers the function as the handler for `path`."""
-        return self._root.route(path, method=method, dependencies=dependencies, max_body=max_body)
+        """Decorator: registers the function as the handler for `path`
+        (see `get()` for the options)."""
+        return self._root.route(
+            path,
+            method=method,
+            name=name,
+            status=status,
+            dependencies=dependencies,
+            tags=tags,
+            deprecated=deprecated,
+            responses=responses,
+            include_in_schema=include_in_schema,
+            max_body=max_body,
+        )
 
     def group(
-        self, prefix: str = "", *, dependencies: Sequence[Any] = ()
+        self,
+        prefix: str = "",
+        *,
+        dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
     ) -> AppGroup:
         """Returns an `AppGroup` that registers handlers under `prefix`, with
-        `dependencies` for all of them."""
-        return self._root.group(prefix, dependencies=dependencies)
+        `dependencies` for all of them, and the OpenAPI options (`tags`,
+        `deprecated`, `responses`, `include_in_schema`) their own add to."""
+        return self._root.group(
+            prefix,
+            dependencies=dependencies,
+            tags=tags,
+            deprecated=deprecated,
+            responses=responses,
+            include_in_schema=include_in_schema,
+        )
 
-    def host(self, pattern: str, *, dependencies: Sequence[Any] = ()) -> AppGroup:
+    def host(
+        self,
+        pattern: str,
+        *,
+        dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
+    ) -> AppGroup:
         """Returns a group whose routes only answer for requests to that
         host (its `Host` header, without the port):
 
@@ -612,22 +891,89 @@ class App(_RouteDecorators):
         declared without a host when it doesn't have the path; another
         pattern's never do. Calling `host()` again with the same pattern
         adds to the same routes. In the built-in server, a route's
-        `max_body` applies to its path on every host."""
+        `max_body` applies to its path on every host. The OpenAPI options
+        (`tags`...) work as for `group()`."""
         normalized = pattern.lower().rstrip(".")
         found = next((h for h in self._hosts if h.pattern == normalized), None)
         if found is None:
             found = _Host(pattern, self.router.constraints())
             self._hosts.append(found)
             self._hosts.sort(key=lambda h: bool(h.params))  # stable: literal hosts first, in order
-        return AppGroup(self, found.router.group(), dependencies, found)
+        return AppGroup(self, found.router.group(), dependencies, found, _Docs(tags, deprecated, responses, include_in_schema))
 
-    def websocket(self, path: str, *, dependencies: Sequence[Any] = ()) -> Callable[[WebSocketHandler], WebSocketHandler]:
+    def websocket(
+        self, path: str, *, name: str | None = None, dependencies: Sequence[Any] = ()
+    ) -> Callable[[WebSocketHandler], WebSocketHandler]:
         """Decorator: registers the function as the WebSocket handler for
         `path`; it gets a `WebSocket`, the path params, and parameters and
         dependencies as HTTP handlers do (no body). A dependency raising
         `HTTPException` refuses the connection (403). Before hooks run on
-        the handshake; after hooks don't."""
-        return self._root.websocket(path, dependencies=dependencies)
+        the handshake; after hooks don't. `name` is what `url_for()` knows
+        it by (the function's name by default)."""
+        return self._root.websocket(path, name=name, dependencies=dependencies)
+
+    def url_for(self, name: str, /, **params: Any) -> str:
+        """The path of the route named `name`, with `params` for its path
+        parameters:
+
+            @app.get("/users/{id:int}")
+            def get_user(request, id): ...
+
+            app.url_for("get_user", id=42)           # "/users/42"
+            app.url_for("static", path="css/a.css")  # "/static/css/a.css"
+
+        A route's name is its `name=`, or else its function's name (an
+        `app.static()` directory's is `"static"`). Two routes can share a
+        function's name; `url_for()` then asks for a `name=` to tell them
+        apart (LookupError). Two can share a `name=` only on the same path,
+        for different methods.
+
+        Values can be `str`, `int`, `float`, `bool`, `UUID`, `date` or
+        `datetime`, and are percent-encoded. Each must fit its constraint
+        (`{id:int}`, `{id:uuid}`, a custom one) and the handler's
+        annotation, can't be empty, `.` or `..`, and only a `*wildcard`
+        takes a `/`. The path must also reach that route, not another
+        that answers it first (`/users/me` rather than `/users/{name}`).
+        Otherwise, ValueError (TypeError for a value of another type).
+        Every path parameter must be given, and nothing else: add a query
+        string yourself (`urllib.parse.urlencode`).
+
+        For a route of `app.host()`, this is the path: a link on that host.
+        `request.url_for()` gives the full URL, host included."""
+        from korvex import urls
+
+        return urls.path_for(self, urls.lookup(self._url_index(), name), params)
+
+    def _url_index(self) -> Any:
+        """The names of the routes, worked out again once routes change."""
+        from korvex import urls
+
+        routers = [self.router, self._ws_router] + [r for h in self._hosts for r in (h.router, h.ws_router)]
+        signature = (len(self._route_names), *(getattr(r, "version", None) for r in routers))
+        if self._url_cache is None or self._url_cache[0] != signature:
+            self._url_cache = (signature, urls.build_index(self))
+        return self._url_cache[1]
+
+    def _check_name(self, name: str | None, websocket: bool, host: _Host | None, path: str) -> str | None:
+        """A route's `name=`, checked before it's registered: one name, one
+        path (methods aside)."""
+        if name is None:
+            return None
+        _check_name_type(name)
+        where = (websocket, host.pattern if host else None, path)
+        taken = self._explicit_names.get(name)
+        if taken is not None and taken != where:
+            kind = "WebSocket " if taken[0] else ""
+            raise ValueError(f"route name {name!r} is already taken by {kind}{taken[1] or ''}{taken[2]}")
+        return name
+
+    def _name_route(self, websocket: bool, key: str, name: str | None, explicit: bool, host: _Host | None, path: str) -> None:
+        """Records the name of a route just registered."""
+        if name is None:
+            return
+        self._route_names[(websocket, key)] = (name, explicit)
+        if explicit:
+            self._explicit_names[name] = (websocket, host.pattern if host else None, path)
 
     def _plan(self, func: Callable, pattern: str, dependencies: Sequence[Any] = (), *, websocket: bool = False) -> Plan:
         return plan_for(func, pattern, dependencies=dependencies, websocket=websocket, cache=self._dependency_plans)
@@ -735,10 +1081,12 @@ class App(_RouteDecorators):
 
         return register
 
-    def static(self, prefix: str, directory: str | os.PathLike[str]) -> None:
+    def static(self, prefix: str, directory: str | os.PathLike[str], *, name: str | None = None) -> None:
         """Serves the files in `directory` under `prefix`:
         `app.static("/static", "public")` answers `/static/css/app.css` with
-        `public/css/app.css`. Paths that leave the directory get a 404."""
+        `public/css/app.css`. Paths that leave the directory get a 404.
+        `url_for("static", path="css/app.css")` links to a file; `name`
+        tells several directories apart (`"static"` by default)."""
         root = Path(directory).resolve()
         if not root.is_dir():
             raise NotADirectoryError(f"not a directory: {directory}")
@@ -752,9 +1100,12 @@ class App(_RouteDecorators):
                 raise HTTPException(404)
             return Response.file(target)
 
-        name = f"korvex.static:{prefix}"  # unique per prefix: all serve() share a qualname
-        self.router.route(f"{prefix.rstrip('/')}/*path", name)
-        self._handlers[name] = serve
+        key = f"korvex.static:{prefix}"  # unique per prefix: all serve() share a qualname
+        pattern = f"{prefix.rstrip('/')}/*path"
+        self._check_name(name, False, None, pattern)
+        self.router.route(pattern, key)
+        self._handlers[key] = serve
+        self._name_route(False, key, name or "static", name is not None, None, pattern)
 
     # Both `@app.on_startup` and `@app.on_startup()` work: the overloads
     # tell type checkers so, and _add_hook handles the two calls.
@@ -852,7 +1203,7 @@ class App(_RouteDecorators):
         dependencies and handler), then after hooks, with errors turned into
         responses at each step. With `error`, the route is replaced by that
         HTTP error."""
-        request = Request(scope, receive, {})
+        request = Request(scope, receive, {}, self)
         try:
             response = None
             for hook in self._before_request:
@@ -863,6 +1214,11 @@ class App(_RouteDecorators):
                 if error:
                     raise HTTPException(error)
                 response = await self._dispatch(request)
+                if not isinstance(response, Response):
+                    raise TypeError(
+                        f"{request.method} {request.path}: the handler returned {type(response).__name__}, not a Response "
+                        "(a model needs a return annotation; for an empty response, annotate it `-> None`)"
+                    )
         except Exception as exc:
             response = await self._handle_error(request, exc)
         for hook in reversed(self._after_request):
@@ -1007,7 +1363,7 @@ class App(_RouteDecorators):
         values = found[1] if found else {}
         if found is not None and host_params:
             values = {**host_params, **found[1]}
-        websocket = WebSocket(scope, receive, send, values)
+        websocket = WebSocket(scope, receive, send, values, self)
         if self._before_request and not await self._websocket_hooks_allow(websocket):
             await websocket.close()  # before accept: the client gets a 403
             return
@@ -1304,6 +1660,42 @@ def _match(router: Router, request: Request) -> Any:
         if request.method == "HEAD" and "GET" in exc.allowed:
             return router.match(request.path, method="GET")
         raise HTTPException(405, headers=[("Allow", ", ".join(exc.allowed))]) from None
+
+
+def _check_status(status: Any) -> None:
+    if not isinstance(status, int) or isinstance(status, bool) or not 100 <= status <= 599:
+        raise ValueError(f"status must be an HTTP status, 100 to 599, not {status!r}")
+
+
+def _has_body(status: int) -> bool:
+    """Whether a response with that status can have a body (RFC 9110)."""
+    return status >= 200 and status not in (204, 205, 304)
+
+
+def _checked_responses(responses: Mapping[Any, Any]) -> dict[str, Any]:
+    """`responses=`, checked when the route is registered, keyed by the
+    status as OpenAPI writes it (`"404"`, `"4XX"`, `"default"`)."""
+    checked: dict[str, Any] = {}
+    for status, value in responses.items():
+        if isinstance(status, bool) or not (
+            (isinstance(status, int) and 100 <= status <= 599)
+            or (isinstance(status, str) and (status == "default" or (len(status) == 3 and status[0] in "12345" and status[1:] == "XX")))
+        ):
+            raise ValueError(f"responses: {status!r} isn't a status (404), a range (\"4XX\") or \"default\"")
+        description, model = (value, None) if isinstance(value, str) else (None, value)
+        if isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], str):
+            description, model = value
+        if model is not None and _library(model) is None:
+            raise TypeError(
+                f"responses[{status!r}]: expected a description, a msgspec or pydantic model, or (description, model), not {value!r}"
+            )
+        checked[str(status)] = (description, model)
+    return checked
+
+
+def _check_name_type(name: Any) -> None:
+    if name is not None and (not isinstance(name, str) or not name):
+        raise ValueError(f"a route's name must be a non-empty string, not {name!r}")
 
 
 def _route_name(func: Callable[..., Any], taken: Mapping[str, Any]) -> str:

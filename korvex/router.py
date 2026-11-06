@@ -62,14 +62,18 @@ class Router(_CoreRouter, _Shortcuts):
     def __init__(self) -> None:
         self._cache = lru_cache(maxsize=CACHE_SIZE)(super().match)
         self.match = self._cache
+        self.version = 0
+        """Goes up each time a route is added or removed."""
 
     def route(self, path: str, handler: str, *, method: str = "GET", middleware: Sequence[str] | None = None) -> None:
         super().route(path, handler, method=method, middleware=middleware)
         self._cache.cache_clear()
+        self.version += 1
 
     def remove(self, path: str, method: str = "GET") -> bool:
         removed = super().remove(path, method)
         self._cache.cache_clear()
+        self.version += 1
         return removed
 
     def group(self, prefix: str = "", *, middleware: Sequence[str] | None = None) -> RouteGroup:

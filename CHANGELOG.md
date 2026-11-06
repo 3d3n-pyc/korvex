@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.13.0
+
+What everyone expects from a framework: a test client, reverse URLs and
+a richer OpenAPI.
+
+- `korvex.testing`: `TestClient(app)` runs the app in-process, with its
+  lifespan (`with TestClient(app) as client:` runs the startup and
+  shutdown hooks), cookies, headers, query strings, JSON, forms and
+  multipart files, streamed responses (`client.stream()` to read one as
+  it comes) and WebSockets (`client.websocket()`). An error the app
+  answers with a 500 is raised in the test with its traceback, and a
+  request that gets no answer within `timeout` fails instead of hanging.
+  `AsyncTestClient` does the same in `async` tests. No dependency: it
+  speaks ASGI directly, to any ASGI app. The taskboard example uses it,
+  in place of the client it wrote for itself.
+- Reverse URLs: `app.url_for("get_user", id=42)` gives `/users/42`,
+  `request.url_for(...)` the full URL (the request's scheme, `ws`/`wss`
+  for a WebSocket route, and the route's own host for an `app.host()`
+  route, its parameters given too). A route is known by its function's
+  name, or by `name=` on its decorator (`get`, `post`... and `websocket`);
+  `app.static()` directories by `"static"`, or their `name=`. A given
+  name points to one path (several methods on it are fine); function
+  names shared by routes on different paths are refused by `url_for()`
+  only, with a request for a `name=`. Values are percent-encoded, and
+  checked: against `int`, `uuid` and custom constraints, against the
+  handler's annotations, not empty, `.` or `..`, a `/` only in a
+  `*wildcard`, and the path must reach that route rather than another
+  answering it first. Starlette and Litestar escape none of them.
+- `request.app`: the `App` handling the request. `operationId` in
+  OpenAPI is the route's name.
+- Route options for OpenAPI, on the decorators: `status`, `tags`,
+  `deprecated`, `responses` (`{404: "No such task"}`, a model, or
+  `(description, model)`; `"4XX"` and `"default"` too) and
+  `include_in_schema`. Groups and hosts take all but `status`, for their
+  routes: tags add up, responses merge. Bad values fail at registration.
+- `status` applies at runtime: to the response made from a returned
+  model, and to the empty response of a handler annotated `-> None`
+  (`status=204`). A returned `Response` keeps its own. A 204 or 304
+  route can't have a return model.
+- `korvex.security`: `Bearer()`, `APIKey(header=/query=/cookie=)` and
+  `OAuth2Password(token_url, scopes=...)` are dependencies that give the
+  credential and answer 401 (with `WWW-Authenticate`) without one, or
+  `None` with `required=False`. OpenAPI lists them in
+  `securitySchemes`, and on every route whose dependencies use one,
+  directly or not, so Swagger UI's "Authorize" sends it; a required one
+  also documents the 401. The taskboard's session cookie is one.
+- Fixed: a handler returning something other than a `Response` (`None`,
+  a `dict`) made an `AttributeError` escape the App, so the server
+  answered a 500 past the exception handlers and after hooks. It's now
+  a `TypeError` that says what to do, answered like any error.
+
+Nothing breaks: handlers that relied on the bug above crashed already.
+
 ## 0.12.0
 
 More than one core per worker.
