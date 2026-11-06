@@ -16,7 +16,6 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Optional, Union, overload
-from urllib.parse import unquote
 
 from korvex._core import MethodNotAllowed
 from korvex.errors import Abort, HTTPException, ValidationError
@@ -630,58 +629,6 @@ class App(_RouteDecorators):
             route.plan = self._plan(route.func, pattern)
         return route.plan
 
-    async def _serve_websocket(
-        self,
-        path: str,
-        query_string: bytes,
-        headers: list,
-        client: tuple[str, int] | None,
-        scheme: str,
-        connection: Any,
-        incoming: asyncio.Queue,
-        writable: Callable[[int], Awaitable[None]] | None = None,
-    ) -> None:
-        """Runs a WebSocket from the built-in server through the same code
-        as under ASGI: it speaks ASGI messages over the Rust connection. A
-        send waits on `writable(connection.id)` while the client is behind."""
-        offered = next((v.decode("latin-1") for k, v in headers if k == b"sec-websocket-protocol"), "")
-        scope = {
-            "type": "websocket",
-            "path": unquote(path),
-            "query_string": query_string,
-            "headers": headers,
-            "client": client,
-            "scheme": scheme,
-            "subprotocols": [p.strip() for p in offered.split(",") if p.strip()],
-        }
-        connected = False
-
-        async def receive() -> dict:
-            nonlocal connected
-            if not connected:
-                connected = True
-                return {"type": "websocket.connect"}
-            return await incoming.get()
-
-        async def send(message: dict) -> None:
-            kind = message["type"]
-            if kind == "websocket.accept":
-                connection.accept(message.get("subprotocol"), message.get("headers") or [])
-            elif kind == "websocket.send":
-                if message.get("text") is not None:
-                    sent = connection.send_text(message["text"])
-                else:
-                    sent = connection.send_bytes(message.get("bytes") or b"")
-                if sent == 2 and writable is not None:
-                    await writable(connection.id)  # the client is behind: let it catch up
-            elif kind == "websocket.close":
-                connection.close(message.get("code", 1000), message.get("reason") or "")
-
-        try:
-            await self._websocket(scope, receive, send)
-        finally:
-            connection.finish()
-
     async def _websocket(self, scope: dict, receive: Callable, send: Callable) -> None:
         """Runs a WebSocket connection: its handler, or a refusal (403) for
         an unknown path, a before hook answering, or a dependency raising
@@ -869,62 +816,6 @@ class App(_RouteDecorators):
                 threads,
             ),
         )
-
-    async def _serve_one(
-        self,
-        method: str,
-        path: str,
-        query_string: bytes,
-        headers: list,
-        body: bytes,
-        client: tuple[str, int] | None,
-        scheme: str,
-        responder: Any,
-        error: int = 0,
-        writable: Callable[[int], Awaitable[None]] | None = None,
-    ) -> int:
-        """Runs one request taken from the built-in server, through the same
-        dispatch as under ASGI, hands the response back to Rust, and returns
-        its status. `error` is a status the server already decided on (413,
-        408, 400): the request goes through the before hooks, then gets that
-        error's response, as if the route had raised `HTTPException`. A
-        streamed response waits on `writable(responder.id)` whenever its
-        client falls behind."""
-        scope = {
-            "type": "http",
-            "method": method,
-            "path": unquote(path),
-            "query_string": query_string,
-            "headers": headers,
-            "client": client,
-            "scheme": scheme,
-        }
-
-        async def receive() -> dict:
-            return {"type": "http.request", "body": body, "more_body": False}
-
-        response = await self._respond(scope, receive, error)
-        head = method == "HEAD"
-        raw_headers = _raw_headers(response, head)
-        if head:
-            responder.respond(response.status, raw_headers, b"")
-        elif isinstance(response, StreamingResponse):
-            responder.start_stream(response.status, raw_headers)
-            try:
-                async for chunk in response:
-                    sent = responder.send_chunk(chunk)
-                    if sent == 0:
-                        break  # the client is gone
-                    if sent == 2 and writable is not None:
-                        await writable(responder.id)  # the client is behind: let it catch up
-            finally:
-                responder.end_stream()
-                await _finish(response, path)
-        else:
-            responder.respond(response.status, raw_headers, response.body)
-        if head and isinstance(response, StreamingResponse):
-            await _finish(response, path)
-        return response.status
 
     def __repr__(self) -> str:
         return f"App(router={self.router!r})"
