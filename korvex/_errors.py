@@ -13,9 +13,11 @@ if TYPE_CHECKING:
 
 class HTTPException(Exception):
     """Raise it in a handler, a dependency or a before hook to answer with
-    an HTTP error:
-    `raise HTTPException(404, "user not found")`. Without a `detail`, the
-    standard reason (`Not Found`) is used. `headers` is a dict or pairs."""
+    an HTTP error: `raise HTTPException(404, "user not found")` answers
+    `{"detail": "user not found"}`, as JSON, like a validation error's 422.
+    Without a `detail`, the standard reason (`Not Found`) is used.
+    `headers` is a dict or pairs. `@app.exception_handler(404)` answers
+    differently."""
 
     def __init__(self, status: int, detail: str | None = None, *, headers: HeaderItems = ()) -> None:
         self.status = status

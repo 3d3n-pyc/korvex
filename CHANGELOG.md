@@ -32,6 +32,13 @@ each thing. Breaking changes are listed with how to update.
   return. With `RouteGroup` gone from `korvex`, there's one kind of group
   left. To update: rename it in type annotations.
 
+- **Errors are answered as JSON**: `{"detail": "..."}`. An
+  `HTTPException`, a 404 or a 405 answered `text/plain` while a
+  validation error's 422 was JSON, so an API client got two formats. A
+  500 answers `{"detail": "Internal Server Error"}`. To update: clients
+  that read the text read `detail`; an `@app.exception_handler(...)`
+  can answer anything else, a page for a browser say.
+
 ### New
 
 - **`headers=` takes a dict**, in `Response(...)` and its shortcuts,

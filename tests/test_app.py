@@ -86,7 +86,7 @@ def test_http_exception_becomes_its_response():
 
     status, headers, body = response_from(run_app(app, make_scope("GET", "/users/7")))
 
-    assert (status, body) == (404, b"no user 7")
+    assert (status, body) == (404, b'{"detail": "no user 7"}')
     assert ("X-Reason", "missing") in headers
 
 
@@ -144,7 +144,7 @@ def test_unhandled_exception_is_a_logged_500(caplog):
 
     status, _, body = response_from(run_app(app, make_scope("GET", "/")))
 
-    assert (status, body) == (500, b"Internal Server Error")
+    assert (status, body) == (500, b'{"detail": "Internal Server Error"}')
     assert "unhandled error in GET /" in caplog.text
     assert "RuntimeError: boom" in caplog.text
 
@@ -883,7 +883,7 @@ def test_dependencies_read_host_parameters():
         return Response.text(name)
 
     assert on(app, "acme.example.com") == (200, b"Acme Corp")
-    assert on(app, "nobody.example.com") == (404, b"no such tenant")
+    assert on(app, "nobody.example.com") == (404, b'{"detail": "no such tenant"}')
 
 
 def test_app_local_is_kept_per_event_loop():

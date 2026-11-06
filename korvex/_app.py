@@ -547,7 +547,7 @@ class App(_RouteDecorators):
                 changed = await _call(hook, request, response)
             except Exception:
                 logger.exception("after_request hook failed for %s %s", request.method, request.path)
-                return Response.text("Internal Server Error", status=500)
+                return _server_error()
             if changed is not None:
                 if changed is not response and isinstance(response, StreamingResponse):
                     await _finish(response, request.path)  # replaced: it won't be sent
@@ -665,7 +665,7 @@ class App(_RouteDecorators):
             try:
                 answer = await _call(hook, websocket)
             except (HTTPException, Abort) as exc:
-                answer = exc.response if isinstance(exc, Abort) else Response.text(exc.detail, status=exc.status)
+                answer = exc.response if isinstance(exc, Abort) else Response.json({"detail": exc.detail}, status=exc.status)
             except Exception:
                 logger.exception("before_request hook failed for WebSocket %s", websocket.path)
                 return False
@@ -696,13 +696,13 @@ class App(_RouteDecorators):
                 return await _call(handler, request, exc)
             except Exception:
                 logger.exception("exception handler failed for %s %s", request.method, request.path)
-                return Response.text("Internal Server Error", status=500)
+                return _server_error()
         if isinstance(exc, ValidationError):
             return Response.json({"detail": exc.errors}, status=422, headers=exc.headers)
         if isinstance(exc, HTTPException):
-            return Response.text(exc.detail, status=exc.status, headers=exc.headers)
+            return Response.json({"detail": exc.detail}, status=exc.status, headers=exc.headers)
         logger.exception("unhandled error in %s %s", request.method, request.path, exc_info=exc)
-        return Response.text("Internal Server Error", status=500)
+        return _server_error()
 
     def _find_exception_handler(self, exc: Exception) -> ExceptionHandler | None:
         """By status for an HTTPException, then by class, closest first."""
@@ -793,6 +793,11 @@ class App(_RouteDecorators):
 
     def __repr__(self) -> str:
         return f"App({len(self._routes)} routes, {len(self._ws_routes)} WebSocket routes)"
+
+
+def _server_error() -> Response:
+    """The answer to an error nothing handled: the cause is logged, never sent."""
+    return Response.json({"detail": "Internal Server Error"}, status=500)
 
 
 def _host_params_for(route: _Route | None, host_params: dict[str, str]) -> dict[str, str]:

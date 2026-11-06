@@ -224,7 +224,7 @@ def test_schemes_at_runtime():
         assert client.get("/bearer", headers={"Authorization": "bearer abc"}).text == "abc"
         for headers in ({}, {"Authorization": "Basic abc"}, {"Authorization": "Bearer "}):
             refused = client.get("/bearer", headers=headers)
-            assert (refused.status, refused.text, refused.headers["www-authenticate"]) == (
+            assert (refused.status, refused.json()["detail"], refused.headers["www-authenticate"]) == (
                 401,
                 "Not authenticated",
                 "Bearer",

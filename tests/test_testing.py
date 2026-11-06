@@ -195,7 +195,7 @@ def test_server_errors_are_raised_in_the_test():
         assert client.get("/teapot").status == 418  # an HTTP error is an answer, not a bug
     with TestClient(make_app(), raise_server_errors=False) as client:
         response = client.get("/boom")
-    assert (response.status, response.text) == (500, "Internal Server Error")
+    assert (response.status, response.json()) == (500, {"detail": "Internal Server Error"})
 
 
 def test_teardown_errors_are_raised_too():

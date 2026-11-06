@@ -43,7 +43,7 @@ def test_a_dependency_gives_its_value_and_can_stop_the_request():
 
     assert call(app, "/me", headers=[("Cookie", "session=t1")]) == (200, {"user": "ada"})
     assert call(app, "/me2", headers=[("Cookie", "session=t2")]) == (200, {"user": "bob"})
-    assert call(app, "/me") == (401, "sign in first")
+    assert call(app, "/me") == (401, {"detail": "sign in first"})
 
 
 def test_dependencies_of_dependencies_sync_and_async_and_the_request():
@@ -132,7 +132,7 @@ def test_route_and_group_dependencies_check_without_giving_a_value():
     def purge(request):
         return Response.text("purged")
 
-    assert call(app, "/api/tasks") == (401, "sign in first")
+    assert call(app, "/api/tasks") == (401, {"detail": "sign in first"})
     assert call(app, "/api/tasks", headers=[("Cookie", "session=t1")]) == (200, "tasks")
     seen.clear()
     assert call(app, "/api/admin/purge", method="POST", headers=[("Cookie", "session=t2")]) == (200, "purged")
@@ -172,7 +172,7 @@ def test_yield_dependencies_are_torn_down_after_the_handler_last_first():
     assert call(app, "/ok") == (200, "ok")
     assert events == ["open db", "begin", "handler with tx on db", "commit", "close db"]
     events.clear()
-    assert call(app, "/fails") == (409, "conflict")  # the error still gets its response
+    assert call(app, "/fails") == (409, {"detail": "conflict"})  # the error still gets its response
     assert events == ["open db", "begin", "rollback after HTTPException(409, 'conflict')", "close db"]
 
 
@@ -418,7 +418,7 @@ def guarded_and_public(stack_public_on_top):
 @pytest.mark.parametrize("public_on_top", [True, False])
 def test_each_route_keeps_its_own_dependencies_when_a_function_serves_two(public_on_top):
     app = guarded_and_public(public_on_top)
-    assert call(app, "/admin/items") == (401, "sign in first")
+    assert call(app, "/admin/items") == (401, {"detail": "sign in first"})
     assert call(app, "/admin/items", headers=[("Cookie", "session=t1")]) == (200, "items")
     assert call(app, "/public/items") == (200, "items")
 
@@ -433,7 +433,7 @@ def test_functions_of_the_same_name_from_a_factory_stay_apart():
 
     crud(app.group("/admin", dependencies=[Depends(current_user)]), "admin")
     crud(app.group("/public"), "public")
-    assert call(app, "/admin/stats") == (401, "sign in first")
+    assert call(app, "/admin/stats") == (401, {"detail": "sign in first"})
     assert call(app, "/admin/stats", headers=[("Cookie", "session=t1")]) == (200, "admin")
     assert call(app, "/public/stats") == (200, "public")
 
