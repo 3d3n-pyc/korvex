@@ -146,7 +146,7 @@ jobs:
       - name: Set version from tag
         if: startsWith(github.ref, 'refs/tags/')
         run: python3 .github/scripts/set_version_from_tag.py
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         id: python
         with:
           python-version: 3.14t
