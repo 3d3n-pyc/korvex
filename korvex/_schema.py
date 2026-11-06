@@ -303,6 +303,7 @@ class Plan:
         self.form = [p for p in params if p.source == "form"]
         self.form_models = [(p, Model(p.type)) for p in params if p.source == "form_model"]
         self.request = [p.name for p in params if p.source == "request"]
+        self.request_name = self.request[0] if len(self.request) == 1 else None  # the usual case, called directly
         self.binds = any(p.source != "request" for p in params)  # something to read from the request
         self.body = next((p for p in params if p.source == "body"), None)
         self.body_model = Model(self.body.type) if self.body else None

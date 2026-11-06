@@ -576,8 +576,10 @@ class App(_RouteDecorators):
         handler = route.func
         plan = route.plan if route.plan is not None else self._plan_of(handler_name)
         if not needs_plan(plan):  # no annotations to act on: called as before, at no cost
-            if plan.request:  # it takes the request
-                path_params = {**path_params, **dict.fromkeys(plan.request, request)}
+            if plan.request_name is not None:  # it takes the request
+                return await _call(handler, **path_params, **{plan.request_name: request})
+            if plan.request:  # under several names
+                return await _call(handler, **path_params, **dict.fromkeys(plan.request, request))
             return await _call(handler, **path_params)
         if not plan.dependencies:
             arguments = {**path_params, **await plan.bind(request, values, None)}
