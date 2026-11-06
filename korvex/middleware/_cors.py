@@ -9,7 +9,7 @@ from korvex._response import Response
 
 if TYPE_CHECKING:
     from korvex._app import App
-    from korvex._requests import Request
+    from korvex._requests import Connection, Request
 
 
 ALL_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
@@ -61,7 +61,7 @@ def cors(
             response.headers.set("Access-Control-Allow-Credentials", "true")
 
     @app.before_request
-    def preflight(request: Request) -> Response | None:
+    def preflight(request: Connection) -> Response | None:
         origin = request.headers.get("origin")
         requested_method = request.headers.get("access-control-request-method")
         if request.method != "OPTIONS" or origin is None or requested_method is None:

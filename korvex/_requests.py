@@ -33,8 +33,12 @@ class UploadedFile:
 FormData = dict[str, list[Union[str, UploadedFile]]]
 
 
-class Request:
-    """An incoming HTTP request."""
+class Connection:
+    """What an HTTP request and a WebSocket have in common: the path, the
+    headers, cookies and query string, the path parameters, the client
+    and the scheme. Before hooks get one (`isinstance(connection,
+    WebSocket)` tells a handshake apart), and a dependency annotated
+    `Connection` serves HTTP routes and WebSockets alike."""
 
     __slots__ = (
         "method",
@@ -58,21 +62,23 @@ class Request:
         path_params: Mapping[str, Any],
         app: App | None = None,
     ) -> None:
-        self.method: str = scope.get("method", "GET")  # a WebSocket handshake is a GET
+        self.method: str = scope.get("method", "GET")
+        """The HTTP method; `GET` for a WebSocket's handshake."""
         self.path: str = scope["path"]
         client = scope.get("client")
         self.client: tuple[str, int] | None = tuple(client) if client else None  # type: ignore[assignment]
         """`(host, port)` of the client, behind a trusted proxy too; `None` if unknown."""
         self.scheme: str = scope.get("scheme", "http")
-        """`"https"` or `"http"`, as the client used it."""
+        """`"https"` or `"http"` (`"wss"` or `"ws"` for a WebSocket), as the
+        client used it."""
         self.headers = Headers((k.decode("latin-1"), v.decode("latin-1")) for k, v in scope["headers"])
         self.query_params: dict[str, list[str]] = parse_qs(scope.get("query_string", b"").decode("latin-1"))
         self.path_params = path_params
         self.app = app
-        """The `App` handling the request."""
+        """The `App` handling it."""
         self._receive = receive
         self._cookies: dict[str, str] | None = None
-        self._body: bytes | None = None
+        self._body: bytes | None = None  # a Request's, read once (here: one constructor for both)
         self._form: FormData | None = None
 
     @property
@@ -86,6 +92,32 @@ class Request:
                     if sep and name.strip():
                         self._cookies[name.strip()] = unquote(value.strip().strip('"'))
         return self._cookies
+
+    def url_for(self, name: str, /, **params: Any) -> str:
+        """The full URL of the route named `name`, like `App.url_for()`
+        gives its path: `"https://example.com/users/42"`. The scheme is
+        the request's (`ws` or `wss` for a WebSocket route). The host is
+        the route's own for an `app.host()` route, its parameters given
+        here too (`tenant="acme"`), with the request's port; for other
+        routes, it's the request's `Host` header.
+
+        That header comes from the client: for a link sent elsewhere (an
+        email to reset a password), build it from a base URL you
+        configure and `app.url_for()`, not from the request."""
+        if self.app is None:
+            raise RuntimeError("this request doesn't come from an App: url_for() needs one to find the route")
+        from korvex import _urls as urls
+
+        return urls.url_for(self, urls.lookup(self.app._url_index(), name), params)
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.method} {self.path!r})"
+
+
+class Request(Connection):
+    """An incoming HTTP request: a `Connection`, and its body."""
+
+    __slots__ = ()
 
     async def body(self) -> bytes:
         """Reads the whole request body (once: later calls get it again)."""
@@ -129,26 +161,6 @@ class Request:
             raise HTTPException(400, "invalid form encoding") from None
         raise HTTPException(415, "expected a form (urlencoded or multipart)")
 
-    def url_for(self, name: str, /, **params: Any) -> str:
-        """The full URL of the route named `name`, like `App.url_for()`
-        gives its path: `"https://example.com/users/42"`. The scheme is
-        the request's (`ws` or `wss` for a WebSocket route). The host is
-        the route's own for an `app.host()` route, its parameters given
-        here too (`tenant="acme"`), with the request's port; for other
-        routes, it's the request's `Host` header.
-
-        That header comes from the client: for a link sent elsewhere (an
-        email to reset a password), build it from a base URL you
-        configure and `app.url_for()`, not from the request."""
-        if self.app is None:
-            raise RuntimeError("this request doesn't come from an App: url_for() needs one to find the route")
-        from korvex import _urls as urls
-
-        return urls.url_for(self, urls.lookup(self.app._url_index(), name), params)
-
-    def __repr__(self) -> str:
-        return f"Request({self.method} {self.path!r})"
-
 
 class WebSocketDisconnect(Exception):
     """Raised by `WebSocket.receive()` once the client has disconnected."""
@@ -158,11 +170,11 @@ class WebSocketDisconnect(Exception):
         super().__init__(code)
 
 
-class WebSocket(Request):
-    """A WebSocket connection, passed to `@app.websocket` handlers. It has
-    the handshake request's headers, cookies, params, client and scheme
-    (`"ws"` or `"wss"`), so the handler can check who connects before
-    calling `accept()`.
+class WebSocket(Connection):
+    """A WebSocket connection, passed to `@app.websocket` handlers. As a
+    `Connection`, it has the handshake's headers, cookies, params, client
+    and scheme (`"ws"` or `"wss"`), so the handler can check who connects
+    before calling `accept()`.
 
         @app.websocket("/ws")
         async def echo(ws):
@@ -255,15 +267,6 @@ class WebSocket(Request):
         if not self._connected:
             self._connected = True
             await self._receive()
-
-    async def body(self) -> bytes:
-        raise TypeError("a WebSocket has no body: use receive()")
-
-    async def json(self) -> JSONValue:
-        raise TypeError("a WebSocket has no body: use receive_json()")
-
-    async def form(self) -> FormData:
-        raise TypeError("a WebSocket has no form")
 
     def __repr__(self) -> str:
         return f"WebSocket({self.path!r})"

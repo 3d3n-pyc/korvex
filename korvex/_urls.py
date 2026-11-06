@@ -15,7 +15,7 @@ from korvex._schema import _TYPE_NAMES, _convert
 
 if TYPE_CHECKING:
     from korvex._app import App
-    from korvex._requests import Request
+    from korvex._requests import Connection
     from korvex._routing import _Host
     from korvex.router import Router
 
@@ -126,7 +126,7 @@ def path_for(app: App, target: Target, params: dict[str, Any], *, host_given: bo
     return "/" + "/".join(encoded)
 
 
-def url_for(request: Request, target: Target, params: dict[str, Any]) -> str:
+def url_for(request: Connection, target: Target, params: dict[str, Any]) -> str:
     """The full URL of `target`: the request's scheme (`ws`/`wss` for a
     WebSocket route), the route's host (or the request's), the path."""
     app = request.app

@@ -26,7 +26,7 @@ from collections.abc import Mapping
 from typing import Any, Optional
 
 from korvex._errors import HTTPException
-from korvex._requests import Request
+from korvex._requests import Connection
 
 __all__ = ["APIKey", "Bearer", "OAuth2Password", "SecurityScheme"]
 
@@ -48,7 +48,7 @@ class SecurityScheme:
         self.description = description
         self.required = required
 
-    def __call__(self, request: Request) -> Optional[str]:
+    def __call__(self, request: Connection) -> Optional[str]:
         credential = self.credential(request)
         if credential:
             return credential
@@ -56,7 +56,7 @@ class SecurityScheme:
             raise HTTPException(401, "Not authenticated", headers=[("WWW-Authenticate", self.challenge)])
         return None
 
-    def credential(self, request: Request) -> str | None:
+    def credential(self, request: Connection) -> str | None:
         """The credential the request carries, if any."""
         raise NotImplementedError
 
@@ -83,7 +83,7 @@ class Bearer(SecurityScheme):
         super().__init__(name=name, description=description, required=required)
         self.format = format
 
-    def credential(self, request: Request) -> str | None:
+    def credential(self, request: Connection) -> str | None:
         return _bearer_token(request)
 
     def openapi(self) -> dict[str, Any]:
@@ -118,7 +118,7 @@ class APIKey(SecurityScheme):
         super().__init__(name=name, description=description, required=required)
         self.location, self.key = given[0]
 
-    def credential(self, request: Request) -> str | None:
+    def credential(self, request: Connection) -> str | None:
         if self.location == "header":
             return request.headers.get(self.key)
         if self.location == "query":
@@ -154,7 +154,7 @@ class OAuth2Password(SecurityScheme):
         self.scopes = dict(scopes or {})
         self.refresh_url = refresh_url
 
-    def credential(self, request: Request) -> str | None:
+    def credential(self, request: Connection) -> str | None:
         return _bearer_token(request)
 
     def openapi(self) -> dict[str, Any]:
@@ -164,7 +164,7 @@ class OAuth2Password(SecurityScheme):
         return self._described({"type": "oauth2", "flows": {"password": flow}})
 
 
-def _bearer_token(request: Request) -> str | None:
+def _bearer_token(request: Connection) -> str | None:
     """The token of `Authorization: Bearer <token>` (the scheme's case
     doesn't matter), or None."""
     scheme, _, token = (request.headers.get("authorization") or "").partition(" ")

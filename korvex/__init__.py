@@ -10,7 +10,7 @@ from importlib.metadata import version
 from korvex._app import App, LoopLocal
 from korvex._errors import Abort, HTTPException, ValidationError
 from korvex._params import Cookie, Depends, Form, Header, Query
-from korvex._requests import Request, UploadedFile, WebSocket, WebSocketDisconnect
+from korvex._requests import Connection, Request, UploadedFile, WebSocket, WebSocketDisconnect
 from korvex._response import Headers, Response
 from korvex._routing import Group
 
@@ -18,6 +18,7 @@ __all__ = [
     "Abort",
     "App",
     "Group",
+    "Connection",
     "Cookie",
     "Depends",
     "Form",

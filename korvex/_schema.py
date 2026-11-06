@@ -29,7 +29,7 @@ from typing import Any, NamedTuple, Union
 
 from korvex._errors import ValidationError
 from korvex._params import REQUIRED, Dependency, Source
-from korvex._requests import Request, UploadedFile, WebSocket
+from korvex._requests import Connection, Request, UploadedFile, WebSocket
 from korvex._response import Response
 
 SCALARS = (str, int, float, bool, uuid.UUID, datetime.date, datetime.datetime)
@@ -650,9 +650,14 @@ def plan_for(
                 raise TypeError(f"{where}: parameter {name!r}: a WebSocket has no form")
             key = marker.alias or (name.replace("_", "-") if marker.kind == "header" else name)
             params.append(_param(name, marker.kind, tp, required, default, key))
-        elif inspect.isclass(inner) and issubclass(inner, Request):
+        elif inspect.isclass(inner) and issubclass(inner, Connection):
             if issubclass(inner, WebSocket) and not websocket:
                 raise TypeError(f"{where}: parameter {name!r} asks for a WebSocket in an HTTP route")
+            if issubclass(inner, Request) and websocket:
+                raise TypeError(
+                    f"{where}: parameter {name!r} asks for a Request in a WebSocket route; "
+                    "annotate it Connection to serve both, or WebSocket"
+                )
             params.append(_param(name, "request", tp, True, key=name))
         elif tp is None and name == "request" and not handler and not has_default:
             params.append(_param(name, "request", None, True, key=name))

@@ -19,7 +19,7 @@ from typing import Any, Optional, Union, overload
 
 from korvex._core import MethodNotAllowed
 from korvex._errors import Abort, HTTPException, ValidationError
-from korvex._requests import Request, WebSocket, WebSocketDisconnect
+from korvex._requests import Connection, Request, WebSocket, WebSocketDisconnect
 from korvex._response import Response, StreamingResponse
 from korvex._routing import (
     Group,
@@ -35,7 +35,7 @@ from korvex._routing import (
 from korvex._schema import Plan, Run, needs_plan, plan_for
 from korvex.router import Router
 
-BeforeHook = Callable[["Request"], Union[Optional[Response], Awaitable[Optional[Response]]]]
+BeforeHook = Callable[["Connection"], Union[Optional[Response], Awaitable[Optional[Response]]]]
 """`(request) -> Response | None`, sync or async. Returning a `Response`
 sends it right away; returning `None` moves on to the next step."""
 

@@ -7,7 +7,7 @@ import inspect
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
-from korvex._requests import Request
+from korvex._requests import Connection
 from korvex._schema import Plan, _library, path_params
 from korvex.router import RouteGroup, Router
 
@@ -469,7 +469,7 @@ class _Host:
         return params
 
 
-def _host_labels(request: Request) -> list[str]:
+def _host_labels(request: Connection) -> list[str]:
     """The labels of the host the request is for, from its `Host` header,
     without the port: `"Acme.example.com:8000"` -> `["acme", "example", "com"]`."""
     host = (request.headers.get("host") or "").lower()

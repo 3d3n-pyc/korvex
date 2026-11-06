@@ -47,6 +47,16 @@ each thing. Breaking changes are listed with how to update.
 - `korvex.middleware` no longer exports `ALL_METHODS` and
   `COMPRESSIBLE`, two defaults of `cors()` and `compress()`.
 
+- **`Connection`, what a `Request` and a `WebSocket` share**: path,
+  headers, cookies, query, path parameters, client, scheme, `app` and
+  `url_for()`. `WebSocket` was a `Request` whose `body()`, `json()` and
+  `form()` always raised; it's now a `Connection` without them. Before
+  hooks get a `Connection`. A dependency annotated `Request` in a
+  WebSocket route is refused at registration, with a message: annotate
+  it `Connection` to serve both. To update: `isinstance(x, Request)` is
+  false for a WebSocket now (`isinstance(x, WebSocket)` works as
+  before); hooks and shared dependencies take a `Connection`.
+
 ### New
 
 - **`headers=` takes a dict**, in `Response(...)` and its shortcuts,
