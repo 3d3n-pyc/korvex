@@ -4,12 +4,17 @@
 from collections.abc import Awaitable, Callable
 from typing import Optional
 
-from korvex import App, Cookie, Form, HTTPException, Request, Response
+from korvex import App, Cookie, Depends, Form, HTTPException, Request, Response
+from korvex.security import APIKey
 
 from taskboard.config import Settings
 from taskboard.services.auth import AuthService
 
 COOKIE = "session"
+
+# The session cookie as a security scheme: OpenAPI lists it on the routes
+# it guards. Not required here: current_user answers the 401 itself.
+SESSION = APIKey(cookie=COOKIE, name="session", description="Set by `POST /login`.", required=False)
 
 
 CurrentUser = Callable[..., Awaitable[str]]
@@ -19,7 +24,7 @@ def register(app: App, auth: AuthService, settings: Settings) -> CurrentUser:
     """Registers the routes, and returns the `current_user` dependency for
     the other route modules: `dependencies=[Depends(current_user)]`."""
 
-    async def current_user(token: Optional[str] = Cookie(None, alias=COOKIE)) -> str:
+    async def current_user(token: Optional[str] = Depends(SESSION)) -> str:
         """Who is signed in; a 401 for anyone else. HTTP routes and the
         WebSocket depend on it alike."""
         user = await auth.user(token)
@@ -27,7 +32,7 @@ def register(app: App, auth: AuthService, settings: Settings) -> CurrentUser:
             raise HTTPException(401, "sign in first")
         return user
 
-    @app.post("/login")
+    @app.post("/login", status=303, tags=["auth"])
     async def login(request: Request, password: str = Form("")) -> Response:
         """Sign in
 
@@ -50,7 +55,7 @@ def register(app: App, auth: AuthService, settings: Settings) -> CurrentUser:
         )
         return response
 
-    @app.post("/logout")
+    @app.post("/logout", status=303, tags=["auth"])
     async def logout(request: Request, token: Optional[str] = Cookie(None, alias=COOKIE)) -> Response:
         """Sign out
 
@@ -61,7 +66,7 @@ def register(app: App, auth: AuthService, settings: Settings) -> CurrentUser:
         response.delete_cookie(COOKIE)
         return response
 
-    @app.get("/api/me")
+    @app.get("/api/me", tags=["auth"])
     async def me(request: Request, token: Optional[str] = Cookie(None, alias=COOKIE)) -> Response:
         """Who is signed in
 

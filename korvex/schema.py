@@ -306,6 +306,8 @@ class Plan:
         self.body = next((p for p in params if p.source == "body"), None)
         self.body_model = Model(self.body.type) if self.body else None
         self.response = response
+        self.empty = False  # annotated `-> None`: an empty response
+        self.status = 200  # the route's, for a response made from what the handler returns
         self.summary = summary
         self.description = description
         # How a dependency gives its value: returned (awaited for a coroutine
@@ -409,11 +411,16 @@ class Plan:
             raise ValidationError(_unique(errors))
         return kwargs
 
-    def respond(self, result: Any) -> Response:
-        """A Response as is; anything else encoded with the return model."""
-        if isinstance(result, Response) or self.response is None:
+    def respond(self, result: Any) -> Any:
+        """A Response as is; anything else encoded with the return model,
+        or `None` as an empty response, with the route's status."""
+        if isinstance(result, Response):
             return result
-        return Response(self.response.encode(result), headers=[("Content-Type", "application/json")])
+        if self.response is not None:
+            return Response(self.response.encode(result), status=self.status, headers=[("Content-Type", "application/json")])
+        if result is None and self.empty:
+            return Response(status=self.status)
+        return result  # not a Response: the App answers a 500 that says so
 
 
 class Run:
@@ -683,6 +690,7 @@ def plan_for(
     doc = inspect.getdoc(func) or ""
     summary, _, description = doc.partition("\n")
     plan = Plan(func, pattern, websocket, params, deps, response, summary.strip(), description.strip())
+    plan.empty = handler and not websocket and "return" in hints and returned is type(None)
     if handler:
         _check_body(plan, where)
     return plan
@@ -717,4 +725,4 @@ def needs_plan(plan: Plan) -> bool:
     """Whether calling the handler needs the plan at all: a handler with no
     parameters to read, no dependencies and no return model is called as
     before."""
-    return bool(plan.params or plan.response or plan.dependencies)
+    return bool(plan.params or plan.response or plan.dependencies or plan.empty)

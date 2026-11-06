@@ -30,6 +30,8 @@ korvex/
   schema.py   validation from a handler's annotations (msgspec or pydantic),
               and resolving dependencies
   openapi.py  the OpenAPI document and the Swagger UI page
+  security.py security schemes: Bearer(), APIKey(), OAuth2Password()
+  urls.py     reverse URLs: url_for()
   middleware.py ready-made hooks: cors(), request_id(), rate_limit()
   testing.py  TestClient and AsyncTestClient: the app in-process, for tests
   serve.py    App.run(): one process, or a supervisor and its workers

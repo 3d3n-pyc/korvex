@@ -13,13 +13,18 @@ Then:
     curl -i -X POST http://127.0.0.1:8000/users -d '{"name": "Ada"}'    # Location: /users/43
     curl http://127.0.0.1:8000/secret                                   # 401
     curl -H "Authorization: Bearer token" http://127.0.0.1:8000/secret  # 200
+
+and http://127.0.0.1:8000/docs, where "Authorize" takes the token.
 """
 
 from __future__ import annotations
 
-from korvex import App, Depends, Header, HTTPException, Request, Response
+from korvex import App, Depends, HTTPException, Request, Response
+from korvex.security import Bearer
 
 app = App()
+app.docs(title="Example API")
+bearer = Bearer()  # reads `Authorization: Bearer <token>`, and shows in /docs
 
 
 @app.get("/health")
@@ -40,13 +45,13 @@ async def create_user(request: Request) -> Response:
     return Response.json({"id": 43, **data}, status=201, headers=[("Location", location)])
 
 
-def auth(authorization: str = Header("")) -> None:
+def auth(token: str = Depends(bearer)) -> None:
     """A dependency: runs before the handler, and stops the request if
-    the token is wrong."""
-    if authorization != "Bearer token":
-        raise HTTPException(401, "Unauthorized")
+    the token is wrong. Without a token at all, `bearer` answers 401."""
+    if token != "token":
+        raise HTTPException(401, "Unauthorized", headers=[("WWW-Authenticate", "Bearer")])
 
 
-@app.get("/secret", dependencies=[Depends(auth)])
+@app.get("/secret", dependencies=[Depends(auth)], responses={401: "Wrong or missing token"})
 def secret(request: Request) -> Response:
     return Response.text("top secret")

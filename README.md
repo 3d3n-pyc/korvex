@@ -299,6 +299,42 @@ handler's docstring (its first line as the summary).
 Swagger UI at `/docs` to try the API from a browser (loaded from a CDN;
 `docs_path=None` leaves it out).
 
+The route decorators, groups and hosts take what else it should say:
+
+```python
+from korvex.security import Bearer
+
+bearer = Bearer()  # Authorization: Bearer <token>; a 401 without one
+
+async def current_user(token: str = Depends(bearer)) -> User: ...
+
+api = app.group("/api", dependencies=[Depends(current_user)], tags=["tasks"])
+
+@api.post("/tasks", status=201, responses={409: ("Title taken", Conflict)})
+def create_task(request, body: NewTask) -> Task: ...
+
+@api.delete("/tasks/{id:uuid}", status=204, responses={404: "No such task"})
+def delete_task(request, id) -> None: ...      # `-> None`: an empty response
+
+@app.get("/v1/tasks", deprecated=True)         # include_in_schema=False hides one
+```
+
+- `status` is the response's when the handler returns a model, or `None`
+  with a `-> None` annotation (an empty response). A `Response` it
+  returns keeps its own. It's the success documented.
+- `tags`, `deprecated`, `responses` and `include_in_schema` on a group
+  apply to its routes: tags add up, a route's responses replace the
+  group's for the same status. A response is a description, a model, or
+  both: `{404: "No such task"}`, `{409: Conflict}`, `{409: ("Title
+  taken", Conflict)}`; `"4XX"` and `"default"` work too.
+- `korvex.security` has `Bearer()`, `APIKey(header=... | query=... |
+  cookie=...)` and `OAuth2Password(token_url, scopes=...)`: dependencies
+  that give the credential (a `str`) and answer 401 without one
+  (`required=False` gives `None` instead). Checking it is up to the
+  dependency that takes it. Every route that depends on a scheme, even
+  through other dependencies or its group, lists it in OpenAPI, so
+  Swagger UI's "Authorize" button sends it.
+
 ### WebSockets
 
 ```python

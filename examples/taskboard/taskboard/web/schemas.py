@@ -19,6 +19,19 @@ Title = Annotated[str, msgspec.Meta(min_length=1, max_length=200)]
 Notes = Annotated[str, msgspec.Meta(max_length=5000)]
 
 
+class Cleared(msgspec.Struct):
+    deleted: int
+    """How many tasks were deleted."""
+
+
+class Problem(msgspec.Struct):
+    """What the API answers when something goes wrong (in OpenAPI)."""
+
+    error: str
+    request_id: Optional[str] = None
+    """The request's ID, to find its log lines."""
+
+
 class NewList(msgspec.Struct, forbid_unknown_fields=True):
     name: Name
     color: Optional[Color] = None

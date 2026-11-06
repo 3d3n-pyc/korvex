@@ -30,6 +30,28 @@ a richer OpenAPI.
   answering it first. Starlette and Litestar escape none of them.
 - `request.app`: the `App` handling the request. `operationId` in
   OpenAPI is the route's name.
+- Route options for OpenAPI, on the decorators: `status`, `tags`,
+  `deprecated`, `responses` (`{404: "No such task"}`, a model, or
+  `(description, model)`; `"4XX"` and `"default"` too) and
+  `include_in_schema`. Groups and hosts take all but `status`, for their
+  routes: tags add up, responses merge. Bad values fail at registration.
+- `status` applies at runtime: to the response made from a returned
+  model, and to the empty response of a handler annotated `-> None`
+  (`status=204`). A returned `Response` keeps its own. A 204 or 304
+  route can't have a return model.
+- `korvex.security`: `Bearer()`, `APIKey(header=/query=/cookie=)` and
+  `OAuth2Password(token_url, scopes=...)` are dependencies that give the
+  credential and answer 401 (with `WWW-Authenticate`) without one, or
+  `None` with `required=False`. OpenAPI lists them in
+  `securitySchemes`, and on every route whose dependencies use one,
+  directly or not, so Swagger UI's "Authorize" sends it; a required one
+  also documents the 401. The taskboard's session cookie is one.
+- Fixed: a handler returning something other than a `Response` (`None`,
+  a `dict`) made an `AttributeError` escape the App, so the server
+  answered a 500 past the exception handlers and after hooks. It's now
+  a `TypeError` that says what to do, answered like any error.
+
+Nothing breaks: handlers that relied on the bug above crashed already.
 
 ## 0.12.0
 

@@ -11,8 +11,11 @@ import re
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from korvex.app import UploadedFile
-from korvex.schema import Model, _unwrap, path_params, scalar_schema
+from http import HTTPStatus
+
+from korvex.app import UploadedFile, _has_body
+from korvex.schema import Model, Plan, _unwrap, path_params, scalar_schema
+from korvex.security import SecurityScheme
 
 if TYPE_CHECKING:
     from korvex.app import App
@@ -49,17 +52,25 @@ def build(app: App, *, title: str, version: str, description: str | None = None,
     paths: dict[str, dict[str, Any]] = {}
     used_ids: set[str] = set()
     custom = dict(app.router.constraints())  # name -> regex
+    schemes = _Schemes()
     for pattern, method, name, _ in app._routes_for(host):
         if name.startswith("korvex.") or name not in app._handlers:
             continue  # static files and the docs themselves; names without a handler can't be described
+        docs = app._docs.get(name)
+        if docs is not None and not docs.include:
+            continue
         func = app._handlers[name]
         plan = app._plan_of(name)
         route_name = app._route_names.get((False, name), (getattr(func, "__name__", "handler"),))[0]
         operation: dict[str, Any] = {"operationId": _unique(route_name, used_ids)}
+        if docs is not None and docs.tags:
+            operation["tags"] = list(docs.tags)
         if plan.summary:
             operation["summary"] = plan.summary
         if plan.description:
             operation["description"] = plan.description
+        if docs is not None and docs.deprecated:
+            operation["deprecated"] = True
 
         everything = plan.everything()  # the handler's parameters and its dependencies'
         annotated = {p.key: p.type for p in everything if p.source == "path"}
@@ -97,24 +108,91 @@ def build(app: App, *, title: str, version: str, description: str | None = None,
             kind = "multipart/form-data" if files else "application/x-www-form-urlencoded"
             operation["requestBody"] = {"required": required, "content": {kind: {"schema": schema}}}
         success: dict[str, Any] = {"description": "Successful response"}
-        if plan.response is not None:
+        if plan.response is not None and _has_body(plan.status):
             success["content"] = {"application/json": {"schema": plan.response.schema(components)}}
-        operation["responses"] = {"200": success}
+        responses = {str(plan.status): success}
         if plan.validates:
             components["ValidationError"] = VALIDATION_ERROR
-            operation["responses"]["422"] = {
+            responses["422"] = {
                 "description": "Validation error",
                 "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ValidationError"}}},
             }
+        security = schemes.requirements(plan)
+        if security:
+            operation["security"] = security
+            if any(s.required for s in _schemes_of(plan)):
+                responses["401"] = {"description": "Not authenticated"}
+        for status, (text, model) in (docs.responses if docs is not None else {}).items():
+            entry = dict(responses.get(status, {}))
+            entry["description"] = text or entry.get("description") or _phrase(status)
+            if model is not None:
+                entry["content"] = {"application/json": {"schema": Model(model).schema(components)}}
+            responses[status] = entry
+        operation["responses"] = dict(sorted(responses.items()))
         paths.setdefault(openapi_path(pattern), {})[method.lower()] = operation
 
     info: dict[str, Any] = {"title": title, "version": version}
     if description:
         info["description"] = description
     document: dict[str, Any] = {"openapi": "3.1.0", "info": info, "paths": paths}
-    if components:
-        document["components"] = {"schemas": dict(sorted(components.items()))}
+    if components or schemes.specs:
+        document["components"] = {}
+        if components:
+            document["components"]["schemas"] = dict(sorted(components.items()))
+        if schemes.specs:
+            document["components"]["securitySchemes"] = dict(sorted(schemes.specs.items()))
     return document
+
+
+class _Schemes:
+    """The security schemes the routes use, each under a name of its own."""
+
+    def __init__(self) -> None:
+        self.specs: dict[str, dict[str, Any]] = {}  # name -> Security Scheme Object
+        self._names: dict[int, str] = {}  # id of a scheme -> its name
+
+    def name_of(self, scheme: SecurityScheme) -> str:
+        found = self._names.get(id(scheme))
+        if found is not None:
+            return found
+        spec, name, n = scheme.openapi(), scheme.name, 2
+        while name in self.specs and self.specs[name] != spec:  # another scheme took it: `name_2`...
+            name, n = f"{scheme.name}_{n}", n + 1
+        self.specs[name] = spec
+        self._names[id(scheme)] = name
+        return name
+
+    def requirements(self, plan: Plan) -> list[dict[str, list[str]]]:
+        """The operation's `security`: the required schemes all together,
+        or else each optional one as an alternative."""
+        found = _schemes_of(plan)
+        required = [s for s in found if s.required]
+        if required:
+            return [{self.name_of(s): [] for s in required}]
+        return [{self.name_of(s): []} for s in found]
+
+
+def _schemes_of(plan: Plan) -> list[SecurityScheme]:
+    """The security schemes among a plan's dependencies, theirs included,
+    each once, in order."""
+    found: dict[int, SecurityScheme] = {}
+
+    def walk(p: Plan) -> None:
+        for dep in p.dependencies:
+            if isinstance(dep.func, SecurityScheme):
+                found.setdefault(id(dep.func), dep.func)
+            walk(dep.plan)
+
+    walk(plan)
+    return list(found.values())
+
+
+def _phrase(status: str) -> str:
+    """The standard description of a status: `"404"` -> `"Not Found"`."""
+    try:
+        return HTTPStatus(int(status)).phrase
+    except ValueError:  # "4XX", "default", or a status Python doesn't name
+        return "Response"
 
 
 _CONSTRAINED = re.compile(r"\{(\w+):(\w+)\}")

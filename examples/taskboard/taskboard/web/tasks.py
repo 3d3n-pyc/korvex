@@ -11,11 +11,15 @@ from korvex import App, Depends, Request, Response
 from taskboard.domain import Task
 from taskboard.services.tasks import TaskService
 from taskboard.web.auth import CurrentUser
-from taskboard.web.schemas import NewTask, TaskChanges
+from taskboard.web.schemas import NewTask, Problem, TaskChanges
+
+NOT_FOUND = {404: ("No such task", Problem)}
 
 
 def register(app: App, tasks: TaskService, current_user: CurrentUser) -> None:
-    api = app.group("/api", dependencies=[Depends(current_user)])
+    api = app.group(
+        "/api", dependencies=[Depends(current_user)], tags=["tasks"], responses={401: ("Not signed in", Problem)}
+    )
 
     @api.get("/tasks")
     async def find_tasks(
@@ -36,7 +40,7 @@ def register(app: App, tasks: TaskService, current_user: CurrentUser) -> None:
         """
         return await tasks.find(list_id=list_id, done=done, due_from=due_from, due_to=due_to, search=q, limit=limit)
 
-    @api.post("/tasks")
+    @api.post("/tasks", status=201, responses={404: ("No such list", Problem)})
     async def create_task(request: Request, body: NewTask) -> Task:
         """Create a task
 
@@ -44,12 +48,12 @@ def register(app: App, tasks: TaskService, current_user: CurrentUser) -> None:
         """
         return await tasks.create(body.list_id, body.title, notes=body.notes, due=body.due)
 
-    @api.get("/tasks/{id:uuid}")
+    @api.get("/tasks/{id:uuid}", responses=NOT_FOUND)
     async def get_task(request: Request, id: uuid.UUID) -> Task:
         """Get a task"""
         return await tasks.get(id)
 
-    @api.patch("/tasks/{id:uuid}")
+    @api.patch("/tasks/{id:uuid}", responses=NOT_FOUND)
     async def update_task(request: Request, id: uuid.UUID, body: TaskChanges) -> Task:
         """Change a task
 
@@ -59,11 +63,10 @@ def register(app: App, tasks: TaskService, current_user: CurrentUser) -> None:
             id, title=body.title, notes=body.notes, done=body.done, due=body.due, list_id=body.list_id
         )
 
-    @api.delete("/tasks/{id:uuid}")
-    async def delete_task(request: Request, id: uuid.UUID) -> Response:
+    @api.delete("/tasks/{id:uuid}", status=204, responses=NOT_FOUND)
+    async def delete_task(request: Request, id: uuid.UUID) -> None:
         """Delete a task"""
         await tasks.delete(id)
-        return Response(status=204)
 
     @api.get("/export")
     def export_tasks(request: Request) -> Response:

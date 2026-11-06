@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, unquote
 from korvex._core import MethodNotAllowed
 from korvex.errors import Abort, HTTPException, ValidationError
 from korvex.response import Headers, JSONValue, Response, StreamingResponse
-from korvex.schema import Plan, Run, needs_plan, path_params, plan_for
+from korvex.schema import Plan, Run, _library, needs_plan, path_params, plan_for
 from korvex.router import RouteGroup, Router
 
 # `Union`/`Optional` rather than `|`: these lines run at import time, and
@@ -346,11 +346,21 @@ WebSocketHandler = Callable[..., Awaitable[None]]
 
 class _RouteDecorators:
     """`@get(path)` and friends, for any class with a `route()` decorator.
-    `name` is what `url_for()` knows the route by (the function's name
-    by default). `dependencies` (`[Depends(func), ...]`) run before the handler, for
-    what they check rather than what they return. `max_body` (bytes)
-    raises or lowers the built-in server's body size limit for that route;
-    ASGI servers ignore it."""
+
+    - `name`: what `url_for()` knows the route by (the function's name by
+      default).
+    - `status`: the status of the response made from what the handler
+      returns, a model or `None` (annotated `-> None`, for an empty
+      response: `status=204`). A `Response` it returns keeps its own.
+      OpenAPI documents it as the route's success.
+    - `dependencies` (`[Depends(func), ...]`): run before the handler, for
+      what they check rather than what they return.
+    - `tags`, `deprecated`, `responses` and `include_in_schema`: how the
+      route shows in OpenAPI. `responses` documents other answers, by
+      status: `{404: "No such task"}`, `{409: Conflict}` (a model), or
+      `{409: ("Name taken", Conflict)}`.
+    - `max_body` (bytes): raises or lowers the built-in server's body size
+      limit for that route; ASGI servers ignore it."""
 
     __slots__ = ()
 
@@ -360,7 +370,12 @@ class _RouteDecorators:
         *,
         method: str = "GET",
         name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
         raise NotImplementedError
@@ -370,88 +385,241 @@ class _RouteDecorators:
         path: str,
         *,
         name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="GET", name=name, dependencies=dependencies, max_body=max_body)
+        return self.route(
+            path,
+            method="GET",
+            name=name,
+            status=status,
+            dependencies=dependencies,
+            tags=tags,
+            deprecated=deprecated,
+            responses=responses,
+            include_in_schema=include_in_schema,
+            max_body=max_body,
+        )
 
     def post(
         self,
         path: str,
         *,
         name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="POST", name=name, dependencies=dependencies, max_body=max_body)
+        return self.route(
+            path,
+            method="POST",
+            name=name,
+            status=status,
+            dependencies=dependencies,
+            tags=tags,
+            deprecated=deprecated,
+            responses=responses,
+            include_in_schema=include_in_schema,
+            max_body=max_body,
+        )
 
     def put(
         self,
         path: str,
         *,
         name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="PUT", name=name, dependencies=dependencies, max_body=max_body)
+        return self.route(
+            path,
+            method="PUT",
+            name=name,
+            status=status,
+            dependencies=dependencies,
+            tags=tags,
+            deprecated=deprecated,
+            responses=responses,
+            include_in_schema=include_in_schema,
+            max_body=max_body,
+        )
 
     def patch(
         self,
         path: str,
         *,
         name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="PATCH", name=name, dependencies=dependencies, max_body=max_body)
+        return self.route(
+            path,
+            method="PATCH",
+            name=name,
+            status=status,
+            dependencies=dependencies,
+            tags=tags,
+            deprecated=deprecated,
+            responses=responses,
+            include_in_schema=include_in_schema,
+            max_body=max_body,
+        )
 
     def delete(
         self,
         path: str,
         *,
         name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="DELETE", name=name, dependencies=dependencies, max_body=max_body)
+        return self.route(
+            path,
+            method="DELETE",
+            name=name,
+            status=status,
+            dependencies=dependencies,
+            tags=tags,
+            deprecated=deprecated,
+            responses=responses,
+            include_in_schema=include_in_schema,
+            max_body=max_body,
+        )
 
     def head(
         self,
         path: str,
         *,
         name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="HEAD", name=name, dependencies=dependencies, max_body=max_body)
+        return self.route(
+            path,
+            method="HEAD",
+            name=name,
+            status=status,
+            dependencies=dependencies,
+            tags=tags,
+            deprecated=deprecated,
+            responses=responses,
+            include_in_schema=include_in_schema,
+            max_body=max_body,
+        )
 
     def options(
         self,
         path: str,
         *,
         name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        return self.route(path, method="OPTIONS", name=name, dependencies=dependencies, max_body=max_body)
+        return self.route(
+            path,
+            method="OPTIONS",
+            name=name,
+            status=status,
+            dependencies=dependencies,
+            tags=tags,
+            deprecated=deprecated,
+            responses=responses,
+            include_in_schema=include_in_schema,
+            max_body=max_body,
+        )
+
+
+class _Docs:
+    """How a route, or a group's routes, show in OpenAPI."""
+
+    __slots__ = ("tags", "deprecated", "responses", "include")
+
+    def __init__(
+        self,
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include: bool = True,
+    ) -> None:
+        if isinstance(tags, str):
+            raise TypeError(f"tags takes a list of names, not a string: tags=[{tags!r}]")
+        self.tags = tuple(tags)
+        self.deprecated = deprecated
+        self.responses = _checked_responses(responses or {})
+        self.include = include
+
+    def merge(self, other: _Docs) -> _Docs:
+        """These (a group's) with `other`'s (a route's, or a nested group's):
+        tags added, responses replaced by status, deprecated or left out
+        if either is."""
+        merged = _Docs()
+        merged.tags = (*self.tags, *(tag for tag in other.tags if tag not in self.tags))
+        merged.deprecated = self.deprecated or other.deprecated
+        merged.responses = {**self.responses, **other.responses}
+        merged.include = self.include and other.include
+        return merged
 
 
 class AppGroup(_RouteDecorators):
-    """Registers handlers under a shared prefix and dependencies.
+    """Registers handlers under a shared prefix and dependencies, and
+    OpenAPI's `tags`, `deprecated`, `responses` and `include_in_schema`
+    for all of them.
 
-        api = app.group("/api", dependencies=[Depends(signed_in)])
+        api = app.group("/api", dependencies=[Depends(signed_in)], tags=["api"])
 
         @api.get("/users")           # GET /api/users, after signed_in
         def list_users(request): ...
     """
 
-    __slots__ = ("_app", "_routes", "_dependencies", "_host")
+    __slots__ = ("_app", "_routes", "_dependencies", "_host", "_docs")
 
-    def __init__(self, app: App, routes: RouteGroup, dependencies: Sequence[Any] = (), host: _Host | None = None) -> None:
+    def __init__(
+        self,
+        app: App,
+        routes: RouteGroup,
+        dependencies: Sequence[Any] = (),
+        host: _Host | None = None,
+        docs: _Docs | None = None,
+    ) -> None:
         self._app = app
         self._routes = routes
         self._dependencies = tuple(dependencies)
         self._host = host  # for `app.host()` groups: the host their routes answer on
+        self._docs = docs if docs is not None else _Docs()
 
     def _plan_pattern(self, full_path: str) -> str:
         """What a handler's plan is read against: the path, after the host
@@ -470,22 +638,34 @@ class AppGroup(_RouteDecorators):
         *,
         method: str = "GET",
         name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
         """Decorator: registers the function as the handler for `path`, under
-        this group's prefix. Its own `dependencies` run after the group's."""
+        this group's prefix. Its own `dependencies` run after the group's;
+        its OpenAPI options add to the group's."""
         _check_name_type(name)
+        _check_status(status)
+        docs = self._docs.merge(_Docs(tags, deprecated, responses, include_in_schema))
 
         def register(func: Handler) -> Handler:
             key = _route_name(func, self._app._handlers)
             full_path = self._routes.full_path(path)
             # Bad annotations fail here, at import.
             plan = self._app._plan(func, self._plan_pattern(full_path), (*self._dependencies, *dependencies))
+            plan.status = status
+            if plan.response is not None and not _has_body(status):
+                raise TypeError(f"{plan.func.__qualname__}: a {status} response has no body, so no return model")
             public = self._app._check_name(name, False, self._host, full_path)
             self._routes.route(path, key, method=method)
             self._app._handlers[key] = func
             self._app._plans[key] = plan
+            self._app._docs[key] = docs
             self._app._name_route(False, key, public or getattr(func, "__name__", None), name is not None, self._host, full_path)
             if self._host is not None:
                 self._app._host_args[key] = _takes(func, self._host.params)
@@ -522,10 +702,19 @@ class AppGroup(_RouteDecorators):
         return register
 
     def group(
-        self, prefix: str = "", *, dependencies: Sequence[Any] = ()
+        self,
+        prefix: str = "",
+        *,
+        dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
     ) -> AppGroup:
-        """Returns a nested group. Its `dependencies` run after this group's."""
-        return AppGroup(self._app, self._routes.group(prefix), (*self._dependencies, *dependencies), self._host)
+        """Returns a nested group. Its `dependencies` run after this
+        group's; its OpenAPI options add to this group's."""
+        docs = self._docs.merge(_Docs(tags, deprecated, responses, include_in_schema))
+        return AppGroup(self._app, self._routes.group(prefix), (*self._dependencies, *dependencies), self._host, docs)
 
     def __repr__(self) -> str:
         host = f", host={self._host.pattern!r}" if self._host else ""
@@ -621,6 +810,7 @@ class App(_RouteDecorators):
         self._route_names: dict[tuple[bool, str], tuple[str, bool]] = {}
         self._explicit_names: dict[str, tuple[bool, str | None, str]] = {}
         self._url_cache: tuple[tuple, Any] | None = None
+        self._docs: dict[str, _Docs] = {}  # handler name -> how it shows in OpenAPI
 
     def route(
         self,
@@ -628,20 +818,61 @@ class App(_RouteDecorators):
         *,
         method: str = "GET",
         name: str | None = None,
+        status: int = 200,
         dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        """Decorator: registers the function as the handler for `path`."""
-        return self._root.route(path, method=method, name=name, dependencies=dependencies, max_body=max_body)
+        """Decorator: registers the function as the handler for `path`
+        (see `get()` for the options)."""
+        return self._root.route(
+            path,
+            method=method,
+            name=name,
+            status=status,
+            dependencies=dependencies,
+            tags=tags,
+            deprecated=deprecated,
+            responses=responses,
+            include_in_schema=include_in_schema,
+            max_body=max_body,
+        )
 
     def group(
-        self, prefix: str = "", *, dependencies: Sequence[Any] = ()
+        self,
+        prefix: str = "",
+        *,
+        dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
     ) -> AppGroup:
         """Returns an `AppGroup` that registers handlers under `prefix`, with
-        `dependencies` for all of them."""
-        return self._root.group(prefix, dependencies=dependencies)
+        `dependencies` for all of them, and the OpenAPI options (`tags`,
+        `deprecated`, `responses`, `include_in_schema`) their own add to."""
+        return self._root.group(
+            prefix,
+            dependencies=dependencies,
+            tags=tags,
+            deprecated=deprecated,
+            responses=responses,
+            include_in_schema=include_in_schema,
+        )
 
-    def host(self, pattern: str, *, dependencies: Sequence[Any] = ()) -> AppGroup:
+    def host(
+        self,
+        pattern: str,
+        *,
+        dependencies: Sequence[Any] = (),
+        tags: Sequence[str] = (),
+        deprecated: bool = False,
+        responses: Mapping[int | str, Any] | None = None,
+        include_in_schema: bool = True,
+    ) -> AppGroup:
         """Returns a group whose routes only answer for requests to that
         host (its `Host` header, without the port):
 
@@ -660,14 +891,15 @@ class App(_RouteDecorators):
         declared without a host when it doesn't have the path; another
         pattern's never do. Calling `host()` again with the same pattern
         adds to the same routes. In the built-in server, a route's
-        `max_body` applies to its path on every host."""
+        `max_body` applies to its path on every host. The OpenAPI options
+        (`tags`...) work as for `group()`."""
         normalized = pattern.lower().rstrip(".")
         found = next((h for h in self._hosts if h.pattern == normalized), None)
         if found is None:
             found = _Host(pattern, self.router.constraints())
             self._hosts.append(found)
             self._hosts.sort(key=lambda h: bool(h.params))  # stable: literal hosts first, in order
-        return AppGroup(self, found.router.group(), dependencies, found)
+        return AppGroup(self, found.router.group(), dependencies, found, _Docs(tags, deprecated, responses, include_in_schema))
 
     def websocket(
         self, path: str, *, name: str | None = None, dependencies: Sequence[Any] = ()
@@ -982,6 +1214,11 @@ class App(_RouteDecorators):
                 if error:
                     raise HTTPException(error)
                 response = await self._dispatch(request)
+                if not isinstance(response, Response):
+                    raise TypeError(
+                        f"{request.method} {request.path}: the handler returned {type(response).__name__}, not a Response "
+                        "(a model needs a return annotation; for an empty response, annotate it `-> None`)"
+                    )
         except Exception as exc:
             response = await self._handle_error(request, exc)
         for hook in reversed(self._after_request):
@@ -1423,6 +1660,37 @@ def _match(router: Router, request: Request) -> Any:
         if request.method == "HEAD" and "GET" in exc.allowed:
             return router.match(request.path, method="GET")
         raise HTTPException(405, headers=[("Allow", ", ".join(exc.allowed))]) from None
+
+
+def _check_status(status: Any) -> None:
+    if not isinstance(status, int) or isinstance(status, bool) or not 100 <= status <= 599:
+        raise ValueError(f"status must be an HTTP status, 100 to 599, not {status!r}")
+
+
+def _has_body(status: int) -> bool:
+    """Whether a response with that status can have a body (RFC 9110)."""
+    return status >= 200 and status not in (204, 205, 304)
+
+
+def _checked_responses(responses: Mapping[Any, Any]) -> dict[str, Any]:
+    """`responses=`, checked when the route is registered, keyed by the
+    status as OpenAPI writes it (`"404"`, `"4XX"`, `"default"`)."""
+    checked: dict[str, Any] = {}
+    for status, value in responses.items():
+        if isinstance(status, bool) or not (
+            (isinstance(status, int) and 100 <= status <= 599)
+            or (isinstance(status, str) and (status == "default" or (len(status) == 3 and status[0] in "12345" and status[1:] == "XX")))
+        ):
+            raise ValueError(f"responses: {status!r} isn't a status (404), a range (\"4XX\") or \"default\"")
+        description, model = (value, None) if isinstance(value, str) else (None, value)
+        if isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], str):
+            description, model = value
+        if model is not None and _library(model) is None:
+            raise TypeError(
+                f"responses[{status!r}]: expected a description, a msgspec or pydantic model, or (description, model), not {value!r}"
+            )
+        checked[str(status)] = (description, model)
+    return checked
 
 
 def _check_name_type(name: Any) -> None:
