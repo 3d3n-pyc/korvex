@@ -9,9 +9,8 @@ import html
 import json
 import re
 import uuid
-from typing import TYPE_CHECKING, Any
-
 from http import HTTPStatus
+from typing import TYPE_CHECKING, Any
 
 from korvex.app import UploadedFile, _has_body
 from korvex.schema import Model, Plan, _unwrap, path_params, scalar_schema

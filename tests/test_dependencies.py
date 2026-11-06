@@ -2,6 +2,7 @@
 teardown of those that yield, overrides, and WebSockets."""
 
 import asyncio
+import contextlib
 import json
 from typing import Annotated, Optional
 
@@ -181,10 +182,8 @@ def test_a_teardown_that_catches_the_error_does_not_swallow_it():
     app = App()
 
     def lenient():
-        try:
+        with contextlib.suppress(Exception):  # caught, not re-raised
             yield
-        except Exception:
-            pass  # caught, not re-raised
 
     @app.get("/")
     def read(request, _: None = Depends(lenient)):

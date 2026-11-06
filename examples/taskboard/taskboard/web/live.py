@@ -8,8 +8,8 @@ import logging
 from typing import Optional
 
 import msgspec
-from korvex import App, Depends, WebSocket
 
+from korvex import App, Depends, WebSocket
 from taskboard.services.events import EventBus, Message
 from taskboard.web.auth import CurrentUser
 

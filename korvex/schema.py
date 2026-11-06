@@ -190,7 +190,7 @@ def _unwrap(tp: Any) -> tuple[Any, bool, bool]:
     `list[X]` or `X | None`."""
     optional = False
     origin = typing.get_origin(tp)
-    if origin is Union or (hasattr(types, "UnionType") and origin is getattr(types, "UnionType")):
+    if origin is Union or (hasattr(types, "UnionType") and origin is types.UnionType):
         args = [a for a in typing.get_args(tp) if a is not type(None)]
         optional = len(args) < len(typing.get_args(tp))
         tp = args[0] if len(args) == 1 else tp
@@ -546,7 +546,8 @@ def _unique(errors: list[dict]) -> list[dict]:
 
 
 def _is_kind(func: Callable, test: Callable[[Any], bool]) -> bool:
-    return test(func) or (not inspect.isfunction(func) and test(getattr(func, "__call__", None)))
+    # The method itself, to test what kind it is, not whether there is one.
+    return test(func) or (not inspect.isfunction(func) and test(getattr(func, "__call__", None)))  # noqa: B004
 
 
 def _split(hint: Any) -> tuple[Any, Source | Dependency | None]:
@@ -562,7 +563,7 @@ def _split(hint: Any) -> tuple[Any, Source | Dependency | None]:
 def _hints(func: Callable) -> dict[str, Any]:
     target = func.__init__ if inspect.isclass(func) else func
     if not (inspect.isfunction(target) or inspect.ismethod(target)):
-        target = getattr(target, "__call__", target)  # a callable object
+        target = getattr(target, "__call__", target)  # noqa: B004 (a callable object: its method's hints)
     return typing.get_type_hints(target, include_extras=True)
 
 

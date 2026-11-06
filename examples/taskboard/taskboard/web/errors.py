@@ -8,7 +8,6 @@ from collections.abc import Iterable
 
 from korvex import App, HTTPException, Request, Response, ValidationError
 from korvex.middleware import current_request_id
-
 from taskboard.domain import InvalidInput, NotFound
 
 

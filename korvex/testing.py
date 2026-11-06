@@ -21,6 +21,7 @@ It takes any ASGI app, Korvex's or not.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json as jsonlib
 import logging
 import mimetypes
@@ -860,10 +861,8 @@ class _Lifespan:
 
     async def _wait(self) -> None:
         if self._task is not None:
-            try:
+            with contextlib.suppress(Exception):  # its outcome was in the message
                 await asyncio.wait_for(self._task, self.timeout)
-            except Exception:
-                pass  # its outcome was in the message
 
 
 class _ErrorCatcher(logging.Handler):

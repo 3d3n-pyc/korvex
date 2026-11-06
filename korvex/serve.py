@@ -10,6 +10,7 @@ startup hook, for example) stops everything instead of looping.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import signal
@@ -310,10 +311,8 @@ def supervise(app: App, listener: socket.socket, workers: int, graceful_timeout:
         # Stop the kernel from queueing new connections no worker would take.
         listener.close()
         for pid in list(children):
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
 
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)

@@ -279,7 +279,7 @@ def test_graceful_timeout_gives_up_on_slow_requests():
         process.send_signal(signal.SIGTERM)
         process.communicate(timeout=10)
         assert time.perf_counter() - stopped_at < 0.8  # didn't wait for the 1 s request
-        with pytest.raises(Exception):
+        with pytest.raises(OSError):  # the connection closed under it (URLError and resets are OSErrors)
             slow.result(timeout=5)
     assert process.returncode == 0
 

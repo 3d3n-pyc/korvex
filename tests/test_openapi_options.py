@@ -251,9 +251,8 @@ def test_scheme_on_a_websocket():
         await ws.send_text(session)
 
     with TestClient(app) as client:
-        with pytest.raises(WebSocketDisconnect):
-            with client.websocket("/live"):
-                pass
+        with pytest.raises(WebSocketDisconnect), client.websocket("/live"):
+            pass
         with client.websocket("/live", cookies={"session": "s"}) as ws:
             assert ws.receive_text() == "s"
 

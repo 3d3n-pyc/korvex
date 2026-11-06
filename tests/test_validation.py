@@ -109,7 +109,7 @@ def test_query_parameters():
         request,
         q: str,
         limit: int = 10,
-        tags: list[str] = [],
+        tags: list[str] = [],  # noqa: B006 (as users write it)
         exact: Optional[bool] = None,
         after: Optional[UUID] = None,
     ):
@@ -242,7 +242,7 @@ def test_an_unsupported_annotation_is_refused_even_with_a_default():
     with pytest.raises(TypeError, match="can't tell where parameter 'options'"):
 
         @app.get("/a")
-        def annotated(request, options: dict = {}):  # would silently always be {}
+        def annotated(request, options: dict = {}):  # noqa: B006 (refused: would silently always be {})
             pass
 
     @app.get("/b")

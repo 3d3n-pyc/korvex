@@ -1007,7 +1007,7 @@ def test_app_local_is_kept_per_event_loop():
 
     async def fresh_loop():
         with pytest.raises(AttributeError, match="startup hook"):
-            app.local.pool
+            _ = app.local.pool
 
     asyncio.run(fresh_loop())
 

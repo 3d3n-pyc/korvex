@@ -6,8 +6,8 @@ from datetime import date
 from typing import Optional
 
 import msgspec
-from korvex import App, Depends, Request, Response
 
+from korvex import App, Depends, Request, Response
 from taskboard.domain import Task
 from taskboard.services.tasks import TaskService
 from taskboard.web.auth import CurrentUser

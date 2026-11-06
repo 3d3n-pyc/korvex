@@ -6,7 +6,6 @@ from typing import Optional
 
 from korvex import App, Cookie, Depends, Form, HTTPException, Request, Response
 from korvex.security import APIKey
-
 from taskboard.config import Settings
 from taskboard.services.auth import AuthService
 

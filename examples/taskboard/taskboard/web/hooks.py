@@ -7,7 +7,6 @@ from typing import Optional
 
 from korvex import App, Request, Response
 from korvex.middleware import cors, rate_limit, request_id
-
 from taskboard.config import Settings
 
 _started: ContextVar[float] = ContextVar("started")

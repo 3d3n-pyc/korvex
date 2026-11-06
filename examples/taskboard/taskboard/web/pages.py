@@ -4,7 +4,6 @@ import sqlite3
 from pathlib import Path
 
 from korvex import App, Request, Response
-
 from taskboard.db import Database
 
 STATIC = Path(__file__).parent.parent / "static"

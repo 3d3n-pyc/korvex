@@ -6,7 +6,6 @@ import re
 import sys
 
 import pytest
-
 from test_app import make_scope, response_from, run_app
 
 from korvex import App, HTTPException, Response

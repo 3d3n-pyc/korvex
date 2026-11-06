@@ -40,7 +40,7 @@ def sample_app(tmp_path):
         """Get one user."""
 
     @app.get("/items/{key:uuid}/{name}")
-    def get_item(request, key, name, page: int = 1, tags: list[str] = [], q: Optional[str] = None):
+    def get_item(request, key, name, page: int = 1, tags: list[str] = [], q: Optional[str] = None):  # noqa: B006 (as users write it)
         return Response.text("item")
 
     @app.put("/users/{id}")

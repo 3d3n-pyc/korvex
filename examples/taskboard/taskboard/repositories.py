@@ -116,10 +116,11 @@ class TaskRepository:
 
     async def iterate(self, *, batch: int = 200) -> AsyncIterator[Task]:
         """Every task, fetched `batch` at a time."""
+        sql = "SELECT * FROM tasks ORDER BY list_id, position LIMIT ? OFFSET ?"
         offset = 0
         while True:
-            sql = "SELECT * FROM tasks ORDER BY list_id, position LIMIT ? OFFSET ?"
-            tasks = await self.db.run(lambda c: [_task(row) for row in c.execute(sql, (batch, offset))])
+            page = (batch, offset)
+            tasks = await self.db.run(lambda c, page=page: [_task(row) for row in c.execute(sql, page)])
             for task in tasks:
                 yield task
             if len(tasks) < batch:

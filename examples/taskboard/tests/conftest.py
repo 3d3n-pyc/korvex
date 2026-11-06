@@ -3,8 +3,8 @@ from collections.abc import Awaitable, Iterator
 from typing import Callable
 
 import pytest
-from korvex.testing import TestClient
 
+from korvex.testing import TestClient
 from taskboard.app import build_services, create_app
 from taskboard.config import Settings
 from taskboard.services import Services
