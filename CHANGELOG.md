@@ -44,6 +44,9 @@ each thing. Breaking changes are listed with how to update.
   headers, then the body. The old name didn't say what it timed. To
   update: rename it.
 
+- `korvex.middleware` no longer exports `ALL_METHODS` and
+  `COMPRESSIBLE`, two defaults of `cors()` and `compress()`.
+
 ### New
 
 - **`headers=` takes a dict**, in `Response(...)` and its shortcuts,
