@@ -498,7 +498,7 @@ class App(_RouteDecorators):
         if scope["type"] != "http":
             raise NotImplementedError(f"unsupported ASGI scope type: {scope['type']!r}")
 
-        response = await self._respond(scope, receive)
+        response = await self._respond(Request(scope, receive, {}, self))
         head = scope["method"] == "HEAD"
         if isinstance(response, StreamingResponse):
             await self._send_stream(response, send, head, scope["path"])
@@ -520,12 +520,11 @@ class App(_RouteDecorators):
         finally:
             await _finish(response, path)  # sent or not, what waited for it runs
 
-    async def _respond(self, scope: dict, receive: Callable, error: int = 0) -> Response:
+    async def _respond(self, request: Request, error: int = 0) -> Response:
         """The response to one request: before hooks, then the route (its
         dependencies and handler), then after hooks, with errors turned into
         responses at each step. With `error`, the route is replaced by that
         HTTP error."""
-        request = Request(scope, receive, {}, self)
         try:
             response = None
             for hook in self._before_request:
