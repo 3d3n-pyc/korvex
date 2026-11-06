@@ -1,5 +1,8 @@
 # Contributing
 
+Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
+Report a vulnerability privately, as [SECURITY.md](SECURITY.md) explains.
+
 ## Setup
 
 You need [uv](https://docs.astral.sh/uv/) and a Rust toolchain

@@ -95,6 +95,9 @@ testpaths = ["tests"]
 line-length = 120
 target-version = "py39"
 
+[tool.ruff.format]
+exclude = ["*.md"]  # code in the docs keeps its aligned comments
+
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 ignore = [

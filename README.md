@@ -785,7 +785,8 @@ cargo test                         # Rust tests
 
 [CONTRIBUTING.md](CONTRIBUTING.md) has the layout of the code and every
 check CI runs; [ROADMAP.md](ROADMAP.md) what's planned. Report a
-vulnerability privately, as [SECURITY.md](SECURITY.md) explains.
+vulnerability privately, as [SECURITY.md](SECURITY.md) explains. Everyone
+taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
