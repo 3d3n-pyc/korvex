@@ -109,7 +109,7 @@ class Connection:
         self.scheme: str = scope.get("scheme", "http")
         """`"https"` or `"http"` (`"wss"` or `"ws"` for a WebSocket), as the
         client used it."""
-        self.headers = Headers((k.decode("latin-1"), v.decode("latin-1")) for k, v in scope["headers"])
+        self.headers = Headers._trusted([(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope["headers"]])
         self._query_string: bytes = scope.get("query_string", b"")
         self._query: MultiDict[str] | None = None
         self.path_params = path_params
