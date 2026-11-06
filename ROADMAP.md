@@ -68,8 +68,7 @@ change it freely.
 
 - An API that stays stable, with deprecations announced in advance: a
   deprecated feature warns for at least two minor versions before it goes.
-- A documentation site, built from the README, the deployment guide and
-  the examples.
+- A documentation site, built from `docs/` and the examples.
 - A built-in server that's solid in production behind a reverse proxy.
 - The comparisons with other frameworks and servers measured again
   (`benches/servers.py`, `benches/load_test.py`): the published ones date

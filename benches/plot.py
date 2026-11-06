@@ -4,7 +4,7 @@
 - load-{light,dark}.svg from benches/load_results.json (load_test.py)
 - servers-{light,dark}.svg from benches/servers_results.json (servers.py)
 
-Run: uv run python benches/plot.py
+Run: uv run --group bench python benches/plot.py
 """
 
 import json

@@ -10,9 +10,9 @@ be timed on cache hits. Their plain names below bypass the cache to time
 the actual matching; the `(cached)` variants keep it.
 
 Run:
-    uv run pytest benches/bench_router.py --benchmark-only
-    uv run pytest benches/bench_router.py --benchmark-only --benchmark-json=benches/results.json
-    uv run python benches/plot.py   # draws docs/benchmark-{light,dark}.svg
+    uv run --group bench pytest benches/bench_router.py --benchmark-only
+    uv run --group bench pytest benches/bench_router.py --benchmark-only --benchmark-json=benches/results.json
+    uv run --group bench python benches/plot.py   # draws docs/benchmark-{light,dark}.svg
 
 To add a router: write `build(routes) -> router` and
 `lookup(router, path) -> handler name`, then add them to ROUTERS.

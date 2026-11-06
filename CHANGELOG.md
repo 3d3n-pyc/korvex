@@ -84,6 +84,16 @@ each thing. Breaking changes are listed with how to update.
   Pairs still work, to repeat a name. A dict failed before with "too
   many values to unpack".
 
+### Documentation
+
+- The README is short: what Korvex is, a quickstart and its test, the
+  guide, and performance in brief. It was 793 lines.
+- The guide is in [`docs/`](docs/README.md), a page per topic, each
+  starting with an example: routes, requests and responses, validation,
+  dependencies, errors and hooks, WebSockets, OpenAPI and security,
+  middleware, testing, the built-in server, deployment, performance and
+  the standalone router.
+
 ### Inside
 
 - The code is reorganized: the App's module split in three, the

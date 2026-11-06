@@ -28,12 +28,12 @@ bearer = Bearer()  # reads `Authorization: Bearer <token>`, and shows in /docs
 
 
 @app.get("/health")
-def health(request: Request) -> Response:
+def health() -> Response:
     return Response.text("ok")
 
 
 @app.get("/users/{id:int}")
-def get_user(request: Request, id: int) -> Response:
+def get_user(id: int) -> Response:
     return Response.json({"id": id})
 
 
@@ -53,5 +53,5 @@ def auth(token: str = Depends(bearer)) -> None:
 
 
 @app.get("/secret", dependencies=[Depends(auth)], responses={401: "Wrong or missing token"})
-def secret(request: Request) -> Response:
+def secret() -> Response:
     return Response.text("top secret")
