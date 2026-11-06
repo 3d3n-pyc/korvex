@@ -67,7 +67,13 @@ async def stream(request):
 @app.post("/echo")
 async def echo(request):
     body = (await request.body()).decode()
-    return Response.json({"body": body, "query": request.query_params, "cookies": request.cookies})
+    return Response.json(
+        {
+            "body": body,
+            "query": {name: request.query.get_all(name) for name in request.query},
+            "cookies": request.cookies,
+        }
+    )
 
 
 @app.get("/slow")
@@ -123,7 +129,7 @@ def client(request):
 
 @app.websocket("/ws/{room}")
 async def ws_echo(ws, room):
-    if ws.query_params.get("token") != ["secret"]:
+    if ws.query.get("token") != "secret":
         await ws.close(code=1008)  # refuses it: a 403
         return
     await ws.accept(subprotocol="chat" if "chat" in ws.subprotocols else None)

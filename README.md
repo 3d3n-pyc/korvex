@@ -176,7 +176,8 @@ uvicorn mymodule:app
   and return a `Response`, sync or async. Checks shared by several routes
   (signing in, permissions) are dependencies: see
   [Dependencies](#dependencies).
-- `Request` has `method`, `path`, `headers`, `query_params`,
+- `Request` has `method`, `path`, `headers`, `query` (`.get()` the first
+  value, `.get_all()` every one),
   `path_params`, `cookies`, `client` (`(host, port)`), `scheme`, and
   `await request.body()`,
   `await request.json()`, `await request.form()`. A form maps each field
@@ -407,7 +408,7 @@ async def chat(ws, room, user: CurrentUser):  # no session: refused (403)
         await ws.send_text(f"{user.name} in {room}: {message}")
 ```
 
-- A `WebSocket` has the handshake's `headers`, `cookies`, `query_params`,
+- A `WebSocket` has the handshake's `headers`, `cookies`, `query`,
   `path_params`, `client` and `scheme`; `accept(subprotocol=...)`,
   `receive()` (raises `WebSocketDisconnect`), `receive_text/bytes/json`,
   `send_text/bytes/json` and `close(code)`.

@@ -122,8 +122,7 @@ class APIKey(SecurityScheme):
         if self.location == "header":
             return request.headers.get(self.key)
         if self.location == "query":
-            values = request.query_params.get(self.key)
-            return values[-1] if values else None
+            return request.query.get(self.key)
         return request.cookies.get(self.key)
 
     def openapi(self) -> dict[str, Any]:

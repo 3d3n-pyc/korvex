@@ -176,18 +176,23 @@ def test_request_headers_are_available_case_insensitively():
     assert captured["value"] == "hello"
 
 
-def test_request_query_params_are_parsed():
+def test_request_query_is_read_like_headers():
     app = App()
     captured = {}
 
     @app.get("/search")
     def search(request):
-        captured["value"] = request.query_params
+        captured["query"] = request.query
         return Response.text("ok")
 
-    run_app(app, make_scope("GET", "/search", query_string=b"q=hello&page=2"))
+    run_app(app, make_scope("GET", "/search", query_string=b"q=hello&tag=a&tag=b"))
 
-    assert captured["value"] == {"q": ["hello"], "page": ["2"]}
+    query = captured["query"]
+    assert (query["q"], query.get("tag"), query.get_all("tag")) == ("hello", "a", ["a", "b"])
+    assert (query.get("missing"), query.get_all("missing"), "q" in query, len(query)) == (None, [], True, 2)
+    assert dict(query) == {"q": "hello", "tag": "a"}  # a dict of first values
+    assert query.multi_items() == [("q", "hello"), ("tag", "a"), ("tag", "b")]
+    assert repr(query) == "MultiDict([('q', 'hello'), ('tag', 'a'), ('tag', 'b')])"
 
 
 def test_request_body_and_json():
@@ -280,7 +285,7 @@ def form_app():
         fields = await request.form()
         echo = {
             name: [v if isinstance(v, str) else [v.filename, v.content_type, v.data.hex()] for v in values]
-            for name, values in fields.items()
+            for name, values in ((name, fields.get_all(name)) for name in fields)
         }
         return Response.json(echo)
 

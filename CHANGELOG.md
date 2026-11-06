@@ -57,6 +57,16 @@ each thing. Breaking changes are listed with how to update.
   false for a WebSocket now (`isinstance(x, WebSocket)` works as
   before); hooks and shared dependencies take a `Connection`.
 
+- **`request.query` replaces `request.query_params`, and reads like the
+  headers**: `request.query.get("page")` gives the first value,
+  `.get_all("tag")` every one; `await request.form()` works the same. It
+  was a dict of lists (`query_params["page"][0]`). Typed parameters now
+  take the *first* value of a repeated field wherever it comes from: a
+  query or form field took the last one (`?page=1&page=2` gave 2, now
+  1), a header the first. To update: `request.query_params["x"][0]`
+  becomes `request.query["x"]`, `form["x"]` gives the first value
+  (`form.get_all("x")` the list).
+
 ### New
 
 - **`headers=` takes a dict**, in `Response(...)` and its shortcuts,

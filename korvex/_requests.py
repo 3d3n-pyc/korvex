@@ -4,9 +4,9 @@ and the `UploadedFile`s of a multipart form."""
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from email.message import Message
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union
 from urllib.parse import parse_qs, unquote
 
 from korvex._errors import HTTPException
@@ -30,7 +30,44 @@ class UploadedFile:
         return f"UploadedFile({self.filename!r}, {self.content_type!r}, {len(self.data)} bytes)"
 
 
-FormData = dict[str, list[Union[str, UploadedFile]]]
+_V = TypeVar("_V")
+
+
+class MultiDict(Mapping[str, _V], Generic[_V]):
+    """Names, each with one value or more, in order: a query string or a
+    form. Read like a dict, `fields["tag"]` and `fields.get("tag")` give the
+    first value; `fields.get_all("tag")` gives them all, as headers do."""
+
+    __slots__ = ("_lists",)
+
+    def __init__(self, lists: dict[str, list[_V]] | None = None) -> None:
+        self._lists: dict[str, list[_V]] = lists if lists is not None else {}
+
+    def __getitem__(self, name: str) -> _V:
+        return self._lists[name][0]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._lists)
+
+    def __len__(self) -> int:
+        return len(self._lists)
+
+    def __contains__(self, name: object) -> bool:
+        return name in self._lists
+
+    def get_all(self, name: str) -> list[_V]:
+        """Every value of `name`, in order; `[]` if there's none."""
+        return list(self._lists.get(name, ()))
+
+    def multi_items(self) -> list[tuple[str, _V]]:
+        """Every `(name, value)`, a name repeated for each of its values."""
+        return [(name, value) for name, values in self._lists.items() for value in values]
+
+    def __repr__(self) -> str:
+        return f"MultiDict({self.multi_items()!r})"
+
+
+FormData = MultiDict[Union[str, UploadedFile]]
 
 
 class Connection:
@@ -44,7 +81,8 @@ class Connection:
         "method",
         "path",
         "headers",
-        "query_params",
+        "_query_string",
+        "_query",
         "path_params",
         "client",
         "scheme",
@@ -72,7 +110,8 @@ class Connection:
         """`"https"` or `"http"` (`"wss"` or `"ws"` for a WebSocket), as the
         client used it."""
         self.headers = Headers((k.decode("latin-1"), v.decode("latin-1")) for k, v in scope["headers"])
-        self.query_params: dict[str, list[str]] = parse_qs(scope.get("query_string", b"").decode("latin-1"))
+        self._query_string: bytes = scope.get("query_string", b"")
+        self._query: MultiDict[str] | None = None
         self.path_params = path_params
         self.app = app
         """The `App` handling it."""
@@ -80,6 +119,14 @@ class Connection:
         self._cookies: dict[str, str] | None = None
         self._body: bytes | None = None  # a Request's, read once (here: one constructor for both)
         self._form: FormData | None = None
+
+    @property
+    def query(self) -> MultiDict[str]:
+        """The query string's fields, parsed on first use:
+        `request.query.get("page")`, `request.query.get_all("tag")`."""
+        if self._query is None:
+            self._query = MultiDict(parse_qs(self._query_string.decode("latin-1")))
+        return self._query
 
     @property
     def cookies(self) -> dict[str, str]:
@@ -140,8 +187,9 @@ class Request(Connection):
             raise HTTPException(400, "invalid JSON body") from None
 
     async def form(self) -> FormData:
-        """Reads the body as a form: each field name maps to its values, in
-        order. Files from a `multipart/form-data` form are `UploadedFile`s.
+        """Reads the body as a form: `form.get("title")` gives a field's
+        first value, `form.get_all("tag")` all of them. Files from a
+        `multipart/form-data` form are `UploadedFile`s.
         Any other content type is answered with a 415 error, and text that
         can't be decoded with a 400."""
         if self._form is None:
@@ -154,7 +202,7 @@ class Request(Connection):
         kind = content_type.get_content_type()
         try:
             if kind == "application/x-www-form-urlencoded":
-                return parse_qs((await self.body()).decode(), keep_blank_values=True)  # type: ignore[return-value]
+                return MultiDict(parse_qs((await self.body()).decode(), keep_blank_values=True))  # type: ignore[arg-type]
             if kind == "multipart/form-data" and content_type.get_param("boundary"):
                 return _parse_multipart(await self.body(), str(content_type.get_param("boundary")))
         except (UnicodeDecodeError, LookupError):  # bad bytes, or an unknown charset
@@ -275,7 +323,7 @@ class WebSocket(Connection):
 def _parse_multipart(body: bytes, boundary: str) -> FormData:
     """Splits a `multipart/form-data` body on its boundary. Each part is a
     few header lines, a blank line, then the field's value."""
-    form: FormData = {}
+    form: dict[str, list[Union[str, UploadedFile]]] = {}
     for part in body.split(b"--" + boundary.encode())[1:]:
         if part.startswith(b"--"):  # the closing boundary
             break
@@ -295,4 +343,4 @@ def _parse_multipart(body: bytes, boundary: str) -> FormData:
         else:
             value = UploadedFile(filename, headers.get_content_type(), data)
         form.setdefault(field, []).append(value)
-    return form
+    return MultiDict(form)

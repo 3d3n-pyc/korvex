@@ -29,7 +29,7 @@ from typing import Any, NamedTuple, Union
 
 from korvex._errors import ValidationError
 from korvex._params import REQUIRED, Dependency, Source
-from korvex._requests import Connection, Request, UploadedFile, WebSocket
+from korvex._requests import Connection, MultiDict, Request, UploadedFile, WebSocket
 from korvex._response import Response
 
 SCALARS = (str, int, float, bool, uuid.UUID, datetime.date, datetime.datetime)
@@ -87,22 +87,22 @@ class Model:
         except pydantic.ValidationError as error:
             raise ValidationError([_error(["body", *e["loc"]], e["msg"], e["type"]) for e in error.errors()]) from None
 
-    def from_form(self, form: Mapping[str, list]) -> Any:
+    def from_form(self, form: MultiDict) -> Any:
         """The model, from a form's fields: each model field from the form
         field of the same name (its alias or rename); all the values for a
-        list, else the last one. An empty value counts as missing, except
+        list, else the first one. An empty value counts as missing, except
         for text, and a checkbox's `on` is true. Raises ValidationError,
         with `["form", ...]` locations."""
         data: dict[str, Any] = {}
         for key, tp in self._fields():
             inner, many, _ = _unwrap(tp)
-            values = list(form.get(key) or [])
+            values = form.get_all(key)
             if inner is not str:
                 values = [v for v in values if v != ""]
             if inner is bool:
                 values = [_lenient_bool(v) for v in values]
             if values:
-                data[key] = values if many else values[-1]
+                data[key] = values if many else values[0]
         if self.library == "msgspec":
             import msgspec
 
@@ -372,10 +372,10 @@ class Plan:
                     errors.append(_invalid(param))
         if self.query:
             for param in self.query:
-                _take(param, request.query_params.get(param.key), kwargs, errors)
+                _take(param, request.query.get_all(param.key), kwargs, errors)
         if self.headers:
             for param in self.headers:
-                _take(param, request.headers.get_all(param.key), kwargs, errors, first=True)
+                _take(param, request.headers.get_all(param.key), kwargs, errors)
         if self.cookies:
             for param in self.cookies:
                 cookie = request.cookies.get(param.key)
@@ -383,7 +383,7 @@ class Plan:
         if self.form or self.form_models:
             form = await _read_form(request)
             for param, model in self.form_models:
-                if not param.required and not any(form.get(key) for key, _ in model._fields()):
+                if not param.required and not any(form.get_all(key) for key, _ in model._fields()):
                     kwargs[param.name] = param.default  # none of its fields sent
                     continue
                 try:
@@ -391,7 +391,7 @@ class Plan:
                 except ValidationError as error:
                     errors.extend(error.errors)
             for param in self.form:
-                values = form.get(param.key) or []
+                values = form.get_all(param.key)
                 if param.inner is not str and param.inner is not UploadedFile:
                     values = [v for v in values if v != ""]  # an empty field: not given
                 _take(param, values, kwargs, errors)
@@ -490,7 +490,7 @@ class Run:
             raise raised
 
 
-def _take(param: Param, values: list | None, kwargs: dict, errors: list, first: bool = False) -> None:
+def _take(param: Param, values: list | None, kwargs: dict, errors: list) -> None:
     """Converts a parameter's raw values, or uses its default."""
     if not values:
         if param.required:
@@ -502,7 +502,7 @@ def _take(param: Param, values: list | None, kwargs: dict, errors: list, first: 
         if param.many:
             kwargs[param.name] = [_convert_field(v, param.inner) for v in values]
         else:
-            kwargs[param.name] = _convert_field(values[0] if first else values[-1], param.inner)
+            kwargs[param.name] = _convert_field(values[0], param.inner)  # the first, wherever it's from
     except (ValueError, TypeError):
         errors.append(_invalid(param))
 
@@ -523,11 +523,11 @@ def _invalid(param: Param) -> dict:
     return _error([param.source, param.key], f"Input should be a valid {name}", "type_error")
 
 
-async def _read_form(request: Any) -> dict:
+async def _read_form(request: Any) -> MultiDict:
     """The request's form; an empty body without a content type is an empty
     form, so optional fields can all be left out."""
     if not request.headers.get("content-type") and not (await request.body()).strip():
-        return {}
+        return MultiDict()
     return await request.form()
 
 
