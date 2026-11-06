@@ -81,7 +81,12 @@ def test_info_and_paths(document):
     assert document["openapi"] == "3.1.0"
     assert document["info"] == {"title": "Demo", "version": "1.0", "description": "A demo API"}
     assert sorted(document["paths"]) == [
-        "/files/{path}", "/health", "/items/{key}/{name}", "/users", "/users/{id}", "/v2/health",
+        "/files/{path}",
+        "/health",
+        "/items/{key}/{name}",
+        "/users",
+        "/users/{id}",
+        "/v2/health",
     ]  # no static files, no WebSocket
     assert sorted(document["paths"]["/users/{id}"]) == ["get", "put"]
 
@@ -95,7 +100,12 @@ def test_parameters_are_typed(document):
     item = params("/items/{key}/{name}")
     assert item["key"]["schema"] == {"type": "string", "format": "uuid"}
     assert item["name"]["schema"] == {"type": "string"}
-    assert item["page"] == {"name": "page", "in": "query", "required": False, "schema": {"type": "integer", "default": 1}}
+    assert item["page"] == {
+        "name": "page",
+        "in": "query",
+        "required": False,
+        "schema": {"type": "integer", "default": 1},
+    }
     assert item["tags"]["schema"] == {"type": "array", "items": {"type": "string"}}
     assert item["q"]["required"] is False
     assert params("/files/{path}")["path"]["schema"] == {"type": "string"}
@@ -107,7 +117,9 @@ def test_bodies_responses_and_models(document):
         "required": True,
         "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UserIn"}}},
     }
-    assert create["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/UserOut"}
+    assert create["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/UserOut"
+    }
     assert document["paths"]["/users/{id}"]["put"]["requestBody"]["required"] is False
     schemas = document["components"]["schemas"]
     assert {"UserIn", "UserOut", "Address", "ValidationError"} <= set(schemas)  # nested models included
@@ -180,7 +192,12 @@ def test_dependencies_headers_cookies_and_forms_are_described():
         return id
 
     @app.get("/notes/{id:int}", dependencies=[Depends(current_user)])
-    def note(request, n: int = Depends(note_id), limit: Annotated[int, Depends(paging)] = 0, user: str = Depends(current_user)):
+    def note(
+        request,
+        n: int = Depends(note_id),
+        limit: Annotated[int, Depends(paging)] = 0,
+        user: str = Depends(current_user),
+    ):
         pass
 
     @app.get("/plain/{id:int}")

@@ -84,9 +84,7 @@ class Response:
 
     __slots__ = ("status", "headers", "body")
 
-    def __init__(
-        self, body: str | bytes = b"", *, status: int = 200, headers: Iterable[tuple[str, str]] = ()
-    ) -> None:
+    def __init__(self, body: str | bytes = b"", *, status: int = 200, headers: Iterable[tuple[str, str]] = ()) -> None:
         self.status = status
         self.headers = Headers(headers)
         self.body = body.encode() if isinstance(body, str) else body
@@ -146,9 +144,7 @@ class Response:
         self.set_cookie(name, "", max_age=0, path=path, domain=domain)
 
     @classmethod
-    def stream(
-        cls, chunks: Chunks, *, status: int = 200, headers: Iterable[tuple[str, str]] = ()
-    ) -> StreamingResponse:
+    def stream(cls, chunks: Chunks, *, status: int = 200, headers: Iterable[tuple[str, str]] = ()) -> StreamingResponse:
         """A response sent piece by piece, from an iterable or a generator
         (sync or async) of `bytes` or `str`."""
         return StreamingResponse(chunks, status=status, headers=headers)
@@ -184,9 +180,10 @@ class Response:
         return response
 
     def __eq__(self, other: object) -> bool:
-        return (
-            isinstance(other, Response)
-            and (self.status, self.headers, self.body) == (other.status, other.headers, other.body)
+        return isinstance(other, Response) and (self.status, self.headers, self.body) == (
+            other.status,
+            other.headers,
+            other.body,
         )
 
     def __repr__(self) -> str:

@@ -41,7 +41,9 @@ class Settings(msgspec.Struct, frozen=True, kw_only=True):
             raw = environ.get(PREFIX + field.upper())
             if raw is None:
                 continue
-            values[field] = [item.strip() for item in raw.split(",") if item.strip()] if field == "cors_origins" else raw
+            values[field] = (
+                [item.strip() for item in raw.split(",") if item.strip()] if field == "cors_origins" else raw
+            )
         try:
             return msgspec.convert(values, cls, strict=False)  # strict=False: "9000" -> 9000, "true" -> True
         except msgspec.ValidationError as error:

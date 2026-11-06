@@ -145,7 +145,9 @@ def url_for(request: Request, target: Target, params: dict[str, Any]) -> str:
         types = _annotated(app, target)
         missing = [p for p in target.host.params if p not in params]
         if missing:
-            raise ValueError(f"url_for({target.name!r}): missing {', '.join(missing)}, for the host {target.host.pattern!r}")
+            raise ValueError(
+                f"url_for({target.name!r}): missing {', '.join(missing)}, for the host {target.host.pattern!r}"
+            )
         for is_param, label in target.host._labels:
             if not is_param:
                 labels.append(label)
@@ -213,7 +215,9 @@ def _check_reached(app: App, target: Target, path: str) -> None:
     except MethodNotAllowed:
         found = None
     if found is None:
-        raise ValueError(f"url_for({target.name!r}): {path!r} doesn't fit {_describe(target)}: a value fails its constraint")
+        raise ValueError(
+            f"url_for({target.name!r}): {path!r} doesn't fit {_describe(target)}: a value fails its constraint"
+        )
     if found[0] != target.key:
         other = app._url_index().by_key.get((target.websocket, id(target.router), found[0]))
         which = f"{other.name!r} ({_describe(other)})" if other else repr(found[0])

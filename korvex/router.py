@@ -84,11 +84,11 @@ class Router(_CoreRouter, _Shortcuts):
 class RouteGroup(_Shortcuts):
     """Registers routes on a router under a shared prefix and middleware.
 
-        api = router.group("/api", middleware=["auth"])
-        api.get("/users", "list_users")       # GET /api/users, ["auth"]
+    api = router.group("/api", middleware=["auth"])
+    api.get("/users", "list_users")       # GET /api/users, ["auth"]
 
-        admin = api.group("/admin", middleware=["admin"])
-        admin.get("/stats", "stats")          # GET /api/admin/stats, ["auth", "admin"]
+    admin = api.group("/admin", middleware=["admin"])
+    admin.get("/stats", "stats")          # GET /api/admin/stats, ["auth", "admin"]
     """
 
     __slots__ = ("router", "prefix", "middleware")

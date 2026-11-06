@@ -356,7 +356,11 @@ def test_trusted_proxy_headers_set_client_and_scheme(server):
     headers = {"X-Forwarded-For": "6.6.6.6, 203.0.113.9", "X-Forwarded-Proto": "https"}
     _, _, body = fetch(f"{base}/client", headers=headers)
     # 127.0.0.1 is trusted by default; 6.6.6.6 was written by the client itself.
-    assert json.loads(body) == {"client": ["203.0.113.9", 0], "scheme": "https", "host": f"127.0.0.1:{base.rsplit(':', 1)[1]}"}
+    assert json.loads(body) == {
+        "client": ["203.0.113.9", 0],
+        "scheme": "https",
+        "host": f"127.0.0.1:{base.rsplit(':', 1)[1]}",
+    }
     _, _, body = fetch(f"{base}/client")
     assert json.loads(body)["client"][0] == "127.0.0.1"
 
@@ -366,7 +370,11 @@ def test_a_clients_own_forwarded_and_x_forwarded_host_are_not_believed(server):
     # the client wrote them: neither may choose the address or the host.
     base, _ = server
     port = base.rsplit(":", 1)[1]
-    headers = {"X-Forwarded-For": "203.0.113.9", "Forwarded": "for=6.6.6.6;host=evil.example", "X-Forwarded-Host": "evil.example"}
+    headers = {
+        "X-Forwarded-For": "203.0.113.9",
+        "Forwarded": "for=6.6.6.6;host=evil.example",
+        "X-Forwarded-Host": "evil.example",
+    }
     result = json.loads(fetch(f"{base}/client", headers=headers)[2])
     assert result == {"client": ["203.0.113.9", 0], "scheme": "http", "host": f"127.0.0.1:{port}"}
 
@@ -376,7 +384,10 @@ def test_forwarded_and_the_forwarded_host_when_the_proxy_sets_them():
     process = start(port, FORWARDED_HOST="1")
     try:
         base = f"http://127.0.0.1:{port}"
-        assert json.loads(fetch(f"{base}/client", headers={"X-Forwarded-Host": "shop.example"})[2])["host"] == "shop.example"
+        assert (
+            json.loads(fetch(f"{base}/client", headers={"X-Forwarded-Host": "shop.example"})[2])["host"]
+            == "shop.example"
+        )
         headers = {"Forwarded": 'for="[2001:db8::1]:4711";proto=https;host=shop.example'}  # no X-Forwarded-*: read
         result = json.loads(fetch(f"{base}/client", headers=headers)[2])
         assert result == {"client": ["2001:db8::1", 4711], "scheme": "https", "host": "shop.example"}
@@ -393,7 +404,9 @@ def test_proxy_headers_from_untrusted_addresses_are_ignored():
         result = json.loads(body)
         assert result["client"][0] == "127.0.0.1" and result["scheme"] == "http"
         assert result["host"] == f"127.0.0.1:{port}"
-        _, _, body = fetch(f"http://127.0.0.1:{port}/client", headers={"Forwarded": "for=203.0.113.9;host=evil.example"})
+        _, _, body = fetch(
+            f"http://127.0.0.1:{port}/client", headers={"Forwarded": "for=203.0.113.9;host=evil.example"}
+        )
         assert json.loads(body)["host"] == f"127.0.0.1:{port}"
     finally:
         process.kill()
@@ -417,7 +430,10 @@ def test_unix_socket():
     connection.request("GET", "/client", headers={"X-Forwarded-For": "203.0.113.9"})
     response = connection.getresponse()
     # Over a Unix socket, the proxy is trusted: only a local process can connect.
-    assert (response.status, json.loads(response.read())) == (200, {"client": ["203.0.113.9", 0], "scheme": "http", "host": "localhost"})
+    assert (response.status, json.loads(response.read())) == (
+        200,
+        {"client": ["203.0.113.9", 0], "scheme": "http", "host": "localhost"},
+    )
     connection.close()
     code, _ = stop_and_collect(process)
     assert code == 0

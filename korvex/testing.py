@@ -926,9 +926,19 @@ def _pairs(items: Any) -> Iterator[tuple[str, Any]]:
     return iter(items)
 
 
-def _encode_body(json: Any, form: Form | None, files: Files | None, body: bytes | str | None) -> tuple[str | None, bytes]:
+def _encode_body(
+    json: Any, form: Form | None, files: Files | None, body: bytes | str | None
+) -> tuple[str | None, bytes]:
     """The content type and bytes of a request body given one way or another."""
-    given = [name for name, value in (("json", json is not _UNSET), ("form", form is not None or files is not None), ("body", body is not None)) if value]
+    given = [
+        name
+        for name, value in (
+            ("json", json is not _UNSET),
+            ("form", form is not None or files is not None),
+            ("body", body is not None),
+        )
+        if value
+    ]
     if len(given) > 1:
         raise TypeError(f"give the body one way only, not {' and '.join(given)}")
     if json is not _UNSET:
@@ -936,7 +946,11 @@ def _encode_body(json: Any, form: Form | None, files: Files | None, body: bytes 
     if files is not None:
         return _multipart(form or {}, files)
     if form is not None:
-        fields = [(name, value) for name, values in form.items() for value in ([values] if isinstance(values, str) else values)]
+        fields = [
+            (name, value)
+            for name, values in form.items()
+            for value in ([values] if isinstance(values, str) else values)
+        ]
         return "application/x-www-form-urlencoded", urlencode(fields).encode()
     if body is not None:
         return None, body.encode() if isinstance(body, str) else body
@@ -994,4 +1008,3 @@ def _expired(morsel: Any) -> bool:
         except (TypeError, ValueError):
             return False
     return False
-

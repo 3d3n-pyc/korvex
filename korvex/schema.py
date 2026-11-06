@@ -46,7 +46,7 @@ def _error(loc: list, msg: str, kind: str) -> dict:
 
 
 def _library(tp: Any) -> str | None:
-    """"msgspec" or "pydantic" if `tp` is a model of that library, or a
+    """ "msgspec" or "pydantic" if `tp` is a model of that library, or a
     list of such models; None otherwise."""
     if typing.get_origin(tp) is list and len(typing.get_args(tp)) == 1:
         tp = typing.get_args(tp)[0]
@@ -84,9 +84,7 @@ class Model:
         try:
             return self._adapter.validate_json(data)
         except pydantic.ValidationError as error:
-            raise ValidationError(
-                [_error(["body", *e["loc"]], e["msg"], e["type"]) for e in error.errors()]
-            ) from None
+            raise ValidationError([_error(["body", *e["loc"]], e["msg"], e["type"]) for e in error.errors()]) from None
 
     def from_form(self, form: Mapping[str, list]) -> Any:
         """The model, from a form's fields: each model field from the form
@@ -116,9 +114,7 @@ class Model:
         try:
             return self._adapter.validate_python(data)
         except pydantic.ValidationError as error:
-            raise ValidationError(
-                [_error(["form", *e["loc"]], e["msg"], e["type"]) for e in error.errors()]
-            ) from None
+            raise ValidationError([_error(["form", *e["loc"]], e["msg"], e["type"]) for e in error.errors()]) from None
 
     def _fields(self) -> list[tuple[str, Any]]:
         """`(name in the request, annotation)` of each field of the model."""
@@ -162,7 +158,12 @@ def _msgspec_error(error: Exception, root: str = "body") -> dict:
     where = re.search(r" - at `\$(.*)`$", message)
     if where:
         message = message[: where.start()]
-        loc += [int(part) if part.isdigit() else part for part in re.findall(r"\.(\w+)|\[(\d+)\]", where.group(1)) for part in part if part]
+        loc += [
+            int(part) if part.isdigit() else part
+            for part in re.findall(r"\.(\w+)|\[(\d+)\]", where.group(1))
+            for part in part
+            if part
+        ]
     missing = re.match(r"Object missing required field `(\w+)`", message)
     if missing:
         loc.append(missing.group(1))
@@ -237,8 +238,6 @@ def scalar_schema(tp: Any) -> dict:
         datetime.datetime: {"type": "string", "format": "date-time"},
     }.get(inner, {"type": "string"})
     return {"type": "array", "items": schema} if is_list else schema
-
-
 
 
 # --- a handler's plan ---
@@ -417,7 +416,9 @@ class Plan:
         if isinstance(result, Response):
             return result
         if self.response is not None:
-            return Response(self.response.encode(result), status=self.status, headers=[("Content-Type", "application/json")])
+            return Response(
+                self.response.encode(result), status=self.status, headers=[("Content-Type", "application/json")]
+            )
         if result is None and self.empty:
             return Response(status=self.status)
         return result  # not a Response: the App answers a 500 that says so

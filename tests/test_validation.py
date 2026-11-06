@@ -105,10 +105,25 @@ def test_query_parameters():
     app = App()
 
     @app.get("/search")
-    def search(request, q: str, limit: int = 10, tags: list[str] = [], exact: Optional[bool] = None, after: Optional[UUID] = None):
-        return Response.json({"q": q, "limit": limit, "tags": tags, "exact": exact, "after": str(after) if after else None})
+    def search(
+        request,
+        q: str,
+        limit: int = 10,
+        tags: list[str] = [],
+        exact: Optional[bool] = None,
+        after: Optional[UUID] = None,
+    ):
+        return Response.json(
+            {"q": q, "limit": limit, "tags": tags, "exact": exact, "after": str(after) if after else None}
+        )
 
-    assert call(app, "GET", "/search", query=b"q=rust")[2] == {"q": "rust", "limit": 10, "tags": [], "exact": None, "after": None}
+    assert call(app, "GET", "/search", query=b"q=rust")[2] == {
+        "q": "rust",
+        "limit": 10,
+        "tags": [],
+        "exact": None,
+        "after": None,
+    }
     uid = "123e4567-e89b-12d3-a456-426614174000"
     data = call(app, "GET", "/search", query=f"q=a&limit=3&tags=x&tags=y&exact=false&after={uid}".encode())[2]
     assert data == {"q": "a", "limit": 3, "tags": ["x", "y"], "exact": False, "after": uid}
@@ -129,7 +144,9 @@ def test_handlers_without_annotations_are_called_as_before():
         return Response.json({"id": id})
 
     assert not app._plans["test_validation.test_handlers_without_annotations_are_called_as_before.<locals>.user"].params
-    assert not app._plans["test_validation.test_handlers_without_annotations_are_called_as_before.<locals>.typed"].params
+    assert not app._plans[
+        "test_validation.test_handlers_without_annotations_are_called_as_before.<locals>.typed"
+    ].params
     assert call(app, "GET", "/typed/5")[2] == {"id": 5}
 
 
@@ -200,7 +217,9 @@ def test_dates_in_the_query_string_and_the_path():
 
     @app.get("/agenda/{day}")
     def agenda(request, day: date, after: Optional[datetime] = None, until: Optional[date] = None):
-        return Response.json({"day": day.isoformat(), "after": after.isoformat() if after else None, "until": str(until)})
+        return Response.json(
+            {"day": day.isoformat(), "after": after.isoformat() if after else None, "until": str(until)}
+        )
 
     data = call(app, "GET", "/agenda/2026-11-05", query=b"after=2026-11-05T08:30:00Z&until=2026-12-31")[2]
     assert data == {"day": "2026-11-05", "after": "2026-11-05T08:30:00+00:00", "until": "2026-12-31"}

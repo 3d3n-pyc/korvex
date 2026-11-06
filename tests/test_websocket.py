@@ -160,7 +160,10 @@ def test_before_hooks_see_the_handshake_and_can_refuse_it():
         await ws.accept()
         await ws.send_text(name)
 
-    assert run_ws(app, ws_scope("/ws/a", headers=[("Origin", "https://example.com")]))[1] == {"type": "websocket.send", "text": "a"}
+    assert run_ws(app, ws_scope("/ws/a", headers=[("Origin", "https://example.com")]))[1] == {
+        "type": "websocket.send",
+        "text": "a",
+    }
     refused = [{"type": "websocket.close", "code": 1000, "reason": ""}]
     assert run_ws(app, ws_scope("/ws/a", headers=[("Origin", "https://evil.example")])) == refused
     assert run_ws(app, ws_scope("/ws/closed")) == refused
@@ -184,4 +187,6 @@ def test_ready_made_hooks_apply_to_websockets():
     first = run_ws(app, ws_scope("/ws", headers=[("X-Request-ID", "abc-123")]))
     assert first[1] == {"type": "websocket.send", "text": "abc-123"}
     assert run_ws(app, ws_scope("/ws"))[0]["type"] == "websocket.accept"
-    assert run_ws(app, ws_scope("/ws")) == [{"type": "websocket.close", "code": 1000, "reason": ""}]  # the third: limited
+    assert run_ws(app, ws_scope("/ws")) == [
+        {"type": "websocket.close", "code": 1000, "reason": ""}
+    ]  # the third: limited

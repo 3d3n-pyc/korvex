@@ -138,7 +138,11 @@ class TaskService:
         tips = [
             ("Press N to add a task, / to search, ? for every shortcut", "", None),
             ("Drag tasks to reorder them, or onto another list to move them", "", None),
-            ("Give a task a due date: it shows up in Today and Planned", "Click a task to open it, then pick a date.", today),
+            (
+                "Give a task a due date: it shows up in Today and Planned",
+                "Click a task to open it, then pick a date.",
+                today,
+            ),
             ("Open this page in a second window", "Changes appear in both right away.", today + timedelta(days=1)),
         ]
         tasks = [

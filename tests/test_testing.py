@@ -43,7 +43,10 @@ def make_app():
     async def body(request):
         return Response(
             await request.body(),
-            headers=[("Content-Type", request.headers.get("content-type") or "none"), ("X-Length", request.headers.get("content-length") or "none")],
+            headers=[
+                ("Content-Type", request.headers.get("content-type") or "none"),
+                ("X-Length", request.headers.get("content-length") or "none"),
+            ],
         )
 
     @app.post("/form")
@@ -143,7 +146,10 @@ def test_json_raw_body_and_content_length():
 
 def test_forms_and_files():
     with TestClient(make_app()) as client:
-        assert client.post("/form", form={"title": "a & b", "tags": ["x", "y"]}).json() == {"title": "a & b", "tags": ["x", "y"]}
+        assert client.post("/form", form={"title": "a & b", "tags": ["x", "y"]}).json() == {
+            "title": "a & b",
+            "tags": ["x", "y"],
+        }
         response = client.post(
             "/form",
             form={"title": "report"},

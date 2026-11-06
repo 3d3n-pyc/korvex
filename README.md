@@ -25,9 +25,9 @@ router = Router()
 router.get("/users/{id:int}", "get_user")
 router.post("/users", "create_user", middleware=["auth"])
 
-router.match("/users/42")         # ("get_user", {"id": 42}, ())
-router.match("/users", "POST")    # ("create_user", {}, ("auth",))
-router.match("/nope")             # None
+router.match("/users/42")  # ("get_user", {"id": 42}, ())
+router.match("/users", "POST")  # ("create_user", {}, ("auth",))
+router.match("/nope")  # None
 router.match("/users", "DELETE")  # raises MethodNotAllowed, .allowed == ["POST"]
 ```
 
@@ -50,8 +50,8 @@ order their routes were registered), then `{id}`, then `*path`.
 Define your own constraints as regexes, before the routes that use them:
 
 ```python
-router.constraint("slug", r"[a-z0-9]+(?:-[a-z0-9]+)*")   # app.constraint() for an App
-router.get("/posts/{post:slug}", "get_post")             # /posts/hello-world, not /posts/Hello
+router.constraint("slug", r"[a-z0-9]+(?:-[a-z0-9]+)*")  # app.constraint() for an App
+router.get("/posts/{post:slug}", "get_post")  # /posts/hello-world, not /posts/Hello
 ```
 
 The whole segment must match. The regex is compiled and matched in Rust
@@ -84,10 +84,10 @@ are immutable: `params` is a read-only mapping and `middleware` a tuple.
 
 ```python
 api = router.group("/api", middleware=["auth"])
-api.get("/users", "list_users")             # GET /api/users, middleware ("auth",)
+api.get("/users", "list_users")  # GET /api/users, middleware ("auth",)
 
 admin = api.group("/admin", middleware=["admin"])
-admin.get("/stats", "stats")                # GET /api/admin/stats, middleware ("auth", "admin")
+admin.get("/stats", "stats")  # GET /api/admin/stats, middleware ("auth", "admin")
 ```
 
 ## The ASGI app
@@ -100,9 +100,11 @@ from korvex import App, Depends, Header, HTTPException, Response
 
 app = App()
 
+
 def signed_in(authorization: str = Header("")) -> None:
     if not authorization:
         raise HTTPException(401, "sign in first")  # stops here
+
 
 @app.get("/users/{id:int}", dependencies=[Depends(signed_in)])
 async def get_user(request, id):
@@ -189,13 +191,16 @@ Type annotations say where a handler's parameters come from. Models can be
 ```python
 import msgspec
 
+
 class UserIn(msgspec.Struct):
     name: str
     age: int
 
+
 class UserOut(msgspec.Struct):
     id: int
     name: str
+
 
 @app.post("/users")
 async def create(request, body: UserIn, notify: bool = False) -> UserOut:
@@ -223,16 +228,16 @@ Headers, cookies and form fields are read the same way, with `Header()`,
 ```python
 from korvex import Cookie, Form, Header, Query, UploadedFile
 
+
 @app.post("/photos")
 async def upload(
     request,
-    title: str = Form(),                         # a form field, urlencoded or multipart
-    photo: UploadedFile = Form(),                # a file from a multipart form
-    x_client: str = Header("web"),               # the X-Client header
-    theme: str = Cookie("light"),                # the theme cookie
+    title: str = Form(),  # a form field, urlencoded or multipart
+    photo: UploadedFile = Form(),  # a file from a multipart form
+    x_client: str = Header("web"),  # the X-Client header
+    theme: str = Cookie("light"),  # the theme cookie
     page_size: int = Query(20, alias="page-size"),
-):
-    ...
+): ...
 ```
 
 - `x_client` reads `X-Client`: underscores become hyphens, case doesn't
@@ -254,24 +259,29 @@ other dependencies), plus the request if it asks for it:
 from typing import Annotated, Optional
 from korvex import Cookie, Depends, HTTPException
 
+
 async def current_user(session: Optional[str] = Cookie(None)) -> User:
     user = await users.by_session(session)
     if user is None:
         raise HTTPException(401, "sign in first")
     return user
 
+
 CurrentUser = Annotated[User, Depends(current_user)]
+
 
 async def database():
     connection = await pool.acquire()
     try:
-        yield connection                     # the handler runs here
+        yield connection  # the handler runs here
     finally:
         await pool.release(connection)
+
 
 @app.get("/tasks")
 async def tasks(request, user: CurrentUser, db=Depends(database)) -> list[Task]:
     return await db.tasks_of(user.id)
+
 
 api = app.group("/api", dependencies=[Depends(current_user)])  # checks every route in it
 ```
@@ -412,11 +422,12 @@ both well, and the app does less.
 ```python
 from korvex.testing import TestClient
 
+
 def test_tasks():
-    with TestClient(app) as client:              # startup hooks, then shutdown
+    with TestClient(app) as client:  # startup hooks, then shutdown
         assert client.post("/login", form={"password": "s3cret"}).status == 303
         response = client.get("/api/tasks", query={"done": "false"})
-        assert response.json() == []             # the session cookie was sent back
+        assert response.json() == []  # the session cookie was sent back
 
         with client.websocket("/live") as ws:
             assert ws.receive_json()["event"] == "presence"
@@ -482,7 +493,8 @@ the loop that made them. `app.local` keeps attributes per event loop:
 ```python
 @app.on_startup
 async def connect():
-    app.local.pool = await asyncpg.create_pool(DATABASE_URL)   # this loop's pool
+    app.local.pool = await asyncpg.create_pool(DATABASE_URL)  # this loop's pool
+
 
 @app.get("/users/{id:int}")
 async def get_user(request, id):

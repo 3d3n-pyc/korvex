@@ -85,7 +85,9 @@ def cors(
             return None  # not a preflight
         origin_value = allowed_origin(origin)
         requested_headers = [
-            h.strip().lower() for h in (request.headers.get("access-control-request-headers") or "").split(",") if h.strip()
+            h.strip().lower()
+            for h in (request.headers.get("access-control-request-headers") or "").split(",")
+            if h.strip()
         ]
         if origin_value is None:
             return Response.text("Disallowed CORS origin", status=400)
@@ -256,7 +258,9 @@ class RedisStore:
     Same algorithm as `MemoryStore`, run atomically in Redis on its clock.
     """
 
-    def __init__(self, client: Any = "redis://localhost:6379/0", *, prefix: str = "korvex:ratelimit:", fail_open: bool = True) -> None:
+    def __init__(
+        self, client: Any = "redis://localhost:6379/0", *, prefix: str = "korvex:ratelimit:", fail_open: bool = True
+    ) -> None:
         self._url: str | None = None
         self.client = None
         if isinstance(client, str):
@@ -289,9 +293,13 @@ class RedisStore:
 
     async def hit(self, key: Hashable, requests: int, per: float) -> Decision:
         try:
-            allowed, remaining, retry_after, reset = await self._script()(keys=[f"{self._prefix}{key}"], args=[requests, repr(float(per))])
+            allowed, remaining, retry_after, reset = await self._script()(
+                keys=[f"{self._prefix}{key}"], args=[requests, repr(float(per))]
+            )
         except Exception:  # a connection error, a timeout...: Redis isn't answering
-            logger.exception("rate limit store unreachable; %s the request", "allowing" if self._fail_open else "refusing")
+            logger.exception(
+                "rate limit store unreachable; %s the request", "allowing" if self._fail_open else "refusing"
+            )
             if self._fail_open:
                 return Decision(True, requests, 0.0, 0.0)
             return Decision(False, 0, 1.0, 1.0)
@@ -339,7 +347,9 @@ def rate_limit(
         _decision.set(decision)
         if decision.allowed:
             return None
-        return Response.text("Too Many Requests", status=429, headers=[("Retry-After", str(math.ceil(decision.retry_after)))])
+        return Response.text(
+            "Too Many Requests", status=429, headers=[("Retry-After", str(math.ceil(decision.retry_after)))]
+        )
 
     if inspect.iscoroutinefunction(state.hit):  # a store over the network: don't block the loop
 
@@ -393,7 +403,9 @@ class _Encoder:
     """One content encoding: whole bodies at once, or a stream piece by
     piece (each piece flushed, so a streamed response isn't held back)."""
 
-    def __init__(self, name: str, whole: Callable[[bytes], bytes], stream: Callable[[], tuple[Callable, Callable]]) -> None:
+    def __init__(
+        self, name: str, whole: Callable[[bytes], bytes], stream: Callable[[], tuple[Callable, Callable]]
+    ) -> None:
         self.name = name
         self.whole = whole
         self.stream = stream  # -> (compress_and_flush(piece), finish())
@@ -614,7 +626,11 @@ def security_headers(
     if hsts is not None:
         if hsts < 0:
             raise ValueError("hsts is a max-age in seconds, or None")
-        transport = f"max-age={hsts}" + ("; includeSubDomains" if hsts_subdomains else "") + ("; preload" if hsts_preload else "")
+        transport = (
+            f"max-age={hsts}"
+            + ("; includeSubDomains" if hsts_subdomains else "")
+            + ("; preload" if hsts_preload else "")
+        )
 
     @app.after_request
     def add_security_headers(request: Request, response: Response) -> None:

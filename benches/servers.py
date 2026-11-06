@@ -104,8 +104,11 @@ def load(pid, connections):
     sampler = threading.Thread(target=sample)
     sampler.start()
     command = ["taskset", "-c", CLIENT_CPUS, "oha", "--no-tui", "--output-format", "json", "--rand-regex-url"]
-    report = json.loads(subprocess.run([*command, "-z", f"{SECONDS}s", "-c", str(connections), URLS],
-                                       capture_output=True, text=True, check=True).stdout)
+    report = json.loads(
+        subprocess.run(
+            [*command, "-z", f"{SECONDS}s", "-c", str(connections), URLS], capture_output=True, text=True, check=True
+        ).stdout
+    )
     done.set()
     sampler.join()
     statuses = report.get("statusCodeDistribution", {})

@@ -94,12 +94,16 @@ def draw(timings, machine, theme):
         f'viewBox="0 0 {WIDTH} {height}" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img">'
     )
     out.append("<title>Route lookup time per router, log scale, lower is better</title>")
-    desc = "; ".join(f"{label(r)}{' cached' if 'cached' in r else ''}: {duration(timings[r][10_000])}" for r in uncached + cached)
+    desc = "; ".join(
+        f"{label(r)}{' cached' if 'cached' in r else ''}: {duration(timings[r][10_000])}" for r in uncached + cached
+    )
     out.append(f"<desc>Median time per lookup with 10,000 routes. {desc}.</desc>")
     out.append(f'<rect width="{WIDTH}" height="{height}" rx="8" fill="{t["surface"]}"/>')
 
     # Title, subtitle, legend
-    out.append(f'<text x="20" y="32" font-size="16" font-weight="600" fill="{t["primary"]}">Time per route lookup (lower is better, log scale)</text>')
+    out.append(
+        f'<text x="20" y="32" font-size="16" font-weight="600" fill="{t["primary"]}">Time per route lookup (lower is better, log scale)</text>'
+    )
     out.append(
         f'<text x="20" y="54" font-size="12" fill="{t["secondary"]}">'
         "Median time per lookup. Every lookup is checked to find the right route.</text>"
@@ -120,11 +124,15 @@ def draw(timings, machine, theme):
             f'<text x="{x:.1f}" y="{axis_y + 18}" font-size="11" text-anchor="middle" fill="{t["muted"]}">{duration(10.0**exponent)}</text>'
         )
         exponent += 1
-    out.append(f'<line x1="{PLOT_LEFT}" y1="{axis_y}" x2="{PLOT_RIGHT}" y2="{axis_y}" stroke="{t["axis"]}" stroke-width="1"/>')
+    out.append(
+        f'<line x1="{PLOT_LEFT}" y1="{axis_y}" x2="{PLOT_RIGHT}" y2="{axis_y}" stroke="{t["axis"]}" stroke-width="1"/>'
+    )
 
     for kind, value, row_y in rows:
         if kind == "header":
-            out.append(f'<text x="20" y="{row_y + 4}" font-size="12" font-weight="600" fill="{t["secondary"]}">{value}</text>')
+            out.append(
+                f'<text x="20" y="{row_y + 4}" font-size="12" font-weight="600" fill="{t["secondary"]}">{value}</text>'
+            )
             continue
         router = value
         is_korvex = router.startswith("korvex")
@@ -136,7 +144,9 @@ def draw(timings, machine, theme):
             f'<line x1="{min(xs):.1f}" y1="{row_y}" x2="{max(xs):.1f}" y2="{row_y}" stroke="{t["axis"]}" stroke-width="2" stroke-linecap="round"/>'
         )
         for x, color in zip(xs, t["dots"]):
-            out.append(f'<circle cx="{x:.1f}" cy="{row_y}" r="5" fill="{color}" stroke="{t["surface"]}" stroke-width="2"/>')
+            out.append(
+                f'<circle cx="{x:.1f}" cy="{row_y}" r="5" fill="{color}" stroke="{t["surface"]}" stroke-width="2"/>'
+            )
         out.append(
             f'<text x="{PLOT_RIGHT + 16}" y="{row_y + 4}" font-size="12"{weight} fill="{ink}">{duration(timings[router][10_000])}</text>'
         )
@@ -202,10 +212,16 @@ def draw_load(results, machine, theme):
 
     for value in range(0, LOAD_MAX + 1, 10_000):
         x = x_of_rps(value)
-        out.append(f'<line x1="{x:.1f}" y1="{top - 16}" x2="{x:.1f}" y2="{axis_y}" stroke="{t["grid"]}" stroke-width="1"/>')
+        out.append(
+            f'<line x1="{x:.1f}" y1="{top - 16}" x2="{x:.1f}" y2="{axis_y}" stroke="{t["grid"]}" stroke-width="1"/>'
+        )
         tick = "0" if value == 0 else f"{value // 1000}k"
-        out.append(f'<text x="{x:.1f}" y="{axis_y + 18}" font-size="11" text-anchor="middle" fill="{t["muted"]}">{tick}</text>')
-    out.append(f'<line x1="{PLOT_LEFT}" y1="{axis_y}" x2="{PLOT_RIGHT}" y2="{axis_y}" stroke="{t["axis"]}" stroke-width="1"/>')
+        out.append(
+            f'<text x="{x:.1f}" y="{axis_y + 18}" font-size="11" text-anchor="middle" fill="{t["muted"]}">{tick}</text>'
+        )
+    out.append(
+        f'<line x1="{PLOT_LEFT}" y1="{axis_y}" x2="{PLOT_RIGHT}" y2="{axis_y}" stroke="{t["axis"]}" stroke-width="1"/>'
+    )
 
     for i, framework in enumerate(frameworks):
         y = top + i * ROW_HEIGHT
@@ -222,9 +238,13 @@ def draw_load(results, machine, theme):
                 f'<line x1="{x_of_rps(worst):.1f}" y1="{y}" x2="{x_of_rps(best[framework]):.1f}" y2="{y}" '
                 f'stroke="{t["axis"]}" stroke-width="2" stroke-linecap="round"/>'
             )
-            out.append(f'<circle cx="{x_of_rps(worst):.1f}" cy="{y}" r="5" fill="{light}" stroke="{t["surface"]}" stroke-width="2"/>')
+            out.append(
+                f'<circle cx="{x_of_rps(worst):.1f}" cy="{y}" r="5" fill="{light}" stroke="{t["surface"]}" stroke-width="2"/>'
+            )
             value_label = f"{thousands(worst)} to {value_label}"
-        out.append(f'<circle cx="{x_of_rps(best[framework]):.1f}" cy="{y}" r="5" fill="{best_color}" stroke="{t["surface"]}" stroke-width="2"/>')
+        out.append(
+            f'<circle cx="{x_of_rps(best[framework]):.1f}" cy="{y}" r="5" fill="{best_color}" stroke="{t["surface"]}" stroke-width="2"/>'
+        )
         out.append(f'<text x="{PLOT_RIGHT + 16}" y="{y + 4}" font-size="12"{weight} fill="{ink}">{value_label}</text>')
 
     out.append(
@@ -236,7 +256,9 @@ def draw_load(results, machine, theme):
         "BlackSheep does too, but sorts routes itself: here the tested route always comes last.</text>"
     )
     cpu = machine.get("cpu", {}).get("brand_raw", "")
-    out.append(f'<text x="20" y="{axis_y + 84}" font-size="11" fill="{t["muted"]}">Python {machine.get("python_version", "")}, {cpu}</text>')
+    out.append(
+        f'<text x="20" y="{axis_y + 84}" font-size="11" fill="{t["muted"]}">Python {machine.get("python_version", "")}, {cpu}</text>'
+    )
     out.append("</svg>")
     return "\n".join(out)
 
@@ -255,6 +277,7 @@ def draw_servers(results, machine, theme):
     on the same 4 cores: a light dot for 200 clients, a dark one for 1,000."""
     t = THEMES[theme]
     light, dark = t["dots"][0], t["dots"][2]
+
     def total(runs):
         return sum(run["requests_per_second"] for run in runs)
 
@@ -296,10 +319,16 @@ def draw_servers(results, machine, theme):
 
     for value in range(0, SERVERS_MAX + 1, 20_000):
         x = x_of_rps(value)
-        out.append(f'<line x1="{x:.1f}" y1="{top - 16}" x2="{x:.1f}" y2="{axis_y}" stroke="{t["grid"]}" stroke-width="1"/>')
+        out.append(
+            f'<line x1="{x:.1f}" y1="{top - 16}" x2="{x:.1f}" y2="{axis_y}" stroke="{t["grid"]}" stroke-width="1"/>'
+        )
         tick = "0" if value == 0 else f"{value // 1000}k"
-        out.append(f'<text x="{x:.1f}" y="{axis_y + 18}" font-size="11" text-anchor="middle" fill="{t["muted"]}">{tick}</text>')
-    out.append(f'<line x1="{PLOT_LEFT}" y1="{axis_y}" x2="{PLOT_RIGHT}" y2="{axis_y}" stroke="{t["axis"]}" stroke-width="1"/>')
+        out.append(
+            f'<text x="{x:.1f}" y="{axis_y + 18}" font-size="11" text-anchor="middle" fill="{t["muted"]}">{tick}</text>'
+        )
+    out.append(
+        f'<line x1="{PLOT_LEFT}" y1="{axis_y}" x2="{PLOT_RIGHT}" y2="{axis_y}" stroke="{t["axis"]}" stroke-width="1"/>'
+    )
 
     for i, name in enumerate(servers):
         y = top + i * ROW_HEIGHT
@@ -322,7 +351,9 @@ def draw_servers(results, machine, theme):
         "uvicorn and Granian run the Korvex ASGI app; Robyn runs its own version with its own server.</text>"
     )
     cpu = machine.get("cpu", {}).get("brand_raw", "")
-    out.append(f'<text x="20" y="{axis_y + 66}" font-size="11" fill="{t["muted"]}">Python {machine.get("python_version", "")}, {cpu}</text>')
+    out.append(
+        f'<text x="20" y="{axis_y + 66}" font-size="11" fill="{t["muted"]}">Python {machine.get("python_version", "")}, {cpu}</text>'
+    )
     out.append("</svg>")
     return "\n".join(out)
 

@@ -722,7 +722,6 @@ def test_path_params_are_filled_after_routing():
     assert seen == [{}, {"id": 7}]
 
 
-
 def test_app_groups_register_under_a_prefix_with_their_dependencies():
     from korvex import Depends
 

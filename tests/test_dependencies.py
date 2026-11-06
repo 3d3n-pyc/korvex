@@ -271,7 +271,9 @@ def test_dependencies_can_read_path_parameters_and_the_body():
     def update(request, id: int, note: Note, owner: str = Depends(note_owner)):
         return Response.json({"id": id, "text": note.text, "owner": owner})
 
-    status, body = call(app, "/notes/7", method="PUT", headers=[("Content-Type", "application/json")], body=b'{"text": "hi"}')
+    status, body = call(
+        app, "/notes/7", method="PUT", headers=[("Content-Type", "application/json")], body=b'{"text": "hi"}'
+    )
     assert body == {"id": 7, "text": "hi", "owner": "7:hi"}
 
 
