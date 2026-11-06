@@ -11,7 +11,7 @@ def startup():
 
 
 @app.get("/")
-def home(request):
+def home():
     return Response.text("Hello from Korvex")
 
 

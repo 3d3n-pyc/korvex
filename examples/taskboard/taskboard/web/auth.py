@@ -4,7 +4,7 @@
 from collections.abc import Awaitable, Callable
 from typing import Optional
 
-from korvex import App, Cookie, Depends, Form, HTTPException, Request, Response
+from korvex import App, Cookie, Depends, Form, HTTPException, Response
 from korvex.security import APIKey
 from taskboard.config import Settings
 from taskboard.services.auth import AuthService
@@ -32,7 +32,7 @@ def register(app: App, auth: AuthService, settings: Settings) -> CurrentUser:
         return user
 
     @app.post("/login", status=303, tags=["auth"])
-    async def login(request: Request, password: str = Form("")) -> Response:
+    async def login(password: str = Form("")) -> Response:
         """Sign in
 
         A form with a `password` field. Sets the session cookie and goes back
@@ -55,7 +55,7 @@ def register(app: App, auth: AuthService, settings: Settings) -> CurrentUser:
         return response
 
     @app.post("/logout", status=303, tags=["auth"])
-    async def logout(request: Request, token: Optional[str] = Cookie(None, alias=COOKIE)) -> Response:
+    async def logout(token: Optional[str] = Cookie(None, alias=COOKIE)) -> Response:
         """Sign out
 
         Ends the session on the server too, not just in the browser.
@@ -66,7 +66,7 @@ def register(app: App, auth: AuthService, settings: Settings) -> CurrentUser:
         return response
 
     @app.get("/api/me", tags=["auth"])
-    async def me(request: Request, token: Optional[str] = Cookie(None, alias=COOKIE)) -> Response:
+    async def me(token: Optional[str] = Cookie(None, alias=COOKIE)) -> Response:
         """Who is signed in
 
         `{"user": "admin"}`, or `{"user": null}`. Open to everyone: the page

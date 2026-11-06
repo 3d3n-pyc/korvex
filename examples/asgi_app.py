@@ -3,9 +3,9 @@
 `App` does what `basic_router.py` does by hand: match the request, run
 the route's checks, call the handler, send the response.
 
-Run:
-    pip install uvicorn
-    uvicorn examples.asgi_app:app --reload
+Run, from the repository root:
+    korvex run examples.asgi_app:app             # the built-in server (Linux, macOS)
+    uvicorn examples.asgi_app:app --reload       # or any ASGI server
 
 Then:
     curl http://127.0.0.1:8000/health
