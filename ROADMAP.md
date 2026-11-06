@@ -51,12 +51,29 @@ development, or a platform whose load balancer doesn't do everything.
 
 ## Until 1.0
 
-What was planned before 1.0 is done: the API's open questions (0.10),
-ready-made middleware (0.11), and more than one core per worker (0.12).
-What's left is what 1.0 itself asks for, below. Until then, a version may
-still break things, each break listed in the changelog with how to
-update: no one runs Korvex in production yet, and an API changes for
-free now, not after.
+The API's open questions (0.10), ready-made middleware (0.11) and more
+than one core per worker (0.12) are done. Compared with FastAPI,
+Starlette and Litestar, three things are still missing that everyone
+expects and that shape the API, so they come before it's frozen. Until
+1.0, a version may still break things, each break listed in the
+changelog with how to update: no one runs Korvex in production yet, and
+an API changes for free now, not after.
+
+### 0.13: what everyone expects
+
+- **A test client**: `TestClient(app)` with `get()`, `post()`... and
+  WebSockets, running the app in-process with its lifespan and cookies,
+  like Starlette's and Litestar's. Today tests drive raw ASGI messages
+  (the taskboard example wrote its own client).
+- **Reverse URLs**: `app.url_for(name, **params)` (and on the request),
+  to build a link to a route without writing its path again. Routes
+  already have names.
+- **Richer OpenAPI**, whose options go on the route decorators: a status
+  code per route, `tags`, `deprecated`, documented error responses, and
+  security schemes (Bearer, API key, OAuth2) so Swagger UI can sign in.
+
+Then **a review of the whole public API** (names, arguments, what's
+exported, errors), the last chance to change it freely.
 
 ## 1.0
 
@@ -65,4 +82,26 @@ free now, not after.
 - A documentation site, built from the README, the deployment guide and
   the examples.
 - A built-in server that's solid in production behind a reverse proxy.
+- The comparisons with other frameworks and servers measured again
+  (`benches/servers.py`, `benches/load_test.py`): the published ones date
+  from 0.6, and everyone's versions have moved since.
 - At least a few projects running it in production.
+
+## After 1.0
+
+What the other frameworks have that Korvex doesn't yet, roughly by how
+often it's needed. Each one adds to the API without changing it, so it
+can come in a minor version:
+
+- **Background tasks**: work that runs after the response is sent (an
+  email, a webhook), without holding it up.
+- **Sessions and CSRF protection**, ready-made, as Starlette and Litestar
+  have them.
+- **Server-Sent Events**: a helper on top of `Response.stream`.
+- **Mounting another ASGI app** under a prefix (an admin, an existing
+  app), like Starlette's `Mount`.
+- **Templates** (Jinja2), for server-rendered pages.
+- **Conditional static files**: `ETag`, `If-Modified-Since` and `Range`,
+  for caching and resumable downloads.
+- **More kinds of models** for validation: dataclasses, `TypedDict`,
+  attrs, as Litestar takes them.
