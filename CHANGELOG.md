@@ -21,6 +21,13 @@ each thing. Breaking changes are listed with how to update.
   though an app never uses them. To update:
   `from korvex.router import Router`.
 
+- **One way to declare a route: the decorators.** `App(router=...)`,
+  `app.router` and `@app.handler("name")` (to attach a function to a
+  route added to the router by name) are gone, and with them two errors
+  only that path had: a 500 for router middleware names, and "no handler
+  named". To update: declare the route with `@app.get(...)` and the
+  others (`app.get(path)(func)` registers a function you already have).
+
 ### Inside
 
 - The code is reorganized: the App's module split in three, the

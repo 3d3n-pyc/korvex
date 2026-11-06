@@ -228,10 +228,6 @@ uvicorn mymodule:app
   that leads to a 404. When two routes share a function's name (a
   factory registering the same functions in several groups), `url_for()`
   asks for a `name=` to tell them apart.
-- Routes registered on `app.router` directly are linked to a function
-  with `@app.handler("name")`. The App doesn't run the router's middleware
-  names: a route that has some answers a 500, rather than run without
-  what may be its guard.
 - `@app.on_startup` and `@app.on_shutdown` run a function (sync or async)
   when the server starts and stops, for example to open and close a
   database pool. Shutdown hooks run in reverse order. If a startup hook

@@ -53,7 +53,7 @@ def build(
     components: dict[str, Any] = {}
     paths: dict[str, dict[str, Any]] = {}
     used_ids: set[str] = set()
-    custom = dict(app.router.constraints())  # name -> regex
+    custom = dict(app._router.constraints())  # name -> regex
     schemes = _Schemes()
     for pattern, method, name, _ in app._routes_for(host):
         route = app._routes.get(name)

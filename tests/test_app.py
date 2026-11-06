@@ -77,29 +77,6 @@ def test_returns_405_with_allow_header_for_wrong_method():
     assert ("Allow", "GET") in headers
 
 
-def test_handler_decorator_attaches_to_an_existing_route_name():
-    app = App()
-    app.router.route("/health", "health_check")
-
-    @app.handler("health_check")
-    def health(request):
-        return Response.text("ok")
-
-    status, _, body = response_from(run_app(app, make_scope("GET", "/health")))
-    assert status == 200
-    assert body == b"ok"
-
-
-def test_missing_handler_is_a_logged_500(caplog):
-    app = App()
-    app.router.route("/health", "health_check")
-
-    status, _, _ = response_from(run_app(app, make_scope("GET", "/health")))
-
-    assert status == 500
-    assert "no handler named 'health_check'" in caplog.text
-
-
 def test_http_exception_becomes_its_response():
     app = App()
 
@@ -695,32 +672,6 @@ def test_app_groups_register_under_a_prefix_with_their_dependencies():
     status, _, body = response_from(run_app(app, make_scope("POST", "/api/admin/stats")))
     assert (status, body, calls) == (200, b"stats", ["auth", "admin", "audit"])  # outer group first
     assert repr(admin).startswith("AppGroup(prefix='/api/admin', dependencies=[")
-
-
-def test_routes_on_the_router_itself_work_with_app_handler():
-    app = App()
-    app.router.group("/api").get("/users", "list_users")
-
-    @app.handler("list_users")
-    def list_users(request):
-        return Response.text("users")
-
-    assert response_from(run_app(app, make_scope("GET", "/api/users")))[::2] == (200, b"users")
-
-
-def test_router_middleware_names_are_refused_not_ignored(caplog):
-    # The App runs dependencies, not middleware: a route given a middleware
-    # name through app.router would otherwise lose what may be its guard.
-    app = App()
-    app.router.get("/admin", "admin", middleware=["auth"])
-
-    @app.handler("admin")
-    def admin(request):
-        return Response.text("secret")
-
-    status, _, body = response_from(run_app(app, make_scope("GET", "/admin")))
-    assert (status, body) == (500, b"Internal Server Error")
-    assert "use dependencies=" in caplog.text
 
 
 def test_abort_sends_its_response_from_a_dependency_handler_or_hook():
