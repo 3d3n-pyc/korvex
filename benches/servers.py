@@ -8,11 +8,12 @@ loses to a default that doesn't suit it.
 
 - uvicorn and Granian (Rust) serve the Korvex ASGI app.
 - Robyn serves its own version of the app with its own server (Rust).
+- FastrAPI too (Rust, on Axum), from one process: it can't run several.
 - Korvex's built-in server (App.run) serves the Korvex app.
 
 Needs oha (`cargo install oha`).
 Run everything (about 4 minutes): uv run --group bench python benches/servers.py
-Run some servers only:            uv run --group bench python benches/servers.py robyn korvex
+Run some servers only:            uv run --group bench python benches/servers.py fastrapi korvex
 Results are merged into benches/servers_results.json.
 """
 
@@ -45,12 +46,16 @@ GRANIAN += ["--port", str(PORT), "--log-level", "warning", "benches.load.korvex_
 # Robyn's own setting: 2 threads per process did best (4 processes x 2: 91k
 # req/s, against 66k with 1 thread and 38k or less with 2 processes).
 ROBYN = [PY, "benches/load/robyn_app.py", "--workers", "2", "--disable-openapi", "--log-level", "WARN", "--processes"]
+# FastrAPI runs one process (no workers option; a second one can't share
+# the port), whose Rust side uses every core it's given.
+FASTRAPI = [PY, "benches/load/fastrapi_app.py"]
 KORVEX = [PY, "-m", "korvex", "run", "korvex_app:app", "--app-dir", "benches/load", "--port", str(PORT), "--workers"]
 
 SERVERS = {
     "uvicorn": (UVICORN, [3, 4]),
     "granian": (GRANIAN, [3, 4]),
     "robyn": (ROBYN, [3, 4]),
+    "fastrapi": (FASTRAPI, [None]),
     "korvex": (KORVEX, [2, 3, 4]),
 }
 
@@ -128,9 +133,9 @@ def main():
         for stale in [label for label in results if label.startswith(f"{name},")]:
             del results[stale]
         for workers in worker_counts:
-            label = f"{name}, {workers} workers"
+            label = f"{name}, {workers} workers" if workers else f"{name}, 1 process"
             print(f"Testing {label}...", flush=True)
-            process = start([*command, str(workers)])
+            process = start([*command, str(workers)] if workers else command)
             try:
                 results[label] = [load(process.pid, c) for c in CONCURRENCY]
             finally:
