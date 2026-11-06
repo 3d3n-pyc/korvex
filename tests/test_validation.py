@@ -143,10 +143,12 @@ def test_handlers_without_annotations_are_called_as_before():
     def typed(request, id: int) -> Response:  # the pattern already gives an int: nothing to do
         return Response.json({"id": id})
 
-    assert not app._plans["test_validation.test_handlers_without_annotations_are_called_as_before.<locals>.user"].params
-    assert not app._plans[
+    assert not app._routes[
+        "test_validation.test_handlers_without_annotations_are_called_as_before.<locals>.user"
+    ].plan.params
+    assert not app._routes[
         "test_validation.test_handlers_without_annotations_are_called_as_before.<locals>.typed"
-    ].params
+    ].plan.params
     assert call(app, "GET", "/typed/5")[2] == {"id": 5}
 
 

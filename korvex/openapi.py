@@ -56,14 +56,15 @@ def build(
     custom = dict(app.router.constraints())  # name -> regex
     schemes = _Schemes()
     for pattern, method, name, _ in app._routes_for(host):
-        if name.startswith("korvex.") or name not in app._handlers:
+        route = app._routes.get(name)
+        if name.startswith("korvex.") or route is None:
             continue  # static files and the docs themselves; names without a handler can't be described
-        docs = app._docs.get(name)
+        docs = route.docs
         if docs is not None and not docs.include:
             continue
-        func = app._handlers[name]
+        func = route.func
         plan = app._plan_of(name)
-        route_name = app._route_names.get((False, name), (getattr(func, "__name__", "handler"),))[0]
+        route_name = route.name or getattr(func, "__name__", "handler")
         operation: dict[str, Any] = {"operationId": _unique(route_name, used_ids)}
         if docs is not None and docs.tags:
             operation["tags"] = list(docs.tags)

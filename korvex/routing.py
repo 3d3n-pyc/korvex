@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from korvex.requests import Request
 from korvex.router import RouteGroup, Router
-from korvex.schema import _library, path_params
+from korvex.schema import Plan, _library, path_params
 
 if TYPE_CHECKING:
     from korvex.app import App
@@ -243,6 +243,33 @@ class _RouteDecorators:
         )
 
 
+class _Route:
+    """What the App keeps about one route, under its handler name in the
+    router: the function, what its annotations ask for (worked out on
+    first use for a function attached with `@app.handler`), the name
+    `url_for()` knows it by, how OpenAPI shows it, and which host
+    parameters the function takes (None: all of them, or not on a host)."""
+
+    __slots__ = ("func", "plan", "name", "explicit", "docs", "host_args")
+
+    def __init__(
+        self,
+        func: Callable[..., Any],
+        plan: Plan | None = None,
+        *,
+        name: str | None = None,
+        explicit: bool = False,
+        docs: _Docs | None = None,
+        host_args: frozenset[str] | None = None,
+    ) -> None:
+        self.func = func
+        self.plan = plan
+        self.name = name  # None: url_for() can't link to it
+        self.explicit = explicit  # given with name=, rather than the function's
+        self.docs = docs
+        self.host_args = host_args
+
+
 class _Docs:
     """How a route, or a group's routes, show in OpenAPI."""
 
@@ -334,23 +361,19 @@ class AppGroup(_RouteDecorators):
         docs = self._docs.merge(_Docs(tags, deprecated, responses, include_in_schema))
 
         def register(func: Handler) -> Handler:
-            key = _route_name(func, self._app._handlers)
+            key = _route_name(func, self._app._routes)
             full_path = self._routes.full_path(path)
             # Bad annotations fail here, at import.
             plan = self._app._plan(func, self._plan_pattern(full_path), (*self._dependencies, *dependencies))
             plan.status = status
             if plan.response is not None and not _has_body(status):
                 raise TypeError(f"{plan.func.__qualname__}: a {status} response has no body, so no return model")
-            public = self._app._check_name(name, False, self._host, full_path)
+            self._app._check_name(name, False, self._host, full_path)
             self._routes.route(path, key, method=method)
-            self._app._handlers[key] = func
-            self._app._plans[key] = plan
-            self._app._docs[key] = docs
-            self._app._name_route(
-                False, key, public or getattr(func, "__name__", None), name is not None, self._host, full_path
+            route = _Route(
+                func, plan, name=name or getattr(func, "__name__", None), explicit=name is not None, docs=docs
             )
-            if self._host is not None:
-                self._app._host_args[key] = _takes(func, self._host.params)
+            self._add(False, key, route, full_path)
             if max_body is not None:
                 self._app._body_limits.append((method, full_path, max_body))
             return func
@@ -369,23 +392,24 @@ class AppGroup(_RouteDecorators):
         _check_name_type(name)
 
         def register(func: WebSocketHandler) -> WebSocketHandler:
-            key = _route_name(func, self._app._ws_handlers)
+            key = _route_name(func, self._app._ws_routes)
             full_path = self._routes.full_path(path)
             plan = self._app._plan(
                 func, self._plan_pattern(full_path), (*self._dependencies, *dependencies), websocket=True
             )
-            public = self._app._check_name(name, True, self._host, full_path)
+            self._app._check_name(name, True, self._host, full_path)
             (self._host.ws_router if self._host else self._app._ws_router).route(full_path, key)
-            self._app._ws_handlers[key] = func
-            self._app._ws_plans[key] = plan
-            self._app._name_route(
-                True, key, public or getattr(func, "__name__", None), name is not None, self._host, full_path
-            )
-            if self._host is not None:
-                self._app._host_args[key] = _takes(func, self._host.params)
+            route = _Route(func, plan, name=name or getattr(func, "__name__", None), explicit=name is not None)
+            self._add(True, key, route, full_path)
             return func
 
         return register
+
+    def _add(self, websocket: bool, key: str, route: _Route, path: str) -> None:
+        """Hands a route just registered in the router to the App."""
+        if self._host is not None:
+            route.host_args = _takes(route.func, self._host.params)
+        self._app._add_route(websocket, key, route, self._host, path)
 
     def group(
         self,

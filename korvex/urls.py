@@ -58,12 +58,13 @@ def build_index(app: App) -> Index:
         sources += [(host.router, False, host), (host.ws_router, True, host)]
     for router, websocket, host in sources:
         for pattern, method, key, _ in router.routes():
-            found = app._route_names.get((websocket, key))
-            if found is None:
-                if websocket or key.startswith("korvex."):
-                    continue  # the docs, and what has no name
-                found = (key, False)  # a route added to app.router directly: its handler name
-            name, is_explicit = found
+            route = (app._ws_routes if websocket else app._routes).get(key)
+            if route is not None and route.name is not None:
+                name, is_explicit = route.name, route.explicit
+            elif route is None and not websocket and not key.startswith("korvex."):
+                name, is_explicit = key, False  # a route added to app.router directly: its handler name
+            else:
+                continue  # the docs, and what has no name
             target = Target(name, key, websocket, method, pattern, host, router)
             by_key[(websocket, id(router), key)] = target
             (explicit if is_explicit else default).setdefault(name, []).append(target)
@@ -202,8 +203,8 @@ def _check_type(target: Target, key: str, text: str, tp: Any) -> None:
 def _annotated(app: App, target: Target) -> dict[str, Any]:
     """The types the route's handler and dependencies give its path (and
     host) parameters."""
-    plans = app._ws_plans if target.websocket else app._plans
-    plan = plans.get(target.key)
+    route = (app._ws_routes if target.websocket else app._routes).get(target.key)
+    plan = route.plan if route is not None else None
     if plan is None:
         return {}
     return {p.key: p.inner for p in plan.everything() if p.source == "path"}
