@@ -55,7 +55,8 @@ benches/      comparisons with other frameworks:
   bench_app.py     the App's own cost per request, against Starlette
   bench_validation.py  validation from annotations, against FastAPI
   bench_dependencies.py  dependencies, against FastAPI
-  perf_check.py    the check CI runs on pull requests: slower than the base?
+  perf_check.py    the check CI runs on pull requests: is the App slower than the base?
+  server_check.py  the same for the built-in server, under load (needs oha)
   threads.py       the built-in server with more threads or workers, 3.14t and GIL
   database.py      a request that reads PostgreSQL, Korvex and FastAPI (apps in benches/db/)
   load_test.py     frameworks on the same server under load (apps in benches/load/)
@@ -80,8 +81,9 @@ uv run pytest
 ```
 
 CI runs the same checks, the tests on Python 3.9 to 3.14 and on
-free-threaded 3.14t, and a performance check against the base branch
-(more than 10% slower on any case fails). New behavior needs a test;
+free-threaded 3.14t, and two performance checks against the base
+branch, the App in-process and the built-in server under load (more
+than 10% slower fails). New behavior needs a test;
 `korvex.testing.TestClient` drives the app, and `tests/support.py` has
 helpers for the tests that need raw ASGI messages.
 

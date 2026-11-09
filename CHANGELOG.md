@@ -10,6 +10,11 @@
   your own rate-limit store or security scheme, `Headers` methods,
   `ValidationError`, the test client's `base_url` and WebSocket
   subprotocols, and `app.run()`'s Python names.
+- CI checks the built-in server's speed on every pull request
+  (`benches/server_check.py`): the base's and the change's servers under
+  the same load, one worker pinned to one core, alternating, failing
+  past 10% slower. The existing check only timed the App in-process,
+  which is how 0.7 to 0.14 lost up to 8% unnoticed.
 
 ## 0.14.1
 
