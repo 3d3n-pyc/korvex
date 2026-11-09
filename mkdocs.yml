@@ -50,6 +50,35 @@ plugins:
             show_signature_annotations: true
             signature_crossrefs: true
             docstring_style: null
+  - llmstxt:
+      markdown_description: >
+        Korvex is a fast Python web framework (ASGI), with a router and an
+        HTTP server written in Rust. Handlers are plain functions whose
+        parameters say what they read; validation uses msgspec or pydantic.
+        Python 3.9 to 3.14, free-threaded 3.14t included. Pre-1.0: check the
+        changelog for API changes.
+      full_output: llms-full.txt
+      sections:
+        Start:
+          - index.md: What Korvex is, and a first app
+        Guide:
+          - routes.md: Paths, parameters, groups, hosts, url_for, static files
+          - requests-and-responses.md: What a handler gets and returns
+          - validation.md: Typed parameters, models, headers, cookies, forms, 422 errors
+          - dependencies.md: Depends, yield dependencies, overrides
+          - errors-and-hooks.md: HTTPException, Abort, exception handlers, before/after hooks, startup/shutdown, app.local
+          - websockets.md: WebSocket routes
+          - openapi.md: OpenAPI, Swagger UI, Bearer, API keys, OAuth2, custom schemes
+          - middleware.md: CORS, request IDs, rate limiting, compression, security headers
+          - testing.md: TestClient and AsyncTestClient
+          - server.md: The built-in server, workers and threads
+          - deployment.md: nginx, Caddy, Docker, AWS Lambda, Vercel
+        Reference:
+          - reference/*.md
+        Optional:
+          - performance.md: Benchmarks
+          - router.md: The standalone Rust router
+          - ai.md: llms.txt, the agent skill, AGENTS.md
 
 nav:
   - Home: index.md
@@ -78,4 +107,5 @@ nav:
   - More:
       - Performance: performance.md
       - The standalone router: router.md
+      - For AI assistants: ai.md
       - Changelog: https://github.com/3d3n-pyc/korvex/blob/main/CHANGELOG.md

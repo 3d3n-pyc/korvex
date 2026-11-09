@@ -111,6 +111,19 @@ def test_query_headers_and_cookies():
         assert client.get("/echo").json()["cookies"] == {"theme": "dark"}  # per-request cookies don't stay
 
 
+def test_request_headers_replace_the_clients():
+    app = App()
+
+    @app.get("/key")
+    def key(request):
+        return Response.json(request.headers.get_all("x-key"))
+
+    with TestClient(app, headers={"X-Key": "client", "X-Other": "kept"}) as client:
+        assert client.get("/key").json() == ["client"]
+        assert client.get("/key", headers={"x-key": "mine"}).json() == ["mine"]
+        assert client.get("/key", headers=[("X-Key", "a"), ("X-Key", "b")]).json() == ["a", "b"]
+
+
 def test_full_url_sets_scheme_and_host():
     with TestClient(make_app()) as client:
         data = client.get("https://api.example.com:8443/echo").json()

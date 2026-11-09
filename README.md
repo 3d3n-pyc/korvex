@@ -69,7 +69,9 @@ def test_get_task():
 ## The guide
 
 Also on the [documentation site](https://3d3n-pyc.github.io/korvex/), with
-the full API reference.
+the full API reference. Using an AI assistant? Give it
+[`llms-full.txt`](https://3d3n-pyc.github.io/korvex/llms-full.txt), or
+[the agent skill](docs/ai.md).
 
 - [Routes](docs/routes.md): path parameters, groups, hosts, links, static files.
 - [Requests and responses](docs/requests-and-responses.md): what a handler gets and returns.

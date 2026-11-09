@@ -29,7 +29,7 @@ jobs:
       - name: Build
         env:
           NO_MKDOCS_2_WARNING: "1"
-        run: uv run --only-group docs mkdocs build --strict -d site
+        run: uv run --python 3.13 --only-group docs mkdocs build --strict -d site
 
       - name: Upload
         if: github.event_name == 'push'

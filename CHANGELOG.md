@@ -15,6 +15,17 @@
   the same load, one worker pinned to one core, alternating, failing
   past 10% slower. The existing check only timed the App in-process,
   which is how 0.7 to 0.14 lost up to 8% unnoticed.
+- **For AI assistants**: the site publishes
+  [`llms.txt`](https://3d3n-pyc.github.io/korvex/llms.txt) and
+  [`llms-full.txt`](https://3d3n-pyc.github.io/korvex/llms-full.txt),
+  rebuilt with the docs; an agent skill
+  (`.agents/skills/korvex/SKILL.md`, `npx skills add 3d3n-pyc/korvex`)
+  teaches coding agents to write Korvex apps, its examples run in the
+  tests; and `AGENTS.md` gives agents working on Korvex its checks and
+  rules.
+- `TestClient` and `AsyncTestClient`: a request's `headers=` replace the
+  client's headers of the same name, rather than being sent next to them
+  (where the app read the client's).
 
 ## 0.14.1
 
