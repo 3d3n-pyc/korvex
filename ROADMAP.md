@@ -4,8 +4,9 @@ Where Korvex is going. Versions are a rough order, not promises.
 
 ## Where it stands (0.14)
 
-- **Fast.** On one CPU core, Korvex is among the fastest of the frameworks
-  tested (31.9k requests/s, Falcon 31.5k, Starlette's best case 31.1k).
+- **Fast.** On one CPU core, Korvex serves the most requests of the
+  frameworks tested (34.4k requests/s, Falcon 30.5k, Starlette's best
+  case 30.3k).
   Its built-in server serves more than uvicorn, Granian, Robyn and
   FastrAPI on the same cores, with the least memory (see
   [Performance](docs/performance.md)).

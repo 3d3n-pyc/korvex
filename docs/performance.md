@@ -8,23 +8,23 @@ relying on any of them.
 
 The same app, served by each server on the same 4 CPU cores, each with its
 best number of workers. Measured with Korvex's main branch after 0.14.0
-(with the change below) and FastrAPI 0.2.11:
+(with the changes below) and FastrAPI 0.2.11:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="servers-dark.svg">
-  <img alt="Requests per second on the same 4 CPU cores, with 200 and 1,000 clients: Korvex built-in server 127.0k and 131.9k, Granian + Korvex app 121.3k and 123.1k, uvicorn + Korvex app 109.1k and 104.3k, Robyn 96.6k and 91.7k, FastrAPI 60.8k and 69.3k." src="servers-light.svg">
+  <img alt="Requests per second on the same 4 CPU cores, with 200 and 1,000 clients: Korvex built-in server 142.7k and 145.4k, Granian + Korvex app 123.9k and 134.1k, uvicorn + Korvex app 117.5k and 110.4k, Robyn 95.7k and 91.7k, FastrAPI 61.4k and 67.1k." src="servers-light.svg">
 </picture>
 
 | Server | Requests/s, 200 clients | 1,000 clients | RAM |
 |---|---|---|---|
-| **Korvex built-in** (3 workers) | **127.0k** | **131.9k** | **124 MB** |
-| Granian + Korvex app (3 workers) | 121.3k | 123.1k | 198 MB |
-| uvicorn + Korvex app (4 workers) | 109.1k | 104.3k | 205 MB |
-| Robyn (4 processes, 2 threads each) | 96.6k | 91.7k | 231 MB |
-| FastrAPI (1 process) | 60.8k | 69.3k | 115 MB |
+| **Korvex built-in** (3 workers) | **142.7k** | **145.4k** | **125 MB** |
+| Granian + Korvex app (3 workers) | 123.9k | 134.1k | 198 MB |
+| uvicorn + Korvex app (4 workers) | 117.5k | 110.4k | 207 MB |
+| Robyn (4 processes, 2 threads each) | 95.7k | 91.7k | 228 MB |
+| FastrAPI (1 process) | 61.4k | 67.1k | 113 MB |
 
 - Granian is a Rust ASGI server too, and comes second: the built-in
-  server serves 5 to 7% more, because it skips the ASGI layer, with 40%
+  server serves 8 to 15% more, because it skips the ASGI layer, with 40%
   less memory.
 - Robyn and FastrAPI run their own version of the app with their own
   Rust server. FastrAPI runs one process (it has no workers option, and a
@@ -40,8 +40,15 @@ best number of workers. Measured with Korvex's main branch after 0.14.0
   is full: perf showed the same instructions (+1.6%) taking 8% more
   cycles, with 7% more instruction cache misses and 10% more branch
   misses. A route now works out once how to call a handler with nothing
-  to read, and the built-in server serves 11% more than 0.14.0, 2% more
-  than 0.6.
+  to read (+11%).
+- After that, a profile under load showed the rest of the Python code
+  between the server and the handler: the request's headers checked one
+  by one (since 0.14, for `headers=` dicts) though the server builds
+  them, a lookup before each Content-Type, and an ASGI scope built then
+  read back for each request. Without them, one worker on one core
+  serves 39.7k requests/s, 47% more than 0.14.0 (26.9k), measured side
+  by side. On 4 cores, the server's Rust threads and the kernel take a
+  bigger share, and the gain is smaller.
 
 Reproduce with `uv run --group bench python benches/servers.py` (needs `cargo install oha`,
 takes about 5 minutes).
@@ -55,24 +62,24 @@ with Korvex's main branch after 0.14.0:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="load-dark.svg">
-  <img alt="Requests per second on one CPU core with 200 clients: Korvex 31.9k, Falcon 31.5k, Starlette 2.9k to 31.1k, Litestar 18.2k, Sanic 15.8k, FastAPI 1.5k to 12.9k, BlackSheep 7.0k, Django 1.1k to 2.4k." src="load-light.svg">
+  <img alt="Requests per second on one CPU core with 200 clients: Korvex 34.4k, Falcon 30.5k, Starlette 3.0k to 30.3k, Litestar 17.7k, Sanic 14.1k, FastAPI 1.6k to 12.6k, BlackSheep 7.0k, Django 1.1k to 2.2k." src="load-light.svg">
 </picture>
 
 | Framework | Requests/s, 200 clients | p99 latency, 1,000 clients | RAM at rest, peak |
 |---|---|---|---|
-| **Korvex** | **31.9k** | **28 ms** | **39 MB, 50 MB** |
-| Falcon | 31.5k | 31 ms | 60 MB, 63 MB |
-| Starlette | 2.9k to 31.1k | 29 to 169 ms | 39 MB, 49 MB |
-| Litestar | 18.2k | 39 ms | 79 MB, 89 MB |
-| Sanic | 15.8k | 111 ms | 60 MB, 106 MB |
-| FastAPI | 1.5k to 12.9k | 57 to 388 ms | 66 MB, 77 MB |
-| BlackSheep | 7.0k | 72 ms | 51 MB, 59 MB |
-| Django | 1.1k to 2.4k | 1.2 s to 1.6 s | 49 MB, 136 MB |
+| **Korvex** | **34.4k** | **24 ms** | **39 MB, 50 MB** |
+| Falcon | 30.5k | 31 ms | 60 MB, 63 MB |
+| Starlette | 3.0k to 30.3k | 27 to 129 ms | 39 MB, 49 MB |
+| Litestar | 17.7k | 89 ms | 79 MB, 90 MB |
+| Sanic | 14.1k | 99 ms | 61 MB, 105 MB |
+| FastAPI | 1.6k to 12.6k | 58 to 214 ms | 66 MB, 77 MB |
+| BlackSheep | 7.0k | 68 ms | 51 MB, 59 MB |
+| Django | 1.1k to 2.2k | 1.2 s to 1.7 s | 49 MB, 141 MB |
 
 - Every framework uses a full CPU core under load, so requests per second
   is also how much work each one gets out of that core.
-- Falcon comes within 1% of Korvex, and Starlette in its best case
-  within 3%.
+- Falcon, and Starlette in its best case, serve 11 to 12% less than
+  Korvex.
 - Starlette, FastAPI and Django try routes one by one: the ranges go from
   the tested route declared after the 1,000 others to declared first.
   BlackSheep tries them one by one too, but sorts them itself, deepest
@@ -124,18 +131,19 @@ to redraw both charts.
 ## Validation
 
 One POST with a small JSON body, answered with JSON, run through the app
-in-process (no server). Median time per request, with Korvex 0.14:
+in-process (no server). Median time per request, with Korvex's main branch after 0.14.0:
 
 | Handler | Time |
 |---|---|
-| **Korvex, msgspec models in and out** | **18.1 µs** |
-| Korvex, pydantic models in and out | 21.1 µs |
-| Korvex, no annotations (`request.json()`, `Response.json()`) | 23.8 µs |
-| FastAPI, the same pydantic models | 72.6 µs |
+| **Korvex, msgspec models in and out** | **16.6 µs** |
+| Korvex, no annotations (`request.json()`, `Response.json()`) | 19.8 µs |
+| Korvex, pydantic models in and out | 20.4 µs |
+| FastAPI, the same pydantic models | 73.5 µs |
 
-- Validating is faster than not validating here: msgspec and pydantic
-  decode and encode JSON in compiled code, `request.json()` and
-  `Response.json()` use Python's `json` module.
+- With msgspec, validating is faster than not validating: it decodes and
+  encodes JSON in compiled code, while `request.json()` and
+  `Response.json()` use Python's `json` module. pydantic costs about as
+  much as not validating.
 
 Reproduce with `uv run --group bench pytest benches/bench_validation.py --benchmark-only`.
 
@@ -143,14 +151,14 @@ Reproduce with `uv run --group bench pytest benches/bench_validation.py --benchm
 
 One GET whose handler gets the user from a header and opens then closes a
 session, run through the app in-process. Median time per request, with
-Korvex 0.14:
+Korvex's main branch after 0.14.0:
 
 | Handler | Time |
 |---|---|
-| Korvex, the handler does it itself | 19.1 µs |
-| **Korvex, two dependencies (one with `yield`) and `Header()`** | **25.9 µs** |
-| FastAPI, the same dependencies, async | 90.8 µs |
-| FastAPI, the same dependencies, sync | 393 µs |
+| Korvex, the handler does it itself | 16.2 µs |
+| **Korvex, two dependencies (one with `yield`) and `Header()`** | **23.7 µs** |
+| FastAPI, the same dependencies, async | 93.8 µs |
+| FastAPI, the same dependencies, sync | 405 µs |
 
 - FastAPI runs sync dependencies in a thread pool, which keeps a blocking
   one from stopping the event loop but costs a lot. Korvex calls them on
