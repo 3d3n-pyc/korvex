@@ -1,18 +1,18 @@
 """Request validation from a handler's type annotations.
 
-A handler's annotations say where its parameters come from, read once when
-the route is registered:
+A handler's annotations say where its parameters come from, read once at
+route registration:
 
 - a msgspec `Struct` or pydantic model (or a list of them): the JSON body;
 - the name of a path parameter: the path, converted to the annotated type;
 - `str`, `int`, `float`, `bool`, `UUID`, `date`, `datetime`, or an
   `Optional` or `list` of those: the query string (dates in ISO 8601);
 - `Header()`, `Cookie()`, `Query()` or `Form()` (korvex._params): there;
-- `Depends(func)`: what `func` returns, its own parameters read the same way.
+- `Depends(func)`: what `func` returns; its own parameters are read the same way.
 
 A model return annotation turns the returned object into a JSON response.
 Invalid input gets a 422 listing every problem. msgspec and pydantic are
-optional: Korvex depends on neither, and uses whichever a model comes from.
+optional: Korvex uses whichever a model comes from.
 """
 
 from __future__ import annotations
@@ -47,22 +47,21 @@ def _error(loc: list, msg: str, kind: str) -> dict:
 
 
 def _library(tp: Any) -> str | None:
-    """ "msgspec" or "pydantic" if `tp` is a model of that library, or a
-    list of such models; None otherwise."""
+    """ "msgspec" or "pydantic" if `tp` is a model (or list of models) of that library, else None."""
     if typing.get_origin(tp) is list and len(typing.get_args(tp)) == 1:
         tp = typing.get_args(tp)[0]
     if not inspect.isclass(tp):
         return None
     for module, base in (("msgspec", "Struct"), ("pydantic", "BaseModel")):
-        library = sys.modules.get(module)  # a model of it means the app imported it
+        library = sys.modules.get(module)  # a model of it means it's imported
         if library is not None and issubclass(tp, getattr(library, base)):
             return module
     return None
 
 
 class Model:
-    """Decodes, encodes and describes one model type (or list of models)
-    with the library it comes from."""
+    """Decodes, encodes and describes a model type (or list of models)
+    with its library."""
 
     def __init__(self, tp: Any) -> None:
         self.type = tp
@@ -89,10 +88,10 @@ class Model:
 
     def from_form(self, form: MultiDict) -> Any:
         """The model, from a form's fields: each model field from the form
-        field of the same name (its alias or rename); all the values for a
-        list, else the first one. An empty value counts as missing, except
-        for text, and a checkbox's `on` is true. Raises ValidationError,
-        with `["form", ...]` locations."""
+        field of the same name (its alias or rename); all values for a list,
+        else the first. An empty value is missing, except for text; a
+        checkbox's `on` is true. Raises ValidationError with `["form", ...]`
+        locations."""
         data: dict[str, Any] = {}
         for key, tp in self._fields():
             inner, many, _ = _unwrap(tp)
@@ -133,8 +132,8 @@ class Model:
         return self._adapter.dump_json(value)
 
     def schema(self, components: dict) -> dict:
-        """The JSON schema of this type, its models added to `components`
-        (OpenAPI's `components/schemas`) and referenced from it."""
+        """The JSON schema of this type; its models go to `components`
+        (OpenAPI's `components/schemas`) and are referenced."""
         if self.library == "msgspec":
             import msgspec
 
@@ -143,15 +142,15 @@ class Model:
             return schema
         schema = self._adapter.json_schema(ref_template="#/components/schemas/{model}")
         components.update(schema.pop("$defs", {}))
-        if "properties" in schema and "title" in schema:  # a model itself: reference it like nested ones
+        if "properties" in schema and "title" in schema:  # a model: reference it like nested ones
             components[schema["title"]] = schema
             return {"$ref": f"#/components/schemas/{schema['title']}"}
         return schema
 
 
 def _msgspec_error(error: Exception, root: str = "body") -> dict:
-    """msgspec reports one error as text ("Expected `int`, got `str` - at
-    `$.age`"): turn it into the common format."""
+    """Turns msgspec's text error ("Expected `int`, got `str` - at `$.age`")
+    into the common format."""
     message = str(error)
     if type(error).__name__ == "DecodeError":
         return _error([root], message, "json_invalid")
@@ -173,7 +172,7 @@ def _msgspec_error(error: Exception, root: str = "body") -> dict:
 
 def _lenient_bool(value: Any) -> Any:
     """`on`, `yes`, `1`... as True, their opposites as False, anything else
-    as it was (for the model's validation to refuse)."""
+    unchanged (the model refuses it)."""
     if isinstance(value, str):
         lowered = value.lower()
         if lowered in _TRUE:
@@ -210,7 +209,7 @@ def _convert(value: str, tp: Any) -> Any:
             return False
         raise ValueError(f"not a boolean: {value!r}")
     if tp is datetime.datetime:  # before date: a datetime is a date too
-        return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))  # "Z": Python 3.11+ only otherwise
+        return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))  # "Z" needs Python 3.11+
     if tp is datetime.date:
         return datetime.date.fromisoformat(value)
     return tp(value)
@@ -250,7 +249,7 @@ class Param(NamedTuple):
     type: Any
     required: bool
     default: Any = None
-    key: str = ""  # its name in the request: path or query parameter, header, cookie, form field
+    key: str = ""  # its name in the request (path or query parameter, header, cookie, form field)
     inner: Any = None  # the type of each value: `int` for `Optional[int]` or `list[int]`
     many: bool = False  # a list
 
@@ -268,8 +267,8 @@ class Dep(NamedTuple):
 
 
 def path_params(pattern: str) -> dict[str, Any]:
-    """The parameters of a route pattern and the type Rust already gives
-    them: `/users/{id:int}/*path` -> `{"id": int, "path": str}`."""
+    """A route pattern's parameters and the type Rust already gives them:
+    `/users/{id:int}/*path` -> `{"id": int, "path": str}`."""
     return {
         (name or rest): _CONSTRAINT_TYPES.get(constraint or "", str)
         for name, constraint, rest in _PATH_PARAM.findall(pattern)
@@ -277,8 +276,7 @@ def path_params(pattern: str) -> dict[str, Any]:
 
 
 class Plan:
-    """What a handler's (or a dependency's) annotations ask for, worked out
-    once at registration."""
+    """What a handler's (or dependency's) annotations ask for, worked out at registration."""
 
     def __init__(
         self,
@@ -303,17 +301,16 @@ class Plan:
         self.form = [p for p in params if p.source == "form"]
         self.form_models = [(p, Model(p.type)) for p in params if p.source == "form_model"]
         self.request = [p.name for p in params if p.source == "request"]
-        self.request_name = self.request[0] if len(self.request) == 1 else None  # the usual case, called directly
+        self.request_name = self.request[0] if len(self.request) == 1 else None  # the usual case
         self.binds = any(p.source != "request" for p in params)  # something to read from the request
         self.body = next((p for p in params if p.source == "body"), None)
         self.body_model = Model(self.body.type) if self.body else None
         self.response = response
         self.empty = False  # annotated `-> None`: an empty response
-        self.status = 200  # the route's, for a response made from what the handler returns
+        self.status = 200  # the route's, for a response built from the return value
         self.summary = summary
         self.description = description
-        # How a dependency gives its value: returned (awaited for a coroutine
-        # function), or yielded by a generator.
+        # A dependency's value is returned (awaited for a coroutine) or yielded.
         self.generator: str | None = None
         if _is_kind(func, inspect.isasyncgenfunction):
             self.generator = "async"
@@ -323,7 +320,7 @@ class Plan:
 
     @property
     def validates(self) -> bool:
-        """Whether a request can fail validation (and get a 422)."""
+        """Whether a request can fail validation (get a 422)."""
         given = path_params(self.pattern)  # what Rust already checked
 
         def can_fail(p: Param) -> bool:
@@ -334,8 +331,8 @@ class Plan:
         return any(map(can_fail, self.params)) or any(dep.plan.validates for dep in self.dependencies)
 
     def everything(self) -> list[Param]:
-        """The parameters of this plan and of its dependencies, each request
-        field once: what the request as a whole has to provide."""
+        """The parameters of this plan and its dependencies, each request
+        field once: what the request has to provide."""
         found: dict[tuple[str, str], Param] = {}
 
         def walk(plan: Plan) -> None:
@@ -348,19 +345,18 @@ class Plan:
         return list(found.values())
 
     async def bind(self, request: Any, path_values: Mapping[str, Any], run: Run | None) -> dict[str, Any]:
-        """The function's keyword arguments for `request`, its dependencies
-        resolved through `run`; raises ValidationError listing every
-        problem."""
+        """The function's keyword arguments for `request`, dependencies
+        resolved through `run`. Raises ValidationError listing every problem."""
         kwargs: dict[str, Any] = {}
         errors: list[dict] = []
-        # Each source checked before looping: most plans use one or two, and
-        # this runs on every request.
+        # Each source is checked before looping: this runs on every request
+        # and most plans use one or two.
         if self.dependencies:
-            assert run is not None  # a plan with dependencies always gets one
+            assert run is not None  # always given with dependencies
             for dep in self.dependencies:
                 try:
                     value = await run.resolve(dep, request, path_values)
-                except ValidationError as error:  # its own parameters didn't validate
+                except ValidationError as error:  # its parameters didn't validate
                     errors.extend(error.errors)
                     continue
                 if dep.name is not None:
@@ -414,8 +410,8 @@ class Plan:
         return kwargs
 
     def respond(self, result: Any) -> Any:
-        """A Response as is; anything else encoded with the return model,
-        or `None` as an empty response, with the route's status."""
+        """A Response as is; else the result encoded with the return model, or
+        `None` as an empty response, with the route's status."""
         if isinstance(result, Response):
             return result
         if self.response is not None:
@@ -424,20 +420,20 @@ class Plan:
             )
         if result is None and self.empty:
             return Response(status=self.status)
-        return result  # not a Response: the App answers a 500 that says so
+        return result  # not a Response: the App answers a 500
 
 
 class Run:
-    """One request's dependencies: their values, called once each unless
-    `cache=False`, and the teardown of those that yield."""
+    """One request's dependencies: their values (called once each unless
+    `cache=False`) and the teardown of those that yield."""
 
     __slots__ = ("overrides", "plans", "values", "teardowns")
 
     def __init__(self, overrides: Mapping[Callable, Callable], plans: Callable[[Callable, str, bool], Plan]) -> None:
         self.overrides = overrides
-        self.plans = plans  # the plan of an override, worked out on first use
+        self.plans = plans  # an override's plan, worked out on first use
         self.values: dict[Callable, Any] = {}
-        self.teardowns: list[tuple[Any, bool]] = []  # (generator, is async), in the order they started
+        self.teardowns: list[tuple[Any, bool]] = []  # (generator, is async), in start order
 
     async def resolve(self, dep: Dep, request: Any, path_values: Mapping[str, Any]) -> Any:
         func = self.overrides.get(dep.func, dep.func) if self.overrides else dep.func
@@ -466,9 +462,9 @@ class Run:
 
     async def close(self, error: BaseException | None = None) -> None:
         """Tears down the dependencies that yielded, last first. `error`, if
-        given, is raised at their `yield`, and isn't swallowed even if they
-        catch it: the caller raises it on. An error raised by a teardown
-        itself is raised from here, after the other teardowns ran."""
+        given, is raised at their `yield` and isn't swallowed even if they
+        catch it: the caller raises it on. A teardown's own error is raised
+        from here, after the other teardowns ran."""
         teardowns, self.teardowns = self.teardowns, []
         raised = error
         for generator, is_async in reversed(teardowns):
@@ -478,7 +474,7 @@ class Run:
                 else:
                     await generator.athrow(raised) if is_async else generator.throw(raised)
             except (StopIteration, StopAsyncIteration):
-                continue  # done
+                continue
             except BaseException as new:
                 if new is not raised:
                     if new.__context__ is None and raised is not None:
@@ -510,7 +506,7 @@ def _take(param: Param, values: list | None, kwargs: dict, errors: list) -> None
 
 
 def _convert_field(value: Any, tp: Any) -> Any:
-    """Like `_convert`, for a value that may be a form's file."""
+    """`_convert`, for a value that may be a form's file."""
     if tp is UploadedFile:
         if isinstance(value, str):
             raise ValueError("expected a file")
@@ -527,14 +523,14 @@ def _invalid(param: Param) -> dict:
 
 async def _read_form(request: Any) -> MultiDict:
     """The request's form; an empty body without a content type is an empty
-    form, so optional fields can all be left out."""
+    form, so optional fields can be left out."""
     if not request.headers.get("content-type") and not (await request.body()).strip():
         return MultiDict()
     return await request.form()
 
 
 def _unique(errors: list[dict]) -> list[dict]:
-    """Errors without repeats: two dependencies can read the same field."""
+    """Errors without repeats (two dependencies can read the same field)."""
     seen: set = set()
     unique = []
     for error in errors:
@@ -546,13 +542,12 @@ def _unique(errors: list[dict]) -> list[dict]:
 
 
 def _is_kind(func: Callable, test: Callable[[Any], bool]) -> bool:
-    # The method itself, to test what kind it is, not whether there is one.
+    # Tests the method itself, not whether there is one.
     return test(func) or (not inspect.isfunction(func) and test(getattr(func, "__call__", None)))  # noqa: B004
 
 
 def _split(hint: Any) -> tuple[Any, Source | Dependency | None]:
-    """`Annotated[X, Header()]` -> `(X, Header())`. Other metadata is left
-    out, as before."""
+    """`Annotated[X, Header()]` -> `(X, Header())`. Other metadata is ignored."""
     if typing.get_origin(hint) is not typing.Annotated:
         return hint, None
     tp, *metadata = typing.get_args(hint)
@@ -567,7 +562,7 @@ def _hints(func: Callable) -> dict[str, Any]:
     return typing.get_type_hints(target, include_extras=True)
 
 
-# Unannotated, a parameter by one of these names is the request (or the WebSocket).
+# Unannotated, a parameter with one of these names is the request (or WebSocket).
 _REQUEST_NAMES = ("request",)
 _WEBSOCKET_NAMES = ("request", "websocket", "ws")
 
@@ -585,14 +580,14 @@ def plan_for(
     """Reads `func`'s annotations for the route `pattern`: where each
     parameter comes from. The request (or WebSocket) is a parameter like
     the others, annotated or named so. `dependencies` are the route's own.
-    Raises TypeError for a parameter whose origin can't be told."""
+    Raises TypeError for a parameter of unknown origin."""
     where = getattr(func, "__qualname__", repr(func))
     if func in _chain:
         cycle = " -> ".join(getattr(f, "__qualname__", repr(f)) for f in (*_chain, func))
         raise TypeError(f"dependency cycle: {cycle}")
     try:
         hints = _hints(func)
-    except Exception as error:  # an annotation naming something that isn't importable here
+    except Exception as error:  # an annotation names something not importable here
         raise TypeError(f"can't read the annotations of {where}: {error}") from None
     chain = (*_chain, func)
 
@@ -600,7 +595,7 @@ def plan_for(
         key = (marker.func, pattern, websocket)
         try:
             found = cache.get(key) if cache is not None else None
-        except TypeError:  # an unhashable callable: not cached
+        except TypeError:  # unhashable callable: not cached
             found = None
         if found is None:
             found = plan_for(marker.func, pattern, websocket=websocket, handler=False, cache=cache, _chain=chain)
@@ -641,7 +636,7 @@ def plan_for(
         inner, is_list, optional = _unwrap(tp) if tp is not None else (None, False, False)
         required = not (has_default or optional)
         if isinstance(marker, Source) and marker.kind == "form" and tp is not None and not is_list and _library(inner):
-            # A model filled from the form's fields: `body: Signup = Form()`.
+            # A model filled from form fields: `body: Signup = Form()`.
             if websocket:
                 raise TypeError(f"{where}: parameter {name!r}: a WebSocket has no form")
             params.append(_param(name, "form_model", inner, required, default, key=name))
@@ -672,7 +667,7 @@ def plan_for(
             if tp is not None and inner not in SCALARS:
                 raise TypeError(f"{where}: path parameter {name!r} can't be {tp!r}; use one of {_names(SCALARS)}")
             given = route_params[name]
-            # A handler gets the path values anyway; it only needs the ones to convert.
+            # A handler gets the path values anyway: only those to convert are planned.
             if not handler or (tp is not None and inner is not given and inner is not str):
                 params.append(_param(name, "path", tp if tp is not None else given, True, key=name))
         elif tp is not None and (_library(tp) is not None or (optional and _library(inner))):
@@ -683,8 +678,7 @@ def plan_for(
         elif tp is not None and inner in SCALARS:
             params.append(_param(name, "query", tp, required, default, key=name))
         elif tp is not None or not has_default:
-            # An annotated parameter is refused even with a default: silently
-            # ignored, it would always get that default.
+            # Refused even with a default: ignored, it would always get that default.
             raise TypeError(
                 f"{where}: can't tell where parameter {name!r} comes from: it isn't in the path {pattern!r}, "
                 f"its annotation isn't a model or a {_names(SCALARS)}, and it isn't given with Depends(), "
@@ -706,8 +700,8 @@ def plan_for(
 
 
 def _check_body(plan: Plan, where: str) -> None:
-    """One body per request: the handler and its dependencies can't ask for
-    two different models, or for a model and a form."""
+    """One body per request: no two different models, nor a model and a form,
+    across the handler and its dependencies."""
     bodies: set = set()
     form = False
 
@@ -731,7 +725,7 @@ def _names(types_: Sequence[Any]) -> str:
 
 
 def needs_plan(plan: Plan) -> bool:
-    """Whether calling the handler needs the plan at all: a handler with
-    nothing to read from the request (it may take the request itself), no
-    dependencies and no return model gets the path parameters as they are."""
+    """Whether calling the handler needs the plan: without anything to read
+    from the request (it may take the request itself), dependencies or a
+    return model, it gets the path parameters as they are."""
     return bool(plan.binds or plan.response or plan.dependencies or plan.empty)

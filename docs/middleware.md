@@ -1,7 +1,7 @@
 # Ready-made middleware
 
-`korvex.middleware` has hooks for common jobs. Each is a function that
-registers them on the app:
+`korvex.middleware` has ready-made hooks. Each is a function that
+registers one on the app:
 
 ```python
 from korvex.middleware import compress, cors, rate_limit, request_id, security_headers
@@ -13,8 +13,7 @@ rate_limit(app, requests=100, per=60)
 security_headers(app)
 ```
 
-Behind a reverse proxy, let the proxy compress and add headers: it does
-both well, and the app does less.
+Behind a reverse proxy, let the proxy compress and add headers.
 
 ## CORS: `cors(app, allow_origins=...)`
 
@@ -64,13 +63,19 @@ with `Retry-After`.
 
 | Option | Default | What it does |
 |---|---|---|
-| `requests`, `per` | (required) | The allowance: 100 per 60 seconds, say. |
+| `requests`, `per` | (required) | The allowance, like 100 per 60 seconds. |
 | `key` | the client's address | Who the limit applies to: a function of the request, returning an API key, a user ID... or `None` to exempt the request (a health check). |
 | `store` | a `MemoryStore` | Where the counts live: see below. |
 | `headers` | `True` | Send `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`, so clients can slow down. |
 
 It counts WebSocket handshakes too. Requests can come in bursts of up to
 `requests`, then one every `per / requests` seconds.
+
+- Hooks declared before it run first: call `cors()` before it, so
+  browsers' preflight requests are answered without being counted.
+- Behind a proxy, trust it with `--forwarded-allow-ips`, or every client
+  counts as the proxy. Requests with no client address at all share one
+  limit.
 
 ### Where the counts live
 
@@ -117,7 +122,6 @@ Compresses text-like responses for clients that accept it.
   live stream isn't held back.
 - A response that already has a `Content-Encoding`, says
   `Cache-Control: no-transform`, or has no body is left alone.
-- Call it before the other hooks, so it compresses what they produced.
 - Don't compress a page that holds a secret (a CSRF token) next to
   something the client sent: an attacker could guess the secret (the
   BREACH attack).
@@ -129,7 +133,7 @@ that sets one itself keeps its own.
 
 | Option | Default | What it does |
 |---|---|---|
-| `hsts` | one year | `Strict-Transport-Security`: browsers stick to HTTPS. Sent over HTTPS only. `None` to leave it out. |
+| `hsts` | one year | `Strict-Transport-Security`: browsers stick to HTTPS. Sent over HTTPS only. |
 | `hsts_subdomains`, `hsts_preload` | `False` | Add those directives; only once every subdomain serves HTTPS. |
 | `content_security_policy` | none | A CSP, like `"default-src 'self'"`. Off by default: the right one depends on your pages, and `/docs` loads Swagger UI from a CDN. |
 | `frame_options` | `"DENY"` | `X-Frame-Options`: other sites can't show your pages in a frame. `"SAMEORIGIN"` allows your own. |

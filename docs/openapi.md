@@ -61,14 +61,15 @@ async def current_user(token: str = Depends(bearer)) -> User:
 
 - `Bearer(format="JWT")`, `APIKey(header="X-API-Key")` (or `query=`,
   `cookie=`) and `OAuth2Password(token_url="/token", scopes={...})`
-  (with `refresh_url=` if tokens can be refreshed).
+  (with `refresh_url=` if tokens can be refreshed). Prefer a header for
+  an API key: one in the query string ends up in access logs.
 - Each takes `name=` (its name in OpenAPI) and `description=` (shown in
   Swagger UI).
-- A scheme only reads the credential; checking it is the job of the
-  dependency that takes it, like `current_user` above.
+- A scheme only reads the credential; the dependency that takes it
+  checks it, like `current_user` above.
 - `required=False` gives `None` instead of a 401.
-- Every route that depends on a scheme, directly, through another
-  dependency or through its group, lists it.
+- A route lists every scheme it depends on, directly, through another
+  dependency or through its group.
 
 ### Your own scheme
 

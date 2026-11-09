@@ -1,16 +1,15 @@
 //! Who the client really is, behind a reverse proxy.
 //!
-//! A proxy connects to the server itself, so the connection's address is
-//! the proxy's; it passes what the client used in headers: `X-Forwarded-For`,
-//! `-Proto` and `-Host`, or the standard `Forwarded` (RFC 7239). Those
-//! headers are only believed when the connection comes from a trusted
-//! proxy: anyone else could write them to pretend to be someone else.
+//! The connection's address is the proxy's; the proxy passes the client's in
+//! headers: `X-Forwarded-For`, `-Proto` and `-Host`, or the standard
+//! `Forwarded` (RFC 7239). They are only believed from a trusted proxy:
+//! anyone else could forge them.
 //!
-//! A proxy only rewrites the headers it sets, and passes the others on as
-//! the client sent them. nginx, Caddy and Traefik set `X-Forwarded-For` and
-//! leave `Forwarded` alone; nginx leaves `X-Forwarded-Host` alone too. So:
+//! A proxy only rewrites the headers it sets. nginx, Caddy and Traefik set
+//! `X-Forwarded-For` and leave `Forwarded` alone; nginx leaves
+//! `X-Forwarded-Host` alone too. So:
 //! - `Forwarded` is only read when there's no `X-Forwarded-For` or
-//!   `-Proto`: otherwise, it may well be the client's own;
+//!   `-Proto`: otherwise it may be the client's own;
 //! - the forwarded host is only believed when the app says its proxy sets
 //!   it (`forwarded_host`), as Django and Werkzeug do.
 
@@ -110,10 +109,9 @@ pub fn resolve(peer: Option<SocketAddr>, headers: &HeaderMap, trusted: &Trusted)
 }
 
 /// `X-Forwarded-For: client, proxy1, proxy2`, each proxy appending the
-/// address it saw. Walking from the right, skip the trusted proxies: the
-/// first other entry is the client; anything left of it may have been
-/// written by the client itself. For `-Proto` and `-Host`, the rightmost
-/// value is believed: the one the nearest proxy set or appended.
+/// address it saw. Walking from the right, skip trusted proxies: the first
+/// other entry is the client; anything left of it may be forged. For
+/// `-Proto` and `-Host`, the rightmost value (the nearest proxy's) is believed.
 fn resolve_x_forwarded(headers: &HeaderMap, trusted: &Trusted, resolved: &mut Resolved) {
     let entries = values(headers, &X_FORWARDED_FOR);
     let untrusted = entries
@@ -132,9 +130,8 @@ fn resolve_x_forwarded(headers: &HeaderMap, trusted: &Trusted, resolved: &mut Re
 }
 
 /// `Forwarded: for=client;proto=https;host=example.com, for=proxy1`: one
-/// element per proxy, each describing the request that proxy received.
-/// The client's element is found the same way, from the right; its `proto`
-/// and `host` are what the client used.
+/// element per proxy. The client's element is found the same way, from the
+/// right; its `proto` and `host` are what the client used.
 fn resolve_forwarded(elements: &[Element], trusted: &Trusted, resolved: &mut Resolved) {
     let client = elements
         .iter()
@@ -219,10 +216,8 @@ struct Element {
 /// quoted (`for="[2001:db8::1]:80"`); unknown parameters are skipped.
 ///
 /// A line with a quote left open (or ending on a backslash) makes the whole
-/// header ignored. A proxy appends its element after the client's value:
-/// `<client's value>, for=<client>`. An open quote at the end of the
-/// client's value would swallow the proxy's element, leaving the client's
-/// own as the only one, so the trust walk would pick it.
+/// header ignored: an open quote in the client's value would swallow the
+/// element the proxy appends, so the trust walk would pick the client's own.
 fn forwarded(headers: &HeaderMap) -> Vec<Element> {
     let mut elements = Vec::new();
     for line in headers

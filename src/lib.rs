@@ -1,8 +1,7 @@
 //! The `korvex._core` Python extension: a radix-tree router.
 //!
-//! Users import `korvex`, which wraps this module. The routing logic in
-//! `tree`, `path` and `method` is plain Rust; only this file knows about
-//! Python.
+//! Users import `korvex`, which wraps this module. Only this file knows
+//! about Python; `tree`, `path` and `method` are plain Rust.
 
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyValueError};
@@ -33,8 +32,7 @@ create_exception!(
 );
 
 /// `(handler, params, middleware)`, e.g. `("get_user", {"id": 42}, ("auth",))`.
-/// Fully immutable (params is a read-only mapping), so `korvex.router.Router` can
-/// cache and share it between calls.
+/// Immutable (params is a read-only mapping), so `Router` can cache and share it.
 type Match<'py> = (String, Bound<'py, PyMappingProxy>, Bound<'py, PyTuple>);
 
 /// `(path, method, handler, middleware)`, as listed by `routes()`.

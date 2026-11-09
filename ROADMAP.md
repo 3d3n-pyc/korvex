@@ -2,28 +2,28 @@
 
 Where Korvex is going. Versions are a rough order, not promises.
 
-## Where it stands (0.14.1)
+## Where it stands (0.15.0)
 
 - **Fast.** On one CPU core, Korvex serves the most requests of the
   frameworks tested (34.4k requests/s, Falcon 30.5k, Starlette's best
-  case 30.3k).
-  Its built-in server serves more than uvicorn, Granian, Robyn and
-  FastrAPI on the same cores, with the least memory (see
+  case 30.3k). Its built-in server serves more than uvicorn, Granian,
+  Robyn and FastrAPI on the same cores, with the least memory (see
   [Performance](docs/performance.md)).
 - **The basics of a web app.** A router, route groups, and an ASGI `App`
   with typed path parameters, startup and shutdown hooks, error handling,
   cookies and forms, streaming, files and static directories, WebSockets,
   app-wide hooks, CORS, request IDs, rate limiting (shared through Redis
-  if needed), compression and security headers; validation from
-  type annotations with msgspec or pydantic, headers, cookies and forms
-  (models too) as parameters, and dependencies, which guard routes,
-  groups and WebSockets; custom route constraints and host-based
-  routing; reverse URLs (`url_for`); an OpenAPI document with statuses,
-  tags, documented errors and security schemes, and Swagger UI; a test
-  client that runs the app in-process; a built-in server with
-  workers, threads (in parallel on free-threaded Python), graceful
-  shutdown, size limits, timeouts, backpressure and WebSocket pings; and a
-  deployment guide.
+  if needed), compression and security headers; validation from type
+  annotations with msgspec or pydantic, with headers, cookies and forms
+  (models too) as parameters; dependencies, which guard routes, groups
+  and WebSockets; custom route constraints and host-based routing;
+  reverse URLs (`url_for`); an OpenAPI document with statuses, tags,
+  documented errors and security schemes, and Swagger UI; a test client
+  that runs the app in-process; and a deployment guide.
+- **A built-in server.** Workers, threads (in parallel on free-threaded
+  Python), a supervisor, graceful shutdown, size limits, timeouts,
+  `max-connections`, `max-requests`, backpressure on requests and on
+  WebSockets, and WebSocket pings.
 - **Young.** Alpha, one maintainer, no known production use yet.
 
 Two rules hold for everything below:
@@ -36,33 +36,34 @@ Two rules hold for everything below:
 ## Behind a reverse proxy
 
 Korvex is meant to run behind a reverse proxy: nginx, Caddy, Traefik or a
-cloud load balancer. They already do these jobs well:
+cloud load balancer, which already do these jobs well:
 
 - HTTPS and certificates (Caddy even gets them automatically)
 - HTTP/2 and HTTP/3 towards clients
 - protection against slow clients, size limits, connection caps
 - compression and access logs
 
-The proxy then forwards each request to Korvex in plain HTTP/1.1. The
-router never sees any of this anyway: it only gets a method and a path.
+The proxy forwards each request to Korvex in plain HTTP/1.1. The router
+never sees any of this: it only gets a method and a path.
 
-Korvex leaves HTTPS, certificates, HTTP/2 and HTTP/3 entirely to the
-proxy. For the rest, it does a light version when that costs almost
-nothing or when only the app knows enough to do it well: the built-in
-server reads requests in full in Rust, limits body sizes and enforces
-timeouts; the app adds rate limiting per user or API key and request
-IDs. That also helps where there's no full proxy in front: local
-development, or a platform whose load balancer doesn't do everything.
+Korvex leaves HTTPS, certificates, HTTP/2 and HTTP/3 to the proxy. For
+the rest, it does a light version when that costs almost nothing or only
+the app knows enough to do it well: the built-in server reads requests in
+full in Rust, limits body sizes and enforces timeouts; the app adds rate
+limiting per user or API key, and request IDs. That also helps without a
+full proxy in front: local development, or a platform whose load balancer
+does less.
 
 ## Until 1.0
 
-The API's open questions (0.10), ready-made middleware (0.11), more
+Done: the API's open questions (0.10), ready-made middleware (0.11), more
 than one core per worker (0.12), what everyone expects from a framework
-(0.13: a test client, reverse URLs, a richer OpenAPI) and a review of the
-whole public API (0.14) and a documentation site (0.14.2) are done. The public API is now what `korvex`,
-`korvex.router`, `korvex.testing`, `korvex.security` and
-`korvex.middleware` export. Until 1.0 it can still change, each change
-listed in the changelog with how to update; after, it stays.
+(0.13: a test client, reverse URLs, a richer OpenAPI), a review of the
+whole public API (0.14), a documentation site (0.14.2) and a more robust
+built-in server (0.15). The public API is what `korvex`, `korvex.router`,
+`korvex.testing`, `korvex.security` and `korvex.middleware` export. Until
+1.0 it can change, each change listed in the changelog with how to
+update; after, it stays.
 
 ## 1.0
 
@@ -73,9 +74,9 @@ listed in the changelog with how to update; after, it stays.
 
 ## After 1.0
 
-What the other frameworks have that Korvex doesn't yet, roughly by how
-often it's needed. Each one adds to the API without changing it, so it
-can come in a minor version:
+What other frameworks have that Korvex doesn't yet, roughly by how often
+it's needed. Each adds to the API without changing it, so it can come in
+a minor version:
 
 - **Background tasks**: work that runs after the response is sent (an
   email, a webhook), without holding it up.

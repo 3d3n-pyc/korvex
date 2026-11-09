@@ -16,8 +16,7 @@ uv run maturin develop --release       # after changing Rust code
 uv run pre-commit install              # optional: lint and format before each commit
 ```
 
-`uv sync --group bench` adds the frameworks and servers the benchmarks
-compare.
+`uv sync --group bench` adds the frameworks and servers the benchmarks compare.
 
 ## Layout
 
@@ -64,12 +63,11 @@ benches/      comparisons with other frameworks:
   plot.py          draws the charts in docs/
 ```
 
-Modules starting with `_` are internal: what they hold can change in any
-version. The public API is what the five public modules export, and what
-the docs show.
+Modules starting with `_` are internal and can change in any version. The
+public API is what the five public modules export.
 
-Only `lib.rs`, `server.rs` and `websocket.rs` use PyO3; keep `tree`, `path`, `method` and
-`proxy` plain Rust.
+Only `lib.rs`, `server.rs` and `websocket.rs` use PyO3; keep `tree`,
+`path`, `method` and `proxy` plain Rust.
 
 ## Before opening a PR
 
@@ -81,11 +79,10 @@ uv run pytest
 ```
 
 CI runs the same checks, the tests on Python 3.9 to 3.14 and on
-free-threaded 3.14t, and two performance checks against the base
-branch, the App in-process and the built-in server under load (more
-than 10% slower fails). New behavior needs a test;
-`korvex.testing.TestClient` drives the app, and `tests/support.py` has
-helpers for the tests that need raw ASGI messages.
+free-threaded 3.14t, and two performance checks against the base branch,
+the App in-process and the built-in server under load (more than 10%
+slower fails). New behavior needs a test: `korvex.testing.TestClient`
+drives the app, and `tests/support.py` has helpers for raw ASGI messages.
 
 Coverage, the built-in server's subprocesses included:
 
@@ -94,8 +91,8 @@ uv run coverage run -m pytest && uv run coverage combine && uv run coverage repo
 ```
 
 The docs are Markdown in `docs/`, published at
-<https://3d3n-pyc.github.io/korvex/>; the reference pages are built from
-the docstrings. To see your changes as the site shows them:
+<https://3d3n-pyc.github.io/korvex/>; the reference pages come from the
+docstrings. To preview them:
 
 ```sh
 uv run --group docs mkdocs serve      # http://127.0.0.1:8000, reloads on save
@@ -106,7 +103,7 @@ CI builds them with `--strict`: a broken link fails the PR.
 msgspec and pydantic stay optional: import them only where a model of
 theirs is being used, never at the top of a module.
 
-Python code must run on 3.9: write `X | Y` only in annotations (thanks to
+Python code must run on 3.9: write `X | Y` only in annotations (with
 `from __future__ import annotations`), and `Union[X, Y]` elsewhere.
 
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/)
@@ -123,10 +120,9 @@ git push origin v0.2.0
 
 The release workflow sets the version from the tag (the version in
 `Cargo.toml` is a placeholder), builds and tests wheels for Linux, macOS
-and Windows, publishes them to PyPI and creates a GitHub release.
-Running the workflow by hand from the Actions tab builds and tests
-without publishing.
+and Windows, publishes them to PyPI and creates a GitHub release. Run by
+hand from the Actions tab, it builds and tests without publishing.
 
-Publishing relies on two settings made once: a `pypi` environment in the
+Publishing needs two one-time settings: a `pypi` environment in the
 GitHub repo, and a [trusted publisher](https://docs.pypi.org/trusted-publishers/)
 on PyPI pointing at `release.yml` and that environment.

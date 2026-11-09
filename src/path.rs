@@ -24,8 +24,8 @@ impl<'a> Segments<'a> {
         }
     }
 
-    /// The part of the path not consumed yet, as one slice. This is what a
-    /// wildcard captures, so capturing never allocates.
+    /// The unconsumed part of the path, as one slice: what a wildcard
+    /// captures, without allocating.
     pub fn remainder(&self) -> &'a str {
         self.rest.trim_start_matches('/')
     }
@@ -56,7 +56,7 @@ pub enum Constraint {
     /// A UUID, `8-4-4-4-12` hex digits: `{id:uuid}`.
     Uuid,
     /// One the app defined (`Constraints::define`), by its index there.
-    /// Matching it takes its regex, kept in the tree next to the parameter.
+    /// Its regex is kept in the tree next to the parameter.
     Custom(u16),
 }
 
@@ -104,8 +104,7 @@ struct Custom {
 }
 
 /// The constraints an app defined, beyond `int`, `uuid` and `str`. They
-/// are defined before the routes that use them, and can't be redefined
-/// differently: that would change routes already registered.
+/// can't be redefined differently: that would change registered routes.
 #[derive(Debug, Clone, Default)]
 pub struct Constraints {
     custom: Vec<Custom>,

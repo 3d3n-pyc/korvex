@@ -15,8 +15,8 @@ run it too, and Windows needs one of them.
 
 ## Options
 
-The same in `korvex run` and `app.run()`. In Python, write them with
-underscores, and give lists as lists:
+The same in `korvex run` and `app.run()`. In Python, use underscores and
+pass lists as lists:
 
 ```python
 app.run("0.0.0.0", 8000, workers=3, graceful_timeout=10, forwarded_allow_ips=["10.0.0.5"])
@@ -58,9 +58,9 @@ or huge upload never holds Python up.
 
 ## Good to know
 
-- `--max-requests` recycles workers: even with one worker, the server forks it and
-  restarts it as a supervisor would. A clean restart never triggers the crash
-  backoff.
+- `--max-requests` recycles workers: even with one worker, the server
+  forks it and restarts it as a supervisor would. A clean restart never
+  triggers the crash backoff.
 - In production, run it behind a reverse proxy (nginx, Caddy, Traefik):
   it speaks HTTP/1.1 and WebSocket, and leaves HTTPS, HTTP/2 and HTTP/3 to
   the proxy. The [deployment guide](deployment.md) has ready configurations.
@@ -69,10 +69,10 @@ or huge upload never holds Python up.
   and the access log see it.
 - A slow client can't make a stream or a WebSocket pile up in memory: once
   1 MiB waits for it, the handler's next send waits.
-- The other way, a client can't flood a WebSocket handler: once 1 MiB
-  of its messages waits for the handler's `receive()`, the server stops
-  reading from it until the handler catches up. A handler that never
-  receives (send-only) learns the client left from its next send.
+- A client can't flood a WebSocket handler: once 1 MiB of its messages
+  waits for `receive()`, the server stops reading from it until the
+  handler catches up. A send-only handler learns the client left from its
+  next send.
 - With several workers, a worker that crashes after starting is restarted
   after a growing delay (0.1 s, doubling up to 30 s). On SIGTERM or SIGINT
   the workers get `graceful_timeout` to finish, and are killed 5 s later if

@@ -105,8 +105,8 @@ request.url_for("get_user", id=42)  # "https://example.com/users/42"
 
 - A route is known by its function's name, or `name=` on its decorator:
   `@app.get("/users/{id:int}", name="user")`.
-- Values are encoded, and checked: a value that doesn't fit the route
-  (`id="abc"`) raises an error rather than give a link to a 404.
+- Values are encoded and checked: one that doesn't fit the route
+  (`id="abc"`) raises an error.
 - `request.url_for()` gives the full URL, with the route's own host for a
   host route. It uses the request's `Host` header, which the client
   sends: for a link in an email, build it from your own base URL and

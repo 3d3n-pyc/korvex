@@ -42,7 +42,8 @@ And three methods to read the body:
 - `await request.json()`: parsed JSON (a 400 if it isn't).
 - `await request.form()`: a form, urlencoded or multipart, read like the
   query (`form.get("title")`). Files are `UploadedFile`s, with
-  `filename`, `content_type` and `data`.
+  `filename`, `content_type` and `data`. A body that isn't a form gets a
+  415; text that can't be decoded, a 400.
 
 A `WebSocket` has the same attributes but no body: both are a
 `Connection`.
@@ -60,11 +61,11 @@ Response.stream(chunks)  # a generator, sync or async, of bytes or str
 Response.file("report.pdf", filename="report.pdf")  # read in chunks; `filename` makes it a download
 ```
 
-A handler can also return a model, if it says so with a return
-annotation (`-> Task`): it's sent as JSON. One annotated `-> None` sends an
-empty response. See [Validation](validation.md).
+A handler can also return a model (`-> Task`, sent as JSON) or `None`: see
+[Validation](validation.md#what-the-handler-returns).
 
-`headers=` takes a dict, or `(name, value)` pairs to repeat a name.
+`headers=` takes a dict, or `(name, value)` pairs to repeat a name. A
+`Content-Type` given there wins over the one `text()` or `json()` sets.
 
 `response.headers` is a `Headers`, the same as `request.headers`: names
 in any case, and a name can repeat (several `Set-Cookie`).
@@ -86,7 +87,8 @@ response.set_cookie("session", token, max_age=3600, httponly=True, secure=True)
 response.delete_cookie("theme")
 ```
 
-`samesite` is `"lax"` unless you say otherwise.
+`samesite` is `"lax"` unless you say otherwise. Without `max_age`, the
+cookie lasts until the browser closes.
 
 ### Streams and files
 

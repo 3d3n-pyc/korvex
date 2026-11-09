@@ -10,15 +10,15 @@ Rust.
 
 - **Simple**: a function per route; its parameters say what it reads.
 - **Typed**: parameters and bodies validated with msgspec or pydantic,
-  and described in OpenAPI, with Swagger UI.
-- **Fast**: on one CPU core, among the fastest Python frameworks tested;
-  its own server serves more than uvicorn, Granian, Robyn and FastrAPI on
-  the same cores, with less memory.
+  described in OpenAPI, with Swagger UI.
+- **Fast**: among the fastest Python frameworks on one core; its own
+  server serves more than uvicorn, Granian, Robyn and FastrAPI on the
+  same cores, with less memory.
 - **Complete**: dependencies, WebSockets, a test client, ready-made
   middleware, and its own server, with workers and threads.
 
-Korvex is young (alpha): the API can still change before 1.0, each change
-listed in the [changelog](CHANGELOG.md) with how to update.
+Korvex is young (alpha): the API can change before 1.0. Each change is in
+the [changelog](CHANGELOG.md) with how to update.
 
 ```sh
 pip install korvex
@@ -69,10 +69,8 @@ def test_get_task():
 ## The guide
 
 Also on the [documentation site](https://3d3n-pyc.github.io/korvex/), with
-the full API reference.
-
-Using an AI coding agent? Run `korvex agents` in your project: it installs
-a skill that teaches it Korvex ([more](docs/ai.md)).
+the API reference. Using an AI coding agent? Run `korvex agents` in your
+project to install a Korvex skill ([more](docs/ai.md)).
 
 - [Routes](docs/routes.md): path parameters, groups, hosts, links, static files.
 - [Requests and responses](docs/requests-and-responses.md): what a handler gets and returns.
@@ -86,12 +84,11 @@ a skill that teaches it Korvex ([more](docs/ai.md)).
 - [The built-in server](docs/server.md) and [deployment](docs/deployment.md): nginx, Caddy, Docker, AWS Lambda.
 
 [`examples/`](examples/) goes from a few lines to a
-[complete app](examples/taskboard/) laid out like a real project.
+[complete app](examples/taskboard/).
 
 ## Performance
 
-The same app on the same 4 CPU cores, each server with its best number of
-workers:
+The same app on 4 CPU cores, each server with its best number of workers:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/servers-dark.svg">
@@ -104,8 +101,7 @@ workers:
 - On free-threaded Python, one worker with 3 threads serves 57% more than
   one thread, with a third of the memory of 4 workers.
 
-[Performance](docs/performance.md) has every benchmark, and how to run
-them.
+[Performance](docs/performance.md) has every benchmark and how to run them.
 
 ## Contributing
 
@@ -114,10 +110,10 @@ uv sync                            # the tools, and Korvex built from source
 uv run pytest
 ```
 
-[CONTRIBUTING.md](CONTRIBUTING.md) has the layout of the code and every
-check CI runs; [ROADMAP.md](ROADMAP.md) what's planned. Report a
-vulnerability privately, as [SECURITY.md](SECURITY.md) explains. Everyone
-taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
+[CONTRIBUTING.md](CONTRIBUTING.md) has the code layout and every check CI
+runs; [ROADMAP.md](ROADMAP.md) what's planned. Report a vulnerability
+privately, as [SECURITY.md](SECURITY.md) explains. Everyone follows the
+[code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 

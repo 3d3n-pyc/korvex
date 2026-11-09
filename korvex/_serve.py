@@ -1,10 +1,9 @@
 """Running an App with Korvex's built-in server (Linux and macOS).
 
 With one worker, the current process serves the app. With several, it
-opens the listening socket, forks the workers, which all accept
-connections on that one socket, and supervises them: a worker that
-crashes is restarted, one that dies right after starting (a failing
-startup hook, for example) stops everything instead of looping.
+opens the listening socket, forks workers that all accept on it, and
+supervises them: a crashed worker is restarted, but one that dies right
+after starting (a failing startup hook, say) stops everything.
 """
 
 from __future__ import annotations
@@ -32,8 +31,8 @@ from korvex._requests import Request
 from korvex._response import StreamingResponse
 from korvex.middleware import current_request_id
 
-# Python 3.12+: a request handler that doesn't wait completes right away,
-# without going through the loop's queue. Older versions schedule it.
+# Python 3.12+: a handler that doesn't wait completes at once, skipping the
+# loop's queue.
 _eager_task_factory = getattr(asyncio, "eager_task_factory", None)
 
 
@@ -49,8 +48,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("korvex")
 access_logger = logging.getLogger("korvex.access")
 
-# A worker that exits with an error this soon after starting failed to
-# start: restarting it would only fail again.
+# A worker failing this soon after starting would only fail again: don't restart.
 STARTUP_WINDOW = 5.0
 
 
@@ -106,22 +104,21 @@ def _listen_tcp(host: str, port: int) -> socket.socket:
 
 
 def _listen_unix(path: str) -> socket.socket:
-    # A socket file left by a server that was killed would block the bind.
-    # Only ever remove a socket, never a regular file someone put there.
+    # A socket file left by a killed server blocks the bind. Remove only a
+    # socket, never a regular file.
     if os.path.exists(path) and stat.S_ISSOCK(os.stat(path).st_mode):
         os.unlink(path)
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     listener.bind(path)
-    # Let a proxy running as another user (nginx's, say) connect, as uvicorn
-    # does; restrict access with the directory's permissions if needed.
+    # Let a proxy running as another user connect, as uvicorn does; restrict
+    # with the directory's permissions.
     os.chmod(path, 0o666)
     listener.listen(2048)
     return listener
 
 
 def _enable_access_log() -> None:
-    """Shows access logs even when logging isn't configured; respects the
-    configuration when it is."""
+    """Shows access logs, unless logging is already configured."""
     access_logger.setLevel(logging.INFO)
     if not access_logger.hasHandlers():
         handler = logging.StreamHandler(sys.stdout)
@@ -130,8 +127,8 @@ def _enable_access_log() -> None:
 
 
 def serve_process(app: App, fd: int, graceful_timeout: float, config: Config) -> None:
-    """Serves in this process: one event loop, or `config.threads` of them,
-    each in its own thread with its own server on a copy of the socket."""
+    """Serves in this process: one event loop, or `config.threads`, each in
+    its own thread with its own server on a copy of the socket."""
     if config.threads == 1:
         asyncio.run(serve(app, fd, graceful_timeout, config))
         return
@@ -187,13 +184,12 @@ async def serve(
 ) -> None:
     """Serves on the listening socket `fd` until SIGINT or SIGTERM, then
     lets requests in progress finish for up to `graceful_timeout` seconds.
-    In a thread of its own, signals go to the main thread instead: it sets
-    the event `joined(loop, event)` was given. `counter()` is called for
-    each request, when the worker counts them for `max_requests`."""
+    In a thread, signals go to the main thread, which sets the event given
+    to `joined(loop, event)`. `counter()` is called for each request when
+    the worker counts them for `max_requests`."""
 
-    # Signals are handled from here on, startup included: a SIGTERM during
-    # startup then stops the server gracefully, shutdown hooks and all,
-    # rather than kill it.
+    # Handled from here on, startup included: a SIGTERM during startup stops
+    # gracefully, shutdown hooks included, instead of killing the server.
     loop = asyncio.get_running_loop()
     stopping = asyncio.Event()
     if joined is None:
@@ -283,9 +279,9 @@ async def serve(
 
 
 def _request_counter(max_requests: int, stop: Callable[[], None]) -> Callable[[], None] | None:
-    """Returns a function to call once per request that calls `stop()` when
-    the worker has served its share, `max_requests` plus a random 0 to 10%
-    so workers don't all restart together; None when there's no limit."""
+    """Returns a function to call once per request; it calls `stop()` after
+    `max_requests` plus a random 0 to 10% (so workers don't restart
+    together). None when there's no limit."""
     if max_requests == 0:
         return None
     limit = max_requests + random.randint(0, max_requests // 10)
@@ -323,13 +319,12 @@ async def _serve_http(
     error: int = 0,
     writable: Callable[[int], Awaitable[None]] | None = None,
 ) -> int:
-    """Runs one request taken from the built-in server, through the same
-    dispatch as under ASGI, hands the response back to Rust, and returns
-    its status. `error` is a status the server already decided on (413,
-    408, 400): the request goes through the before hooks, then gets that
-    error's response, as if the route had raised `HTTPException`. A
-    streamed response waits on `writable(responder.id)` whenever its
-    client falls behind."""
+    """Runs one request from the built-in server through the same dispatch
+    as under ASGI, hands the response to Rust, and returns its status.
+    `error` is a status the server already decided on (413, 408, 400): the
+    request goes through the before hooks, then gets that error's response,
+    as if the route had raised `HTTPException`. A streamed response waits
+    on `writable(responder.id)` while its client is behind."""
     decoded = unquote(path) if "%" in path else path
     request = Request._from_server(method, decoded, query_string, headers, client, scheme, body, app)
     response = await app._respond(request, error)
@@ -367,9 +362,9 @@ async def _serve_websocket(
     incoming: asyncio.Queue,
     writable: Callable[[int], Awaitable[None]] | None = None,
 ) -> None:
-    """Runs a WebSocket from the built-in server through the same code
-    as under ASGI: it speaks ASGI messages over the Rust connection. A
-    send waits on `writable(connection.id)` while the client is behind."""
+    """Runs a WebSocket from the built-in server through the same code as
+    under ASGI, speaking ASGI messages over the Rust connection. A send
+    waits on `writable(connection.id)` while the client is behind."""
     offered = next((v.decode("latin-1") for k, v in headers if k == b"sec-websocket-protocol"), "")
     scope = {
         "type": "websocket",
@@ -389,7 +384,7 @@ async def _serve_websocket(
             return {"type": "websocket.connect"}
         message = await incoming.get()
         data = message.get("text") if "text" in message else message.get("bytes")
-        if data is not None:  # tells the server it may read more from the client
+        if data is not None:  # the server may read more from the client
             size = len(data) if isinstance(data, bytes) or data.isascii() else len(data.encode())
             connection.received(size)
         return message
@@ -415,8 +410,7 @@ async def _serve_websocket(
 
 
 def _logged(serve_one: Callable[..., Awaitable[int]]) -> Callable[..., Awaitable[int]]:
-    """Wraps _serve_http to log each request: client, request line,
-    status and duration."""
+    """Wraps _serve_http to log client, request line, status and duration."""
 
     async def serve_logged(
         method: str,
@@ -452,16 +446,15 @@ KILL_GRACE = 5.0  # after graceful_timeout, before SIGKILL
 
 
 def restart_delay(previous: float, lived: float) -> float:
-    """The delay before restarting a crashed worker: 0.1 s, doubling up
-    to 30 s, back to 0.1 s once the crashed worker had lived 30 s."""
+    """The delay before restarting a crashed worker: 0.1 s, doubling up to
+    30 s, reset to 0.1 s if the worker had lived 30 s."""
     if previous <= 0 or lived >= BACKOFF_RESET:
         return BACKOFF_START
     return min(previous * 2, BACKOFF_MAX)
 
 
 class _Supervisor:
-    """The state behind `supervise`: the workers, the restarts waiting
-    for their delay, and how far the shutdown has gone."""
+    """The state behind `supervise`: workers, pending restarts, shutdown progress."""
 
     def __init__(self, app: App, listener: socket.socket, graceful_timeout: float, config: Config) -> None:
         self.app, self.listener, self.graceful_timeout, self.config = app, listener, graceful_timeout, config
@@ -498,14 +491,14 @@ class _Supervisor:
                 os.kill(pid, signum)
 
     def stop(self, signum: int | None = None, frame: object = None) -> None:
-        """Starts the shutdown (SIGTERM to the workers); when already
-        stopping, a further signal kills the workers at once."""
+        """Starts the shutdown (SIGTERM to the workers); a further signal
+        kills them at once."""
         if self.stopping_since is not None:
             self.signal_all(signal.SIGKILL)
             return
         self.stopping_since = time.monotonic()
         self.restarts.clear()
-        # Stop the kernel from queueing new connections no worker would take.
+        # Stop the kernel queueing connections no worker would take.
         self.listener.close()
         self.signal_all(signal.SIGTERM)
 
@@ -518,9 +511,8 @@ class _Supervisor:
             self.signal_all(signal.SIGKILL)
 
     def on_exit(self, pid: int, status: int) -> None:
-        """Handles a worker's exit: stop on a failed start; replace a
-        worker that exited cleanly (code 0, `max_requests`) at once; else
-        schedule a replacement after the backoff delay."""
+        """Handles a worker's exit: stop on a failed start; replace a clean
+        exit (code 0, `max_requests`) at once; else restart after the backoff."""
         started = self.children.pop(pid, None)
         if started is None or self.stopping_since is not None:
             return
@@ -569,10 +561,10 @@ class _Supervisor:
 
 
 def supervise(app: App, listener: socket.socket, workers: int, graceful_timeout: float, config: Config) -> None:
-    """Forks `workers` processes serving on `listener` and keeps them
-    running until SIGINT or SIGTERM, which is passed on to them. Workers
-    still alive 5 s after `graceful_timeout`, or at a second signal, are
-    killed; a crashing worker is restarted after a growing delay."""
+    """Forks `workers` processes serving on `listener` until SIGINT or
+    SIGTERM, which is passed on to them. Workers alive 5 s after
+    `graceful_timeout`, or at a second signal, are killed; a crashing
+    worker is restarted after a growing delay."""
     supervisor = _Supervisor(app, listener, graceful_timeout, config)
     try:
         supervisor.run(workers)

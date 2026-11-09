@@ -66,11 +66,10 @@ pub const HIGH_WATER: u64 = 1024 * 1024;
 /// Once a waiting backlog is down to this, Python is told to go on.
 pub const LOW_WATER: u64 = HIGH_WATER / 4;
 
-/// What Python sends and the client hasn't taken yet, for one streamed
-/// response or WebSocket. Python adds to it; the Rust side takes from it
-/// as the client reads. Past `HIGH_WATER`, Python waits for a `Writable`
-/// event, sent once the backlog is down to `LOW_WATER`: a slow client no
-/// longer lets a stream pile up in memory.
+/// What Python sent and the client hasn't taken yet, for one streamed
+/// response or WebSocket. Past `HIGH_WATER`, Python waits for a `Writable`
+/// event, sent once the backlog is down to `LOW_WATER`: a slow client can't
+/// make a stream pile up in memory.
 pub struct Backlog {
     id: u64,
     bytes: AtomicU64,
@@ -223,15 +222,14 @@ pub struct Server {
 
 #[pymethods]
 impl Server {
-    /// `fd` is a listening socket, TCP or Unix (`unix`), opened by Python;
-    /// the server takes ownership of it. Opening it in Python lets several
-    /// worker processes share one socket. Request bodies are limited to
+    /// `fd` is a listening socket, TCP or Unix (`unix`), opened by Python so
+    /// several workers can share it; the server takes ownership. Request bodies are limited to
     /// `max_body` bytes, unless `body_limits` (`(method, pattern, bytes)`)
     /// sets a route's own; clients get `timeout` seconds to send the
     /// headers, then the body. Forwarding headers are believed from the
     /// `trusted` proxy addresses (`"*"` for all) and Unix sockets, the
     /// forwarded host only with `forwarded_host`. `constraints` are the
-    /// app's own, as `(name, pattern)`, for the patterns of `body_limits`. Open WebSocket
+    /// app's own, as `(name, pattern)`, for `body_limits` patterns. Open WebSocket
     /// connections get a ping every `ws_ping_interval` seconds (0: never),
     /// and are closed if the client stays silent until the next one. At
     /// most `max_connections` connections are open at once (0: no limit);

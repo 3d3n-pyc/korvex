@@ -23,8 +23,7 @@ FILE_CHUNK_SIZE = 64 * 1024
 
 
 class Headers:
-    """HTTP headers: ordered, case-insensitive, and allowing repeated names
-    (e.g. several `Set-Cookie`)."""
+    """HTTP headers: ordered, case-insensitive, repeated names allowed."""
 
     __slots__ = ("_items",)
 
@@ -33,8 +32,7 @@ class Headers:
 
     @classmethod
     def _trusted(cls, pairs: list[tuple[str, str]]) -> Headers:
-        """Headers from pairs already known to be right (a request's, from
-        the server), without checking each one again."""
+        """Headers from pairs already known to be right (a request's), unchecked."""
         headers = cls.__new__(cls)
         headers._items = pairs
         return headers
@@ -90,8 +88,10 @@ class Headers:
 
 
 class Response:
-    """An HTTP response. A `str` body is encoded to UTF-8, so `body` is
-    always `bytes`."""
+    """An HTTP response; a `str` body is encoded to UTF-8, so `body` is `bytes`.
+
+    Guide: https://3d3n-pyc.github.io/korvex/requests-and-responses/#responses
+    """
 
     __slots__ = ("status", "headers", "body")
 
@@ -107,9 +107,7 @@ class Response:
 
     @classmethod
     def json(cls, data: Any, *, status: int = 200, headers: HeaderItems = ()) -> Response:
-        """An `application/json` response (unless `headers` sets Content-Type).
-        `data` is anything `json.dumps` takes. (Typed `Any`, not `JSONValue`:
-        type checkers reject a `dict[str, list[dict]]` as a `JSONValue`.)"""
+        """An `application/json` response (unless `headers` sets Content-Type); `data` is anything `json.dumps` takes."""
         return cls._with_type(json.dumps(data), "application/json", status, headers)
 
     @classmethod
@@ -131,8 +129,7 @@ class Response:
         httponly: bool = False,
         samesite: Optional[Literal["lax", "strict", "none"]] = "lax",
     ) -> None:
-        """Adds a `Set-Cookie` header. `max_age` is in seconds; without it,
-        the cookie lasts until the browser closes."""
+        """Adds a `Set-Cookie` header; `max_age` is in seconds (none: until the browser closes)."""
         cookie: SimpleCookie = SimpleCookie()
         cookie[name] = value
         morsel = cookie[name]
@@ -150,14 +147,12 @@ class Response:
         self.headers.add("Set-Cookie", morsel.OutputString())
 
     def delete_cookie(self, name: str, *, path: str = "/", domain: Optional[str] = None) -> None:
-        """Tells the browser to remove a cookie (same `path` and `domain`
-        as when it was set)."""
+        """Tells the browser to remove a cookie (same `path` and `domain` as when set)."""
         self.set_cookie(name, "", max_age=0, path=path, domain=domain)
 
     @classmethod
     def stream(cls, chunks: Chunks, *, status: int = 200, headers: HeaderItems = ()) -> StreamingResponse:
-        """A response sent piece by piece, from an iterable or a generator
-        (sync or async) of `bytes` or `str`."""
+        """A response sent piece by piece, from a sync or async iterable of `bytes` or `str`."""
         return StreamingResponse(chunks, status=status, headers=headers)
 
     @classmethod
@@ -170,9 +165,7 @@ class Response:
         status: int = 200,
         headers: HeaderItems = (),
     ) -> StreamingResponse:
-        """Sends a file, read in chunks without blocking. The content type
-        is guessed from the name. With `filename`, the browser downloads it
-        under that name instead of showing it."""
+        """Sends a file in chunks, type guessed from its name; `filename` makes it a download."""
         size = os.stat(path).st_size  # raises FileNotFoundError now, not mid-response
         response = StreamingResponse(_read_file(path), status=status, headers=headers)
         guessed = content_type or mimetypes.guess_type(str(path))[0] or "application/octet-stream"
