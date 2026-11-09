@@ -1,8 +1,10 @@
 name: Performance
 
 # Fails a pull request that makes Korvex more than 10% slower than its base
-# branch on any case of benches/perf_check.py. Both versions are built and
-# measured in the same job, alternating, so they see the same machine.
+# branch: on any case of benches/perf_check.py (the App, in-process), or
+# in the built-in server under load (benches/server_check.py). Both
+# versions are built and measured in the same job, alternating, so they
+# see the same machine.
 
 on:
   pull_request:
@@ -40,5 +42,22 @@ jobs:
       - name: Compare
         run: |
           python3 benches/perf_check.py compare \
+            --base "$RUNNER_TEMP/venv-base/bin/python" \
+            --head "$RUNNER_TEMP/venv-head/bin/python"
+
+      - name: Install oha
+        env:
+          OHA_SHA256: 620bb9e16fb53eabc9a3fc45f88bdb41fefa3fee5c05e75892011ce320391716
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -sSfL -o "$RUNNER_TEMP/bin/oha" https://github.com/hatoo/oha/releases/download/v1.16.0/oha-linux-amd64
+          echo "$OHA_SHA256  $RUNNER_TEMP/bin/oha" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/bin/oha"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      # The server on core 0, oha on the 3 others.
+      - name: Compare the built-in server
+        run: |
+          python3 benches/server_check.py \
             --base "$RUNNER_TEMP/venv-base/bin/python" \
             --head "$RUNNER_TEMP/venv-head/bin/python"
