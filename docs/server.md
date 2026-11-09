@@ -64,5 +64,9 @@ or huge upload never holds Python up.
   and the access log see it.
 - A slow client can't make a stream or a WebSocket pile up in memory: once
   1 MiB waits for it, the handler's next send waits.
+- With several workers, a worker that crashes after starting is restarted
+  after a growing delay (0.1 s, doubling up to 30 s). On SIGTERM or SIGINT
+  the workers get `graceful_timeout` to finish, and are killed 5 s later if
+  still there; a second signal kills them at once.
 - From a proxy's forwarded headers, the rightmost value counts: the one
   the nearest proxy set, not one the client could have written.

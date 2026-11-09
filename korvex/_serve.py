@@ -395,21 +395,41 @@ def _logged(serve_one: Callable[..., Awaitable[int]]) -> Callable[..., Awaitable
     return serve_logged
 
 
-def supervise(app: App, listener: socket.socket, workers: int, graceful_timeout: float, config: Config) -> None:
-    """Forks `workers` processes serving on `listener` and keeps them
-    running until SIGINT or SIGTERM, which is passed on to them."""
-    children: dict[int, float] = {}  # pid -> start time
-    stopping = False
-    failed = False
+BACKOFF_START = 0.1  # first restart delay, in seconds; doubles while workers keep crashing
+BACKOFF_MAX = 30.0
+BACKOFF_RESET = 30.0  # a worker that lived this long clears the backoff
+KILL_GRACE = 5.0  # after graceful_timeout, before SIGKILL
 
-    def spawn() -> None:
+
+def restart_delay(previous: float, lived: float) -> float:
+    """The delay before restarting a crashed worker: 0.1 s, doubling up
+    to 30 s, back to 0.1 s once the crashed worker had lived 30 s."""
+    if previous <= 0 or lived >= BACKOFF_RESET:
+        return BACKOFF_START
+    return min(previous * 2, BACKOFF_MAX)
+
+
+class _Supervisor:
+    """The state behind `supervise`: the workers, the restarts waiting
+    for their delay, and how far the shutdown has gone."""
+
+    def __init__(self, app: App, listener: socket.socket, graceful_timeout: float, config: Config) -> None:
+        self.app, self.listener, self.graceful_timeout, self.config = app, listener, graceful_timeout, config
+        self.children: dict[int, float] = {}  # pid -> start time
+        self.restarts: list[float] = []  # times at which to start a worker
+        self.delay = 0.0
+        self.stopping_since: float | None = None
+        self.failed = False
+
+    def spawn(self) -> None:
+        """Forks one worker."""
         pid = os.fork()
         if pid == 0:  # the worker
             code = 1
             try:
                 signal.signal(signal.SIGINT, signal.SIG_DFL)
                 signal.signal(signal.SIGTERM, signal.SIG_DFL)
-                serve_process(app, listener.detach(), graceful_timeout, config)
+                serve_process(self.app, self.listener.detach(), self.graceful_timeout, self.config)
                 code = 0
             except BaseException:
                 traceback.print_exc()
@@ -417,41 +437,91 @@ def supervise(app: App, listener: socket.socket, workers: int, graceful_timeout:
                 sys.stdout.flush()
                 sys.stderr.flush()
                 os._exit(code)
-        children[pid] = time.monotonic()
-        if stopping:  # a signal arrived while forking
+        self.children[pid] = time.monotonic()
+        if self.stopping_since is not None:  # a signal arrived while forking
             os.kill(pid, signal.SIGTERM)
 
-    def stop(signum: int | None = None, frame: object = None) -> None:
-        nonlocal stopping
-        stopping = True
-        # Stop the kernel from queueing new connections no worker would take.
-        listener.close()
-        for pid in list(children):
+    def signal_all(self, signum: int) -> None:
+        """Sends `signum` to every worker still there."""
+        for pid in list(self.children):
             with contextlib.suppress(ProcessLookupError):
-                os.kill(pid, signal.SIGTERM)
+                os.kill(pid, signum)
 
-    signal.signal(signal.SIGINT, stop)
-    signal.signal(signal.SIGTERM, stop)
-    for _ in range(workers):
-        spawn()
-    try:
-        while children:
+    def stop(self, signum: int | None = None, frame: object = None) -> None:
+        """Starts the shutdown (SIGTERM to the workers); when already
+        stopping, a further signal kills the workers at once."""
+        if self.stopping_since is not None:
+            self.signal_all(signal.SIGKILL)
+            return
+        self.stopping_since = time.monotonic()
+        self.restarts.clear()
+        # Stop the kernel from queueing new connections no worker would take.
+        self.listener.close()
+        self.signal_all(signal.SIGTERM)
+
+    def escalate(self) -> None:
+        """Kills the workers that outlast the graceful timeout by 5 s."""
+        if (
+            self.stopping_since is not None
+            and time.monotonic() - self.stopping_since > self.graceful_timeout + KILL_GRACE
+        ):
+            self.signal_all(signal.SIGKILL)
+
+    def on_exit(self, pid: int, status: int) -> None:
+        """Handles a worker's exit: stop on a failed start, else schedule
+        a replacement after the backoff delay."""
+        started = self.children.pop(pid, None)
+        if started is None or self.stopping_since is not None:
+            return
+        code = os.waitstatus_to_exitcode(status)
+        lived = time.monotonic() - started
+        if code != 0 and lived < STARTUP_WINDOW:
+            logger.error("worker %d failed to start (exit code %d); stopping", pid, code)
+            self.failed = True
+            self.stop()
+            return
+        self.delay = restart_delay(self.delay, lived)
+        logger.warning("worker %d exited (code %d); starting a new one in %.2fs", pid, code, self.delay)
+        self.restarts.append(time.monotonic() + self.delay)
+
+    def start_due(self) -> None:
+        """Forks the workers whose restart delay has passed."""
+        now = time.monotonic()
+        due = [at for at in self.restarts if at <= now]
+        self.restarts = [at for at in self.restarts if at > now]
+        for _ in due:
+            self.spawn()
+
+    def run(self, workers: int) -> None:
+        """Starts the workers and watches them until all are gone."""
+        signal.signal(signal.SIGINT, self.stop)
+        signal.signal(signal.SIGTERM, self.stop)
+        for _ in range(workers):
+            self.spawn()
+        while self.children or self.restarts:
             try:
-                pid, status = os.wait()
+                pid, status = os.waitpid(-1, os.WNOHANG)
             except ChildProcessError:
-                break
-            started = children.pop(pid, None)
-            if started is None or stopping:
+                if not self.restarts:
+                    break
+                pid = status = 0
+            if pid:
+                self.on_exit(pid, status)
                 continue
-            code = os.waitstatus_to_exitcode(status)
-            if code != 0 and time.monotonic() - started < STARTUP_WINDOW:
-                logger.error("worker %d failed to start (exit code %d); stopping", pid, code)
-                failed = True
-                stop()
-            else:
-                logger.warning("worker %d exited (code %d); starting a new one", pid, code)
-                spawn()
+            self.escalate()
+            self.start_due()
+            time.sleep(0.05)
+
+
+def supervise(app: App, listener: socket.socket, workers: int, graceful_timeout: float, config: Config) -> None:
+    """Forks `workers` processes serving on `listener` and keeps them
+    running until SIGINT or SIGTERM, which is passed on to them. Workers
+    still alive 5 s after `graceful_timeout`, or at a second signal, are
+    killed; a crashing worker is restarted after a growing delay."""
+    supervisor = _Supervisor(app, listener, graceful_timeout, config)
+    try:
+        supervisor.run(workers)
     finally:
         listener.close()
-    if failed:
+    if supervisor.failed:
         sys.exit(1)
