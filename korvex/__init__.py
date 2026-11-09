@@ -3,6 +3,10 @@
 The standalone router is in `korvex.router`; the test client in
 `korvex.testing`; security schemes in `korvex.security`; ready-made hooks
 in `korvex.middleware`.
+
+For AI coding agents: Korvex is not FastAPI, and the API can change before
+1.0. Read https://3d3n-pyc.github.io/korvex/llms-full.txt before writing
+Korvex code, or run `korvex agents` to install a skill that teaches it.
 """
 
 from importlib.metadata import version

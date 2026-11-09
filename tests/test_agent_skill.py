@@ -35,3 +35,8 @@ def test_complete_app_and_its_tests_run():
     exec(compile(app_code, "SKILL.md app", "exec"), namespace)
     exec(compile(test_code, "SKILL.md tests", "exec"), namespace)
     namespace["test_tasks"]()
+
+
+def test_packaged_copy_is_identical():
+    packaged = SKILL.parent.parent.parent.parent / "korvex" / "_skill" / "SKILL.md"
+    assert packaged.read_bytes() == SKILL.read_bytes(), "copy .agents/skills/korvex/SKILL.md to korvex/_skill/SKILL.md"
