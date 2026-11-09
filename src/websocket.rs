@@ -6,7 +6,7 @@
 //! connection, and relays messages: incoming ones through the same queue
 //! and wake-up as requests, outgoing ones over a channel from Python.
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -22,7 +22,7 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use pyo3::prelude::*;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
@@ -31,7 +31,8 @@ use tokio_tungstenite::tungstenite::protocol::{Role, WebSocketConfig};
 
 use crate::proxy::resolve;
 use crate::server::{
-    Backlog, Event, GONE, Headers, ResponseBody, Shared, internal_error, plain, request_headers,
+    Backlog, Event, GONE, HIGH_WATER, Headers, Permit, ResponseBody, Shared, internal_error, plain,
+    request_headers,
 };
 
 /// What the client sent on an open WebSocket, for Python.
@@ -50,6 +51,41 @@ pub struct Opening {
     pub client: Option<(String, u16)>,
     pub scheme: &'static str,
     pub connection: WsConnection,
+}
+
+/// What the client sent that the handler hasn't received yet. Past
+/// `HIGH_WATER`, the relay stops reading the socket, so TCP backpressure
+/// reaches the client, until the handler has taken enough.
+struct Unread {
+    bytes: AtomicU64,
+    /// Wakes the relay when the handler brings `bytes` back under the mark.
+    resume: Notify,
+}
+
+impl Unread {
+    fn new() -> Self {
+        Self {
+            bytes: AtomicU64::new(0),
+            resume: Notify::new(),
+        }
+    }
+
+    /// Whether the relay should stop reading.
+    fn full(&self) -> bool {
+        self.bytes.load(Ordering::SeqCst) > HIGH_WATER
+    }
+
+    /// The handler took `n` bytes: lets the relay read again if it was paused.
+    fn taken(&self, n: u64) {
+        let before = self.bytes.fetch_sub(n, Ordering::SeqCst);
+        if before < n {
+            // A miscount must never wrap into a pause that lasts forever.
+            self.bytes.store(0, Ordering::SeqCst);
+        }
+        if before > HIGH_WATER && before.saturating_sub(n) <= HIGH_WATER {
+            self.resume.notify_one();
+        }
+    }
 }
 
 enum Decision {
@@ -77,6 +113,8 @@ pub struct WsConnection {
     outgoing: Mutex<Option<mpsc::UnboundedSender<Outgoing>>>,
     /// Outgoing messages the client hasn't taken yet.
     backlog: Arc<Backlog>,
+    /// Incoming messages the handler hasn't received yet.
+    unread: Arc<Unread>,
 }
 
 impl WsConnection {
@@ -131,6 +169,12 @@ impl WsConnection {
         self.send_data(Outgoing::Binary(Bytes::copy_from_slice(data)), data.len())
     }
 
+    /// The handler received a message of `size` bytes (as UTF-8 for a text
+    /// one): the relay may read the socket again.
+    fn received(&self, size: u64) {
+        self.unread.taken(size);
+    }
+
     /// Closes the connection, or refuses it if it wasn't accepted yet.
     fn close(&self, code: u16, reason: String) {
         if !self.decide(Decision::Refuse) {
@@ -179,6 +223,7 @@ pub async fn handshake(
     peer: Option<std::net::SocketAddr>,
     shared: Arc<Shared>,
     shutdown: watch::Receiver<bool>,
+    permit: Permit,
 ) -> Response<ResponseBody> {
     let accept_key = request
         .headers()
@@ -192,6 +237,7 @@ pub async fn handshake(
     let (decision, decided) = oneshot::channel();
     let (outgoing, to_send) = mpsc::unbounded_channel();
     let backlog = Arc::new(Backlog::new(id, Arc::clone(&shared)));
+    let unread = Arc::new(Unread::new());
     shared.push(Event::WebSocket(Opening {
         path: parts.uri.path().to_owned(),
         query: parts.uri.query().unwrap_or("").as_bytes().to_vec(),
@@ -207,6 +253,7 @@ pub async fn handshake(
             decision: Mutex::new(Some(decision)),
             outgoing: Mutex::new(Some(outgoing)),
             backlog: Arc::clone(&backlog),
+            unread: Arc::clone(&unread),
         },
     }));
 
@@ -218,6 +265,7 @@ pub async fn handshake(
         return plain(StatusCode::FORBIDDEN, "Forbidden");
     };
     tokio::spawn(async move {
+        let _permit = permit; // the connection's slot lasts as long as the WebSocket
         let Ok(upgraded) = on_upgrade.await else {
             shared.push(Event::WebSocketMessage(id, Incoming::Closed(1006)));
             return;
@@ -230,7 +278,7 @@ pub async fn handshake(
         let socket =
             WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, Some(config))
                 .await;
-        relay(id, socket, to_send, &shared, shutdown, &backlog).await;
+        relay(id, socket, to_send, &shared, shutdown, &backlog, &unread).await;
         backlog.wake(); // a Python waiting to send learns the connection is gone
     });
 
@@ -253,7 +301,9 @@ pub async fn handshake(
 /// Relays messages between the client and Python until either side closes
 /// or the server shuts down, then tells Python the connection is over.
 /// Every `ping_interval`, the client gets a ping; one that sent nothing
-/// since the last one (not even the pong) is gone, and gets closed.
+/// since the last one (not even the pong) is gone, and gets closed. While
+/// reading is paused for a handler that is behind, the client counts as
+/// heard: it can't be blamed for what the server doesn't read.
 async fn relay<S>(
     id: u64,
     socket: WebSocketStream<S>,
@@ -261,6 +311,7 @@ async fn relay<S>(
     shared: &Shared,
     mut shutdown: watch::Receiver<bool>,
     backlog: &Backlog,
+    unread: &Unread,
 ) where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -276,13 +327,18 @@ async fn relay<S>(
     let mut heard = true; // from the client since the last ping
     let code = loop {
         tokio::select! {
-            incoming = stream.next() => {
+            () = unread.resume.notified() => {}, // the loop checks `full()` again
+            incoming = stream.next(), if !unread.full() => {
                 heard = true;
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
+                        unread.bytes.fetch_add(text.len() as u64, Ordering::SeqCst);
                         shared.push(Event::WebSocketMessage(id, Incoming::Text(text.as_str().to_owned())));
                     }
-                    Some(Ok(Message::Binary(data))) => shared.push(Event::WebSocketMessage(id, Incoming::Binary(data))),
+                    Some(Ok(Message::Binary(data))) => {
+                        unread.bytes.fetch_add(data.len() as u64, Ordering::SeqCst);
+                        shared.push(Event::WebSocketMessage(id, Incoming::Binary(data)));
+                    }
                     // tungstenite queues the answer to a ping: flushing sends it.
                     Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => {
                         let _ = sink.flush().await;
@@ -312,11 +368,11 @@ async fn relay<S>(
                 }
             },
             _ = pings.tick(), if shared.ws_ping_interval.is_some() => {
-                if !heard {
+                if !heard && !unread.full() {
                     let _ = sink.send(close(1011, "keepalive ping timeout")).await;
                     break 1011;
                 }
-                heard = false;
+                heard = unread.full();
                 if sink.send(Message::Ping(Bytes::new())).await.is_err() { break 1006; }
             },
             _ = shutdown.changed() => {

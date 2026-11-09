@@ -14,6 +14,7 @@ import contextlib
 import functools
 import logging
 import os
+import random
 import signal
 import socket
 import stat
@@ -66,6 +67,8 @@ class Config(NamedTuple):
     forwarded_host: bool = False
     constraints: tuple[tuple[str, str], ...] = ()  # the app's own route constraints, for body_limits
     threads: int = 1  # event loops per worker, each in its own thread
+    max_connections: int = 0  # open connections per worker and thread; 0 for no limit
+    max_requests: int = 0  # HTTP requests a worker serves before it restarts, give or take 10%; 0 for never
 
 
 def run(app: App, host: str, port: int, *, workers: int, graceful_timeout: float, config: Config) -> None:
@@ -75,6 +78,10 @@ def run(app: App, host: str, port: int, *, workers: int, graceful_timeout: float
         raise ValueError("workers must be at least 1")
     if config.threads < 1:
         raise ValueError("threads must be at least 1")
+    if config.max_connections < 0:
+        raise ValueError("max_connections must be 0 (no limit) or more")
+    if config.max_requests < 0:
+        raise ValueError("max_requests must be 0 (never restart) or more")
     if config.threads > 1 and getattr(sys, "_is_gil_enabled", lambda: True)():
         logger.warning(
             "threads=%d with the GIL on: the threads share one core. A free-threaded Python (3.14t) runs them in parallel",
@@ -84,7 +91,7 @@ def run(app: App, host: str, port: int, *, workers: int, graceful_timeout: float
         _enable_access_log()
     listener = _listen_unix(config.uds) if config.uds else _listen_tcp(host, port)
     try:
-        if workers == 1:
+        if workers == 1 and config.max_requests == 0:
             serve_process(app, listener.detach(), graceful_timeout, config)
         else:
             supervise(app, listener, workers, graceful_timeout, config)
@@ -147,11 +154,12 @@ def serve_process(app: App, fd: int, graceful_timeout: float, config: Config) ->
 
     def run_loop(thread_fd: int) -> None:
         try:
-            asyncio.run(serve(app, thread_fd, graceful_timeout, config, joined=joined))
+            asyncio.run(serve(app, thread_fd, graceful_timeout, config, joined=joined, counter=counter))
         except BaseException as error:  # a failing startup hook, say: stop the others too
             failures.append(error)
             stop_all()
 
+    counter = _request_counter(config.max_requests, stop_all)
     fds = [fd] + [os.dup(fd) for _ in range(config.threads - 1)]
     previous = {sig: signal.signal(sig, stop_all) for sig in (signal.SIGINT, signal.SIGTERM)}
     threads = [threading.Thread(target=run_loop, args=(f,), name=f"korvex-loop-{n}") for n, f in enumerate(fds)]
@@ -175,19 +183,30 @@ async def serve(
     config: Config,
     *,
     joined: Callable[[asyncio.AbstractEventLoop, asyncio.Event], None] | None = None,
+    counter: Callable[[], None] | None = None,
 ) -> None:
     """Serves on the listening socket `fd` until SIGINT or SIGTERM, then
     lets requests in progress finish for up to `graceful_timeout` seconds.
     In a thread of its own, signals go to the main thread instead: it sets
-    the event `joined(loop, event)` was given."""
+    the event `joined(loop, event)` was given. `counter()` is called for
+    each request, when the worker counts them for `max_requests`."""
 
+    # Signals are handled from here on, startup included: a SIGTERM during
+    # startup then stops the server gracefully, shutdown hooks and all,
+    # rather than kill it.
+    loop = asyncio.get_running_loop()
+    stopping = asyncio.Event()
+    if joined is None:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, stopping.set)
+    else:
+        joined(loop, stopping)
     try:
         for hook in app._on_startup:  # if one raises, the server doesn't start
             await _call(hook)
     except BaseException:
         os.close(fd)
         raise
-    loop = asyncio.get_running_loop()
     server = _core.Server(
         fd,
         config.uds is not None,
@@ -198,16 +217,14 @@ async def serve(
         config.ws_ping_interval,
         config.forwarded_host,
         list(config.constraints),
+        config.max_connections,
     )
     handle = functools.partial(_serve_http, app)
     if config.access_log:
         handle = _logged(handle)
-    stopping = asyncio.Event()
-    if joined is None:
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, stopping.set)
-    else:
-        joined(loop, stopping)
+    counter = counter or _request_counter(config.max_requests, stopping.set)
+    if counter is not None:
+        handle = _counted(handle, counter)
     tasks: set[asyncio.Task] = set()
     websockets: dict[int, asyncio.Queue] = {}  # connection id -> its incoming messages
     waiting: dict[int, asyncio.Future] = {}  # stream or WebSocket id -> woken when its client catches up
@@ -263,6 +280,34 @@ async def serve(
                 loop.remove_signal_handler(sig)
         for hook in reversed(app._on_shutdown):
             await _call(hook)
+
+
+def _request_counter(max_requests: int, stop: Callable[[], None]) -> Callable[[], None] | None:
+    """Returns a function to call once per request that calls `stop()` when
+    the worker has served its share, `max_requests` plus a random 0 to 10%
+    so workers don't all restart together; None when there's no limit."""
+    if max_requests == 0:
+        return None
+    limit = max_requests + random.randint(0, max_requests // 10)
+    served = 0
+
+    def count() -> None:
+        nonlocal served
+        served += 1
+        if served >= limit:
+            stop()
+
+    return count
+
+
+def _counted(serve_one: Callable[..., Awaitable[int]], counter: Callable[[], None]) -> Callable[..., Awaitable[int]]:
+    """Wraps _serve_http to count each request it serves."""
+
+    def serve_counted(*args: Any) -> Awaitable[int]:
+        counter()
+        return serve_one(*args)
+
+    return serve_counted
 
 
 async def _serve_http(
@@ -342,7 +387,12 @@ async def _serve_websocket(
         if not connected:
             connected = True
             return {"type": "websocket.connect"}
-        return await incoming.get()
+        message = await incoming.get()
+        data = message.get("text") if "text" in message else message.get("bytes")
+        if data is not None:  # tells the server it may read more from the client
+            size = len(data) if isinstance(data, bytes) or data.isascii() else len(data.encode())
+            connection.received(size)
+        return message
 
     async def send(message: dict) -> None:
         kind = message["type"]
@@ -395,21 +445,41 @@ def _logged(serve_one: Callable[..., Awaitable[int]]) -> Callable[..., Awaitable
     return serve_logged
 
 
-def supervise(app: App, listener: socket.socket, workers: int, graceful_timeout: float, config: Config) -> None:
-    """Forks `workers` processes serving on `listener` and keeps them
-    running until SIGINT or SIGTERM, which is passed on to them."""
-    children: dict[int, float] = {}  # pid -> start time
-    stopping = False
-    failed = False
+BACKOFF_START = 0.1  # first restart delay, in seconds; doubles while workers keep crashing
+BACKOFF_MAX = 30.0
+BACKOFF_RESET = 30.0  # a worker that lived this long clears the backoff
+KILL_GRACE = 5.0  # after graceful_timeout, before SIGKILL
 
-    def spawn() -> None:
+
+def restart_delay(previous: float, lived: float) -> float:
+    """The delay before restarting a crashed worker: 0.1 s, doubling up
+    to 30 s, back to 0.1 s once the crashed worker had lived 30 s."""
+    if previous <= 0 or lived >= BACKOFF_RESET:
+        return BACKOFF_START
+    return min(previous * 2, BACKOFF_MAX)
+
+
+class _Supervisor:
+    """The state behind `supervise`: the workers, the restarts waiting
+    for their delay, and how far the shutdown has gone."""
+
+    def __init__(self, app: App, listener: socket.socket, graceful_timeout: float, config: Config) -> None:
+        self.app, self.listener, self.graceful_timeout, self.config = app, listener, graceful_timeout, config
+        self.children: dict[int, float] = {}  # pid -> start time
+        self.restarts: list[float] = []  # times at which to start a worker
+        self.delay = 0.0
+        self.stopping_since: float | None = None
+        self.failed = False
+
+    def spawn(self) -> None:
+        """Forks one worker."""
         pid = os.fork()
         if pid == 0:  # the worker
             code = 1
             try:
                 signal.signal(signal.SIGINT, signal.SIG_DFL)
                 signal.signal(signal.SIGTERM, signal.SIG_DFL)
-                serve_process(app, listener.detach(), graceful_timeout, config)
+                serve_process(self.app, self.listener.detach(), self.graceful_timeout, self.config)
                 code = 0
             except BaseException:
                 traceback.print_exc()
@@ -417,41 +487,96 @@ def supervise(app: App, listener: socket.socket, workers: int, graceful_timeout:
                 sys.stdout.flush()
                 sys.stderr.flush()
                 os._exit(code)
-        children[pid] = time.monotonic()
-        if stopping:  # a signal arrived while forking
+        self.children[pid] = time.monotonic()
+        if self.stopping_since is not None:  # a signal arrived while forking
             os.kill(pid, signal.SIGTERM)
 
-    def stop(signum: int | None = None, frame: object = None) -> None:
-        nonlocal stopping
-        stopping = True
-        # Stop the kernel from queueing new connections no worker would take.
-        listener.close()
-        for pid in list(children):
+    def signal_all(self, signum: int) -> None:
+        """Sends `signum` to every worker still there."""
+        for pid in list(self.children):
             with contextlib.suppress(ProcessLookupError):
-                os.kill(pid, signal.SIGTERM)
+                os.kill(pid, signum)
 
-    signal.signal(signal.SIGINT, stop)
-    signal.signal(signal.SIGTERM, stop)
-    for _ in range(workers):
-        spawn()
-    try:
-        while children:
+    def stop(self, signum: int | None = None, frame: object = None) -> None:
+        """Starts the shutdown (SIGTERM to the workers); when already
+        stopping, a further signal kills the workers at once."""
+        if self.stopping_since is not None:
+            self.signal_all(signal.SIGKILL)
+            return
+        self.stopping_since = time.monotonic()
+        self.restarts.clear()
+        # Stop the kernel from queueing new connections no worker would take.
+        self.listener.close()
+        self.signal_all(signal.SIGTERM)
+
+    def escalate(self) -> None:
+        """Kills the workers that outlast the graceful timeout by 5 s."""
+        if (
+            self.stopping_since is not None
+            and time.monotonic() - self.stopping_since > self.graceful_timeout + KILL_GRACE
+        ):
+            self.signal_all(signal.SIGKILL)
+
+    def on_exit(self, pid: int, status: int) -> None:
+        """Handles a worker's exit: stop on a failed start; replace a
+        worker that exited cleanly (code 0, `max_requests`) at once; else
+        schedule a replacement after the backoff delay."""
+        started = self.children.pop(pid, None)
+        if started is None or self.stopping_since is not None:
+            return
+        code = os.waitstatus_to_exitcode(status)
+        lived = time.monotonic() - started
+        if code != 0 and lived < STARTUP_WINDOW:
+            logger.error("worker %d failed to start (exit code %d); stopping", pid, code)
+            self.failed = True
+            self.stop()
+            return
+        if code == 0:
+            logger.info("worker %d stopped after its requests; starting a new one", pid)
+            self.restarts.append(time.monotonic())
+            return
+        self.delay = restart_delay(self.delay, lived)
+        logger.warning("worker %d exited (code %d); starting a new one in %.2fs", pid, code, self.delay)
+        self.restarts.append(time.monotonic() + self.delay)
+
+    def start_due(self) -> None:
+        """Forks the workers whose restart delay has passed."""
+        now = time.monotonic()
+        due = [at for at in self.restarts if at <= now]
+        self.restarts = [at for at in self.restarts if at > now]
+        for _ in due:
+            self.spawn()
+
+    def run(self, workers: int) -> None:
+        """Starts the workers and watches them until all are gone."""
+        signal.signal(signal.SIGINT, self.stop)
+        signal.signal(signal.SIGTERM, self.stop)
+        for _ in range(workers):
+            self.spawn()
+        while self.children or self.restarts:
             try:
-                pid, status = os.wait()
+                pid, status = os.waitpid(-1, os.WNOHANG)
             except ChildProcessError:
-                break
-            started = children.pop(pid, None)
-            if started is None or stopping:
+                if not self.restarts:
+                    break
+                pid = status = 0
+            if pid:
+                self.on_exit(pid, status)
                 continue
-            code = os.waitstatus_to_exitcode(status)
-            if code != 0 and time.monotonic() - started < STARTUP_WINDOW:
-                logger.error("worker %d failed to start (exit code %d); stopping", pid, code)
-                failed = True
-                stop()
-            else:
-                logger.warning("worker %d exited (code %d); starting a new one", pid, code)
-                spawn()
+            self.escalate()
+            self.start_due()
+            time.sleep(0.05)
+
+
+def supervise(app: App, listener: socket.socket, workers: int, graceful_timeout: float, config: Config) -> None:
+    """Forks `workers` processes serving on `listener` and keeps them
+    running until SIGINT or SIGTERM, which is passed on to them. Workers
+    still alive 5 s after `graceful_timeout`, or at a second signal, are
+    killed; a crashing worker is restarted after a growing delay."""
+    supervisor = _Supervisor(app, listener, graceful_timeout, config)
+    try:
+        supervisor.run(workers)
     finally:
         listener.close()
-    if failed:
+    if supervisor.failed:
         sys.exit(1)

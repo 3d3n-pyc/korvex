@@ -774,6 +774,8 @@ class App(_RouteDecorators):
         ws_ping_interval: float = 20.0,
         forwarded_host: bool = False,
         threads: int = 1,
+        max_connections: int = 0,
+        max_requests: int = 0,
     ) -> None:
         """Serves the app with Korvex's built-in server until Ctrl+C or
         SIGTERM. Linux and macOS only; on Windows, use an ASGI server.
@@ -801,6 +803,16 @@ class App(_RouteDecorators):
         - Open WebSockets get a ping every `ws_ping_interval` seconds, and
           are closed (1011) if the client stays silent until the next one;
           0 turns pings off.
+        - With `max_connections` above 0, each worker and thread keeps at
+          most that many connections open (WebSockets included); further
+          clients wait in the listen backlog until one closes. Memory use is
+          bounded by about `max_connections` x `max_body`.
+        - With `max_requests` above 0, a worker stops gracefully after about
+          that many HTTP requests (plus a random 0 to 10%, so workers don't
+          restart together) and the supervisor starts a new one, which caps
+          slow memory leaks. Counted per worker, all its threads together
+          (WebSocket handshakes aren't). With `workers=1`, a worker is still
+          forked, so the server survives the restarts.
         - A streamed response or a WebSocket waits whenever its client is
           1 MiB behind, until it catches up.
         """
@@ -823,6 +835,8 @@ class App(_RouteDecorators):
                 forwarded_host,
                 tuple(self._router.constraints()),
                 threads,
+                max_connections,
+                max_requests,
             ),
         )
 

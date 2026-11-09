@@ -200,4 +200,6 @@ if __name__ == "__main__":
         access_log=bool(os.environ.get("ACCESS_LOG")),
         ws_ping_interval=float(os.environ.get("WS_PING", "20")),
         forwarded_host=bool(os.environ.get("FORWARDED_HOST")),
+        max_connections=int(os.environ.get("MAX_CONNECTIONS", "0")),
+        max_requests=int(os.environ.get("MAX_REQUESTS", "0")),
     )

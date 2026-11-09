@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.15.0
+
+The built-in server holds up in production: bounded memory, workers that
+always stop, and options to cap connections and recycle workers.
+
+- **Backpressure on incoming WebSocket messages.** A client sending
+  faster than its handler reads used to grow the worker's memory without
+  bound. Past 1 MiB not yet received by the handler, the server stops
+  reading the socket until it catches up. A 50 MB flood now grows the
+  worker by 0.8 MiB. A client held back this way isn't closed by the ping
+  timeout.
+- **The supervisor always stops, and doesn't restart in a hot loop.**
+  Workers still running 5 s after `graceful_timeout` get SIGKILL, so a
+  stuck shutdown hook can't keep the server up; a second Ctrl+C or
+  SIGTERM kills them at once. A worker that keeps crashing is restarted
+  after a growing delay (0.1 s, doubling to 30 s).
+- **A SIGTERM during startup stops a worker gracefully**: it used to kill
+  it outright, without its shutdown hooks, when it came between the
+  startup hooks and the signal handlers (a rollout signalling a pod that
+  just started).
+- **A graceful stop serves a request already on its way.** A connection
+  the worker had just accepted, whose request it hadn't read yet, was
+  closed as idle, and its client got a reset. It now gets up to 1 s to
+  deliver that request, which is served.
+- **`--max-connections N`** (`app.run(max_connections=N)`): at N open
+  connections, per worker and per thread, the server stops accepting
+  until one closes; new clients wait in the kernel's backlog. It bounds
+  memory to about N times `max_body`. Off by default.
+- **`--max-requests N`** (`app.run(max_requests=N)`): a worker that has
+  served N requests (plus a random 0 to 10%) stops gracefully and is
+  replaced at once, which caps slow memory leaks. Off by default.
+
 ## 0.14.3
 
 The built-in server made safer in production: the first part of the
