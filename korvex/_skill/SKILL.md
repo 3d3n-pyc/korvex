@@ -161,8 +161,9 @@ def test_tasks():
 - The syntax is Jinja-like, but it is Korvex's own engine: `{% extends %}`,
   `{% block %}`, `{% include %}`, `{% if %}`, `{% for %}`, filters with `|`.
   No macros.
-- A name that does not exist is an error, unless you write `|default`:
-  `{{ post.draft|default(False) }}`. `None` renders as an empty string.
+- A name, key or attribute that does not exist is an error in `{{ }}`,
+  unless you write `|default`: `{{ post.draft|default(False) }}`. In
+  `{% if %}` it counts as `None` (false). `None` renders as an empty string.
 - `{{ static_url('css/app.css') }}` gives the hashed URL of a file under
   `app.static()`. `{{ items|tojson }}` passes data to a `<script>`.
 - `app.templates("templates", reload=True)` recompiles changed templates:

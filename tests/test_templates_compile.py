@@ -206,7 +206,6 @@ def test_undefined_name_everywhere() -> None:
     """An undefined name raises with the line, however it is used."""
     for src in [
         "{{ user }}",
-        "{% if user %}x{% endif %}",
         "{{ user.name }}",
         "{{ user() }}",
         "{% for x in user %}{% endfor %}",
@@ -281,3 +280,63 @@ def test_int_subclass_escaped_in_output() -> None:
             return "<b>"
 
     assert render("{{ v }}", {"v": Evil(1)}) == "&lt;b&gt;"
+
+
+@pytest.mark.parametrize(
+    "cond",
+    [
+        "nope",
+        "a.b",
+        "a.b.c",
+        "d.k",
+        "d.k.z",
+        "d['k']",
+        "l[5]",
+        "nope['k']",
+        "nope.b['k'].c",
+        "nope.x and d.y",
+        "d.k > 3",
+        "d.k <= 3",
+        "d.k == 3",
+        "d.k != None and d.k",
+    ],
+)
+def test_missing_in_a_condition_is_false(cond: str) -> None:
+    ctx = {"a": {}, "d": {}, "l": [1]}
+    assert render("{% if " + cond + " %}Y{% else %}N{% endif %}", ctx) == "N"
+
+
+def test_missing_in_elif_and_boolean_logic() -> None:
+    ctx = {"user": {"admin": True}}
+    assert render("{% if x.y %}A{% elif user.admin %}B{% endif %}", ctx) == "B"
+    assert render("{% if user.admin and post.draft %}Y{% else %}N{% endif %}", ctx) == "N"
+    assert render("{% if post.draft or user.admin %}Y{% endif %}", ctx) == "Y"
+    assert render("{% if not x.y %}Y{% endif %}") == "Y"
+    assert render("{% if x.n == None %}Y{% endif %}") == "Y"
+    assert render("{% if x.n != 3 %}Y{% endif %}") == "Y"
+    assert render("{% if 3 in x.n %}Y{% else %}N{% endif %}", {"x": {"n": [3]}}) == "Y"
+
+
+def test_present_values_in_a_condition_are_unchanged() -> None:
+    ctx = {"x": {"n": 5}, "zero": 0}
+    assert render("{% if x.n > 3 %}Y{% endif %}", ctx) == "Y"
+    assert render("{% if zero %}Y{% else %}N{% endif %}", ctx) == "N"
+
+
+def test_missing_stays_strict_outside_conditions() -> None:
+    for source in ["{{ a.b }}", "{% for i in a.b %}{% endfor %}", "{% set v = a.b %}", "{{ a.b + 1 }}"]:
+        with pytest.raises(UndefinedError):
+            render(source, {"a": {}})
+    with pytest.raises(UndefinedError):
+        render("{% if x %}{{ nope }}{% endif %}", {"x": 1})
+    with pytest.raises(UndefinedError):
+        render("{% if f(nope) %}{% endif %}", {"f": bool})
+
+
+def test_real_errors_in_a_condition_are_not_swallowed() -> None:
+    with pytest.raises(TemplateError, match="ZeroDivisionError"):
+        render("{% if 1 / z %}{% endif %}", {"z": 0})
+    with pytest.raises(TemplateError, match="TypeError"):
+        render("{% if f(1) %}{% endif %}", {"f": len})
+    with pytest.raises(TemplateError, match="TypeError"):
+        render("{% if n > 3 %}{% endif %}", {"n": None})

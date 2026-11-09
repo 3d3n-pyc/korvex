@@ -105,9 +105,11 @@ views.globals["site_name"] = "Acme"
 
 - Every printed value is HTML-escaped, unless it is a `Markup` (from
   `korvex`) or goes through `|safe`. `None` prints as an empty string.
-- A name, key or attribute that does not exist is an error, with the file and
-  line: `post.html, line 5: 'post.draft' is undefined`. Use
-  `{{ post.draft|default(False) }}` when it may be missing.
+- In `{% if %}` and `{% elif %}`, a missing name, key or attribute counts as
+  `None` (false), and an ordering comparison such as `post.n > 3` is false.
+  Elsewhere it is an error, with the file and line:
+  `post.html, line 5: 'post.draft' is undefined`, unless you use
+  `{{ post.draft|default(False) }}`.
 - To give data to JavaScript, use `tojson`:
 
   ```html

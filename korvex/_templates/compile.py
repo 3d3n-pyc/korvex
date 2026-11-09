@@ -106,14 +106,43 @@ def _fail(exc: Exception, lines: list) -> None:
 
 
 def _item(obj: Any, key: Any) -> Any:
-    """`obj[key]`, or UNDEFINED when the key or index is missing."""
+    """`obj[key]`, or UNDEFINED when the key or index is missing (or `obj` is)."""
+    if obj is UNDEFINED:
+        return obj
     try:
         return obj[key]
     except (KeyError, IndexError):
         return UNDEFINED
 
 
+class _Absent:
+    """What a missing value is in a condition: false, equal to None, and in no order."""
+
+    __slots__ = ()
+
+    def __bool__(self) -> bool:
+        """A missing value is false."""
+        return False
+
+    def __eq__(self, other: object) -> bool:
+        """Equal to None and to another missing value."""
+        return other is None or isinstance(other, _Absent)
+
+    def __ne__(self, other: object) -> bool:
+        """The opposite of `==`."""
+        return not self == other
+
+    __hash__ = None  # type: ignore[assignment]
+
+    def __lt__(self, other: object) -> bool:
+        """Missing is never before or after anything."""
+        return False
+
+    __le__ = __gt__ = __ge__ = __lt__
+
+
 _HELPERS: dict[str, Any] = {
+    "_m": _Absent(),
     "_R": escape_html,
     "_esc": escape,
     "_str": str,
@@ -290,7 +319,7 @@ class _Expr(ast.NodeTransformer):
         if isinstance(node, ast.Name) and not self.in_loop(node):
             return _expr(self.gen.ref(node.id, False))
         if isinstance(node, ast.Subscript):
-            return _expr(f"_item({ast.unparse(self.visit(node.value))}, {ast.unparse(self.visit(node.slice))})")
+            return _expr(f"_item({ast.unparse(self.lenient(node.value))}, {ast.unparse(self.visit(node.slice))})")
         if not isinstance(node, ast.Attribute) or self.in_loop(node.value):
             return self.visit(node)
         a, base = repr(node.attr), self.lenient(node.value)
@@ -298,6 +327,28 @@ class _Expr(ast.NodeTransformer):
             n = base.id
             return _expr(f"({n}.get({a}, _U) if {n}.__class__ is _dict else _look({n}, {a}))")
         return _expr(f"(_b.get({a}, _U) if (_b := {ast.unparse(base)}).__class__ is _dict else _look(_b, {a}))")
+
+    def leaf(self, node: ast.expr) -> ast.expr:
+        """A value in a condition: a missing name, key or attribute gives the missing value."""
+        value = self.lenient(node)
+        if isinstance(node, ast.Name) and node.id in self.gen.known:
+            return value
+        if not isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)):
+            return value
+        return _expr(f"(_m if (_t := {ast.unparse(value)}) is _U else _t)")
+
+    def cond(self, node: ast.expr) -> ast.expr:
+        """Compile the test of an `if`: `and`, `or`, `not` and comparisons keep their meaning."""
+        if isinstance(node, ast.BoolOp):
+            node.values = [self.cond(v) for v in node.values]
+        elif isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            node.operand = self.cond(node.operand)
+        elif isinstance(node, ast.Compare):
+            node.left = self.cond(node.left)
+            node.comparators = [self.cond(c) for c in node.comparators]
+        else:
+            return self.leaf(node)
+        return node
 
     def visit_BinOp(self, node: ast.BinOp) -> ast.expr:  # noqa: N802
         """`|` is the filter pipe; any other operator is left alone."""
@@ -387,10 +438,10 @@ class _Gen:
         self.free[name] = None
         return f"({name} if {name} is not _U else _undef({name!r}))" if strict else name
 
-    def expr(self, expr: ast.expr, line: int) -> tuple:
-        """Compile an expression to code and the `a.b` names it reads."""
+    def expr(self, expr: ast.expr, line: int, test: bool = False) -> tuple:
+        """Compile an expression to code and the `a.b` names it reads; `test` is lenient, for an `if`."""
         rewriter = _Expr(self, line)
-        tree = rewriter.visit(copy.deepcopy(expr))
+        tree = (rewriter.cond if test else rewriter.visit)(copy.deepcopy(expr))
         return ast.unparse(tree), tuple(rewriter.attrs)
 
     def add(self, text: str, name: str, line: int, attrs: tuple = ()) -> None:
@@ -480,7 +531,7 @@ class _Gen:
     def gen_if(self, node: If) -> None:
         """`if`, `elif` and `else`."""
         for i, (cond, body) in enumerate(node.branches):
-            src, attrs = self.expr(cond, node.line)
+            src, attrs = self.expr(cond, node.line, True)
             self.line(("if " if i == 0 else "elif ") + src + ":", node.line, attrs)
             self.block(body, set(self.known))
         if node.orelse:
