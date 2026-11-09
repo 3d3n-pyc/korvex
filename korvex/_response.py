@@ -33,8 +33,7 @@ class Headers:
 
     @classmethod
     def _trusted(cls, pairs: list[tuple[str, str]]) -> Headers:
-        """Headers from pairs already known to be right (a request's, from
-        the server), without checking each one again."""
+        """Headers from pairs already known to be right (a request's), unchecked."""
         headers = cls.__new__(cls)
         headers._items = pairs
         return headers
@@ -108,8 +107,7 @@ class Response:
     @classmethod
     def json(cls, data: Any, *, status: int = 200, headers: HeaderItems = ()) -> Response:
         """An `application/json` response (unless `headers` sets Content-Type).
-        `data` is anything `json.dumps` takes. (Typed `Any`, not `JSONValue`:
-        type checkers reject a `dict[str, list[dict]]` as a `JSONValue`.)"""
+        `data` is anything `json.dumps` takes."""
         return cls._with_type(json.dumps(data), "application/json", status, headers)
 
     @classmethod

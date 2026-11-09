@@ -17,11 +17,11 @@ if TYPE_CHECKING:
 
 Handler = Callable[..., Any]
 """A function that answers a route, sync or async. Its parameters say what
-it reads: the path parameters by name (converted: `int` for `{id:int}`,
-`uuid.UUID` for `{id:uuid}`, else `str`, or as annotated), query fields,
-headers, the body... and the request itself if it needs it, named
-`request` or annotated `Request`. It returns a `Response`, or a model
-(with a return annotation), or `None` (annotated `-> None`)."""
+it reads: path parameters by name (`int` for `{id:int}`, `uuid.UUID` for
+`{id:uuid}`, else `str`, or as annotated), query fields, headers, the
+body, and the request itself, named `request` or annotated `Request`. It
+returns a `Response`, a model (with a return annotation), or `None`
+(annotated `-> None`)."""
 
 WebSocketHandler = Callable[..., Awaitable[None]]
 """`async (websocket, **path_params) -> None`."""
@@ -247,11 +247,10 @@ class _RouteDecorators:
 
 class _Route:
     """What the App keeps about one route, under its handler name in the
-    router: the function, what its annotations ask for (worked out on
-    first use for the App's own routes: static files, the docs), how to
-    call it when that's nothing (`fast`), the name `url_for()` knows it
-    by, how OpenAPI shows it, and which host parameters the function
-    takes (None: all of them, or not on a host)."""
+    router: the function, its plan (worked out on first use for the App's
+    own routes), `fast` (how to call it when the plan has nothing to read),
+    the `url_for()` name, its OpenAPI docs, and the host parameters the
+    function takes (None: all of them, or not on a host)."""
 
     __slots__ = ("func", "plan", "fast", "name", "explicit", "docs", "host_args")
 
@@ -275,11 +274,10 @@ class _Route:
 
 
 def _fast_call(plan: Plan | None) -> tuple[str | None, bool] | None:
-    """How to call a handler with nothing to read from the request: the
-    name it takes the request under (None: it doesn't), and whether it's
-    async. Worked out once, so a request skips the checks. None when the
-    plan has more to do (parameters, dependencies, a model), or isn't
-    known yet."""
+    """How to call a handler that reads nothing from the request: the name
+    it takes the request under (None: it doesn't), and whether it's async.
+    None when the plan has more to do (parameters, dependencies, a model)
+    or isn't known yet."""
     if plan is None or needs_plan(plan) or len(plan.request) > 1:
         return None
     return plan.request_name, plan.coroutine
@@ -305,7 +303,7 @@ class _Docs:
         self.include = include
 
     def merge(self, other: _Docs) -> _Docs:
-        """These (a group's) with `other`'s (a route's, or a nested group's):
+        """These (a group's) with `other`'s (a route's or nested group's):
         tags added, responses replaced by status, deprecated or left out
         if either is."""
         merged = _Docs()
@@ -345,8 +343,7 @@ class Group(_RouteDecorators):
 
     def _plan_pattern(self, full_path: str) -> str:
         """What a handler's plan is read against: the path, after the host
-        pattern for a host's routes, so `{tenant}` in the host is a
-        parameter like those of the path."""
+        pattern for a host's routes, so `{tenant}` is a parameter too."""
         if self._host is None:
             return full_path
         clash = set(self._host.params) & set(path_params(full_path))
@@ -399,11 +396,11 @@ class Group(_RouteDecorators):
         self, path: str, *, name: str | None = None, dependencies: Sequence[Any] = ()
     ) -> Callable[[WebSocketHandler], WebSocketHandler]:
         """Decorator: registers the function as the WebSocket handler for
-        `path`, under this group's prefix. Its parameters and dependencies
-        work as for HTTP handlers (no body), the group's dependencies run
-        too, and one raising `HTTPException` refuses the connection (403).
+        `path`, under this group's prefix. Parameters and dependencies work
+        as for HTTP handlers (no body), the group's dependencies run too,
+        and one raising `HTTPException` refuses the connection (403).
         Before hooks run on the handshake; after hooks don't. `name` is
-        what `url_for()` knows it by (the function's name by default)."""
+        the `url_for()` name (the function's name by default)."""
         _check_name_type(name)
 
         def register(func: WebSocketHandler) -> WebSocketHandler:
@@ -485,8 +482,7 @@ class _Host:
 
 
 def _host_labels(request: Connection) -> list[str]:
-    """The labels of the host the request is for, from its `Host` header,
-    without the port: `"Acme.example.com:8000"` -> `["acme", "example", "com"]`."""
+    """The labels of the request's `Host` header, without the port: `"Acme.example.com:8000"` -> `["acme", "example", "com"]`."""
     host = (request.headers.get("host") or "").lower()
     if host.startswith("["):  # an IPv6 address
         return [host[: host.find("]") + 1]]
@@ -542,11 +538,10 @@ def _check_name_type(name: Any) -> None:
 
 
 def _route_name(func: Callable[..., Any], taken: Mapping[str, Any]) -> str:
-    """The handler name a route is registered under: the function's own,
-    `module.qualname`, with `#2`, `#3`... once that's taken. Each route gets
-    its own name, so its own plan (dependencies included) and its own
-    function, even when one function serves two routes (stacked decorators)
-    or a factory registers functions of the same name in several groups."""
+    """The handler name a route is registered under: `module.qualname`, with
+    `#2`, `#3`... once taken. Each route gets its own name, hence its own
+    plan and function, even when one function serves two routes (stacked
+    decorators) or a factory registers same-named functions in several groups."""
     base = f"{func.__module__}.{func.__qualname__}"
     name, n = base, 2
     while name in taken:

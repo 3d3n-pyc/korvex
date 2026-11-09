@@ -64,11 +64,11 @@ async def current_user(token: str = Depends(bearer)) -> User:
   (with `refresh_url=` if tokens can be refreshed).
 - Each takes `name=` (its name in OpenAPI) and `description=` (shown in
   Swagger UI).
-- A scheme only reads the credential; checking it is the job of the
-  dependency that takes it, like `current_user` above.
+- A scheme only reads the credential; the dependency that takes it
+  checks it, like `current_user` above.
 - `required=False` gives `None` instead of a 401.
-- Every route that depends on a scheme, directly, through another
-  dependency or through its group, lists it.
+- A route lists every scheme it depends on, directly, through another
+  dependency or through its group.
 
 ### Your own scheme
 

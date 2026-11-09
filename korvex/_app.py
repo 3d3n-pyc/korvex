@@ -1,8 +1,7 @@
 """`App`: an ASGI application built on `Router`.
 
-Run it with any ASGI server (uvicorn, hypercorn, granian...), or its own
-(`App.run()`). For each request, `App` matches the path, resolves the
-route's dependencies, calls the handler and sends its `Response`.
+Run it with any ASGI server (uvicorn, hypercorn, granian...) or with the
+built-in one (`App.run()`).
 """
 
 from __future__ import annotations
@@ -37,15 +36,15 @@ from korvex._schema import Plan, Run, needs_plan, plan_for
 from korvex.router import Router
 
 BeforeHook = Callable[["Connection"], Union[Optional[Response], Awaitable[Optional[Response]]]]
-"""`(request) -> Response | None`, sync or async. Returning a `Response`
-sends it right away; returning `None` moves on to the next step."""
+"""`(request) -> Response | None`, sync or async. A `Response` is sent
+right away; `None` moves on."""
 
 Hook = Callable[[], Union[None, Awaitable[None]]]
 """`() -> None`, sync or async, run when the server starts or stops."""
 
 AfterHook = Callable[["Request", Response], Union[Optional[Response], Awaitable[Optional[Response]]]]
 """`(request, response) -> Response | None`, sync or async. Returns the
-response to send, or `None` to keep it as it is."""
+response to send, or `None` to keep it."""
 
 ExceptionHandler = Callable[["Request", Any], Union[Response, Awaitable[Response]]]
 """`(request, exception) -> Response`, sync or async. The exception can be
@@ -55,9 +54,9 @@ logger = logging.getLogger("korvex")
 
 
 class LoopLocal:
-    """Attributes kept per event loop: `app.local`. What a startup hook
-    opens for its loop (a connection pool, a client) goes there, and the
-    handlers and dependencies running on that loop find it:
+    """Attributes kept per event loop: `app.local`. A startup hook stores
+    what it opens for its loop (a pool, a client) there; handlers and
+    dependencies on that loop read it:
 
         @app.on_startup
         async def connect():
@@ -71,10 +70,9 @@ class LoopLocal:
             async with app.local.pool.acquire() as connection:
                 yield connection
 
-    With `threads=`, each loop runs the hooks, and a module-level global
-    would end up holding one loop's pool for all of them: asyncio objects
-    only work on the loop that made them. With one loop, it's simply an
-    attribute. Use it from a running loop only."""
+    With `threads=`, each loop runs the hooks, so a module-level global
+    would hold one loop's pool for all: asyncio objects only work on the
+    loop that made them. Use it from a running loop only."""
 
     __slots__ = ("_by_loop", "_lock")
     _by_loop: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, Any]]
@@ -107,9 +105,8 @@ class LoopLocal:
 
 
 class App(_RouteDecorators):
-    """The application: its routes, hooks and error handlers, OpenAPI,
-    and `run()` for the built-in server. It's an ASGI app, so any ASGI
-    server runs it too.
+    """The application: routes, hooks, error handlers, OpenAPI, and `run()`
+    for the built-in server. It is an ASGI app.
 
         app = App()
 
@@ -128,7 +125,7 @@ class App(_RouteDecorators):
         self._ws_routes: dict[str, _Route] = {}
         self._hosts: list[_Host] = []  # app.host() patterns, the ones without parameters first
         self.local = LoopLocal()
-        """Attributes per event loop, for what startup hooks open: see `LoopLocal`."""
+        """Attributes per event loop: see `LoopLocal`."""
         self._dependency_plans: dict[tuple, Plan] = {}  # (function, pattern, websocket) -> its plan
         self.dependency_overrides: dict[Callable[..., Any], Callable[..., Any]] = {}
         """`{dependency: replacement}`: the replacement is called instead,
@@ -164,10 +161,10 @@ class App(_RouteDecorators):
 
         - `name`: what `url_for()` knows the route by (the function's name
           by default).
-        - `status`: the status of the response made from what the handler
-          returns, a model or `None` (annotated `-> None`, for an empty
-          response: `status=204`). A `Response` it returns keeps its own.
-          OpenAPI documents it as the route's success.
+        - `status`: the status of the response made from a model or `None`
+          the handler returns (`-> None` with `status=204` for an empty
+          response). A returned `Response` keeps its own. OpenAPI documents
+          it as the route's success.
         - `dependencies` (`[Depends(func), ...]`): run before the handler,
           for what they check rather than what they return.
         - `tags`, `deprecated`, `responses` and `include_in_schema`: how the
@@ -175,7 +172,7 @@ class App(_RouteDecorators):
           status: `{404: "No such task"}`, `{409: Conflict}` (a model), or
           `{409: ("Name taken", Conflict)}`.
         - `max_body` (bytes): raises or lowers the built-in server's body
-          size limit for that route; ASGI servers ignore it.
+          limit for that route; ASGI servers ignore it.
         """
         return self._root.route(
             path,
@@ -201,8 +198,9 @@ class App(_RouteDecorators):
         include_in_schema: bool = True,
     ) -> Group:
         """Returns a `Group` that registers handlers under `prefix`, with
-        `dependencies` for all of them, and the OpenAPI options (`tags`,
-        `deprecated`, `responses`, `include_in_schema`) their own add to."""
+        `dependencies` for all of them. Its OpenAPI options (`tags`,
+        `deprecated`, `responses`, `include_in_schema`) combine with each
+        route's own."""
         return self._root.group(
             prefix,
             dependencies=dependencies,
@@ -232,16 +230,15 @@ class App(_RouteDecorators):
             @tenants.get("/")                       # acme.example.com: tenant="acme"
             def home(request, tenant): ...
 
-        A `{param}` takes one whole label of the host name, and reaches
-        the dependencies and handlers that take it, like a path parameter
-        (and `request.path_params`). The first pattern
-        that fits owns the request (those without parameters are tried
-        first, then in the order declared): its routes answer, and routes
-        declared without a host when it doesn't have the path; another
-        pattern's never do. Calling `host()` again with the same pattern
-        adds to the same routes. In the built-in server, a route's
-        `max_body` applies to its path on every host. The OpenAPI options
-        (`tags`...) work as for `group()`."""
+        A `{param}` takes one whole label of the host name and reaches the
+        dependencies and handlers that take it, like a path parameter (and
+        `request.path_params`). The first pattern that fits owns the
+        request (those without parameters are tried first, then in the
+        order declared): its routes answer, then routes declared without a
+        host; another pattern's never do. Calling `host()` again with the
+        same pattern adds to the same routes. In the built-in server, a
+        route's `max_body` applies to its path on every host. The OpenAPI
+        options (`tags`...) work as for `group()`."""
         normalized = pattern.lower().rstrip(".")
         found = next((h for h in self._hosts if h.pattern == normalized), None)
         if found is None:
@@ -256,7 +253,7 @@ class App(_RouteDecorators):
         self, path: str, *, name: str | None = None, dependencies: Sequence[Any] = ()
     ) -> Callable[[WebSocketHandler], WebSocketHandler]:
         """Decorator: registers the function as the WebSocket handler for
-        `path`; it gets a `WebSocket`, the path params, and parameters and
+        `path`. It gets a `WebSocket`, the path params, and parameters and
         dependencies as HTTP handlers do (no body). A dependency raising
         `HTTPException` refuses the connection (403). Before hooks run on
         the handshake; after hooks don't. `name` is what `url_for()` knows
@@ -274,9 +271,9 @@ class App(_RouteDecorators):
             app.url_for("static", path="css/a.css")  # "/static/css/a.css"
 
         A route's name is its `name=`, or else its function's name (an
-        `app.static()` directory's is `"static"`). Two routes can share a
-        function's name; `url_for()` then asks for a `name=` to tell them
-        apart (LookupError). Two can share a `name=` only on the same path,
+        `app.static()` directory's is `"static"`). If routes share a
+        function's name, `url_for()` needs a `name=` to tell them apart
+        (LookupError). Routes can share a `name=` only on the same path,
         for different methods.
 
         Values can be `str`, `int`, `float`, `bool`, `UUID`, `date` or
@@ -289,14 +286,14 @@ class App(_RouteDecorators):
         Every path parameter must be given, and nothing else: add a query
         string yourself (`urllib.parse.urlencode`).
 
-        For a route of `app.host()`, this is the path: a link on that host.
+        For a route of `app.host()`, this is the path only.
         `request.url_for()` gives the full URL, host included."""
         from korvex import _urls as urls
 
         return urls.path_for(self, urls.lookup(self._url_index(), name), params)
 
     def _url_index(self) -> Any:
-        """The names of the routes, worked out again once routes change."""
+        """The route names, rebuilt when routes change."""
         from korvex import _urls as urls
 
         routers = [self._router, self._ws_router] + [r for h in self._hosts for r in (h.router, h.ws_router)]
@@ -306,8 +303,8 @@ class App(_RouteDecorators):
         return self._url_cache[1]
 
     def _check_name(self, name: str | None, websocket: bool, host: _Host | None, path: str) -> str | None:
-        """A route's `name=`, checked before it's registered: one name, one
-        path (methods aside)."""
+        """Checks a route's `name=` before registration: one name, one path
+        (methods aside)."""
         if name is None:
             return None
         _check_name_type(name)
@@ -319,7 +316,7 @@ class App(_RouteDecorators):
         return name
 
     def _add_route(self, websocket: bool, key: str, route: _Route, host: _Host | None, path: str) -> None:
-        """Keeps a route just registered in a router, under its handler name."""
+        """Stores a registered route under its handler name."""
         (self._ws_routes if websocket else self._routes)[key] = route
         if route.explicit and route.name is not None:
             self._explicit_names[route.name] = (websocket, host.pattern if host else None, path)
@@ -328,7 +325,7 @@ class App(_RouteDecorators):
         return plan_for(func, pattern, dependencies=dependencies, websocket=websocket, cache=self._dependency_plans)
 
     def _dependency_plan(self, func: Callable, pattern: str, websocket: bool) -> Plan:
-        """The plan of a dependency override, worked out on first use."""
+        """The plan of a dependency override, built on first use."""
         key = (func, pattern, websocket)
         plan = self._dependency_plans.get(key)
         if plan is None:
@@ -342,8 +339,8 @@ class App(_RouteDecorators):
         """An OpenAPI 3.1 description of the app's routes: paths, typed path
         and query parameters, request and response models, and each
         handler's docstring (first line as summary). Static files and
-        WebSockets aren't included. With `host`, the routes that answer on
-        that host: its own (`app.host()`), then those without a host;
+        WebSockets are left out. With `host`, the routes that answer on
+        that host (its own from `app.host()`, then those without a host);
         without, only those without a host."""
         from korvex import _openapi as openapi
 
@@ -351,10 +348,9 @@ class App(_RouteDecorators):
 
     def _host_for(self, labels: list[str]) -> tuple[_Host, dict[str, str]] | None:
         """The first host pattern the request's host fits, and its
-        parameters. It owns the request: only its routes, then those
-        without a host, can answer, never another host pattern's, so a
-        literal `api.example.com` isn't served `{tenant}.example.com`'s
-        routes as tenant "api"."""
+        parameters. Only its routes, then those without a host, can answer:
+        a literal `api.example.com` never gets `{tenant}.example.com`'s
+        routes."""
         for host in self._hosts:
             params = host.match(labels)
             if params is not None:
@@ -380,13 +376,13 @@ class App(_RouteDecorators):
         openapi_path: str = "/openapi.json",
         docs_path: str | None = "/docs",
     ) -> None:
-        """Serves the OpenAPI document at `openapi_path` (recomputed on each
-        call, so it follows route changes) and Swagger UI at `docs_path`
-        (loaded from a CDN; `None` to leave it out)."""
+        """Serves the OpenAPI document at `openapi_path` (rebuilt on each
+        call) and Swagger UI at `docs_path` (loaded from a CDN; `None` to
+        leave it out)."""
         from korvex import _openapi as openapi
 
         def serve_openapi(request: Request) -> Response:
-            # Each host gets its own API: the routes that answer there.
+            # Each host documents the routes that answer there.
             host = request.headers.get("host") if self._hosts else None
             return Response.json(self.openapi(title=title, version=version, description=description, host=host))
 
@@ -409,12 +405,12 @@ class App(_RouteDecorators):
             @app.get("/posts/{post:slug}")       # /posts/hello-world, not /posts/Hello
 
         A value fits when the whole of it matches the regex (Rust's `regex`
-        syntax: no look-around or backreferences, so matching takes linear
-        time). One that doesn't gives a 404, or another route's match:
-        constrained parameters are tried in the order they were registered,
-        before plain ones. The value reaches the handler as a `str`; an
-        annotation converts it further. Define a constraint before the
-        routes that use it; it can't be redefined differently."""
+        syntax: no look-around or backreferences, so matching is linear).
+        A value that doesn't fit gives a 404, or another route's match:
+        constrained parameters are tried in registration order, before
+        plain ones. The handler gets a `str`; an annotation converts it.
+        Define a constraint before the routes that use it; it can't be
+        redefined differently."""
         self._router.constraint(name, pattern)
         for host in self._hosts:
             host.router.constraint(name, pattern)
@@ -425,7 +421,7 @@ class App(_RouteDecorators):
         `app.static("/static", "public")` answers `/static/css/app.css` with
         `public/css/app.css`. Paths that leave the directory get a 404.
         `url_for("static", path="css/app.css")` links to a file; `name`
-        tells several directories apart (`"static"` by default)."""
+        (`"static"` by default) tells several directories apart."""
         root = Path(directory).resolve()
         if not root.is_dir():
             raise NotADirectoryError(f"not a directory: {directory}")
@@ -439,22 +435,21 @@ class App(_RouteDecorators):
                 raise HTTPException(404)
             return Response.file(target)
 
-        key = f"korvex.static:{prefix}"  # unique per prefix: all serve() share a qualname
+        key = f"korvex.static:{prefix}"  # all serve() share a qualname
         pattern = f"{prefix.rstrip('/')}/*path"
         self._check_name(name, False, None, pattern)
         self._router.route(pattern, key)
         self._add_route(False, key, _Route(serve, name=name or "static", explicit=name is not None), None, pattern)
 
-    # Both `@app.on_startup` and `@app.on_startup()` work: the overloads
-    # tell type checkers so, and _add_hook handles the two calls.
+    # The overloads let `@app.on_startup` and `@app.on_startup()` both type-check.
     @overload
     def on_startup(self, func: Hook) -> Hook: ...
     @overload
     def on_startup(self, func: None = None) -> Callable[[Hook], Hook]: ...
     def on_startup(self, func: Hook | None = None) -> Hook | Callable[[Hook], Hook]:
         """Decorator: runs the function when the server starts, before the
-        first request (to open a database pool, for example). If it raises,
-        the server doesn't start. Works with or without parentheses."""
+        first request. If it raises, the server doesn't start. Works with
+        or without parentheses."""
         return _add_hook(self._on_startup, func)
 
     @overload
@@ -462,9 +457,8 @@ class App(_RouteDecorators):
     @overload
     def on_shutdown(self, func: None = None) -> Callable[[Hook], Hook]: ...
     def on_shutdown(self, func: Hook | None = None) -> Hook | Callable[[Hook], Hook]:
-        """Decorator: runs the function when the server stops. Shutdown
-        hooks run in reverse order, so what was opened first closes last.
-        Works with or without parentheses."""
+        """Decorator: runs the function when the server stops, in reverse
+        order of declaration. Works with or without parentheses."""
         return _add_hook(self._on_shutdown, func)
 
     @overload
@@ -475,13 +469,13 @@ class App(_RouteDecorators):
         """Decorator: runs the function before every request, ahead of
         routing, so it sees unknown paths too. It gets the request
         (`path_params` not filled yet) and returns a `Response` to answer
-        right away, or `None` to carry on. Hooks run in the order declared.
+        right away, or `None` to carry on. Hooks run in declaration order.
 
-        They run for WebSocket handshakes too, with the `WebSocket` as the
+        They also run for WebSocket handshakes, with the `WebSocket` as the
         request (`isinstance(request, WebSocket)` tells them apart): a hook
         answering, or raising `HTTPException` or `Abort`, refuses the
-        connection (403). That's the place to check a handshake's `Origin`,
-        which browsers don't check for WebSockets."""
+        connection (403). Check a handshake's `Origin` here: browsers don't
+        for WebSockets."""
         return _add_hook(self._before_request, func)  # type: ignore[arg-type]
 
     @overload
@@ -491,8 +485,8 @@ class App(_RouteDecorators):
     def after_request(self, func: AfterHook | None = None) -> AfterHook | Callable[[AfterHook], AfterHook]:
         """Decorator: runs the function on every response, errors included.
         It gets the request and the response, and returns the response to
-        send, or `None` to keep it. Hooks run in reverse order, like layers:
-        the first declared sees the response last."""
+        send, or `None` to keep it. Hooks run in reverse order: the first
+        declared sees the response last."""
         return _add_hook(self._after_request, func)  # type: ignore[arg-type]
 
     def exception_handler(self, key: int | type[Exception]) -> Callable[[ExceptionHandler], ExceptionHandler]:
@@ -522,7 +516,7 @@ class App(_RouteDecorators):
             await self._send_stream(response, send, head, scope["path"])
             return
         await send({"type": "http.response.start", "status": response.status, "headers": _raw_headers(response, head)})
-        # HEAD: same headers as GET, no body.
+        # HEAD: GET's headers, no body.
         await send({"type": "http.response.body", "body": b"" if head else response.body})
 
     @staticmethod
@@ -539,10 +533,9 @@ class App(_RouteDecorators):
             await _finish(response, path)  # sent or not, what waited for it runs
 
     async def _respond(self, request: Request, error: int = 0) -> Response:
-        """The response to one request: before hooks, then the route (its
-        dependencies and handler), then after hooks, with errors turned into
-        responses at each step. With `error`, the route is replaced by that
-        HTTP error."""
+        """The response to one request: before hooks, the route, then after
+        hooks, with errors turned into responses at each step. With `error`,
+        the route is replaced by that HTTP error."""
         try:
             response = None
             for hook in self._before_request:
@@ -568,7 +561,7 @@ class App(_RouteDecorators):
                 return _server_error()
             if changed is not None:
                 if changed is not response and isinstance(response, StreamingResponse):
-                    await _finish(response, request.path)  # replaced: it won't be sent
+                    await _finish(response, request.path)  # replaced, never sent
                 response = changed
         return response
 
@@ -592,7 +585,7 @@ class App(_RouteDecorators):
             path_params = {**_host_params_for(route, host_params), **path_params}
         request.path_params = values
         fast = route.fast
-        if fast is not None:  # nothing to read from the request: call it as is
+        if fast is not None:  # nothing to bind: call it directly
             name, is_async = fast
             result = route.func(**path_params, **{name: request}) if name is not None else route.func(**path_params)
             if is_async:
@@ -600,10 +593,10 @@ class App(_RouteDecorators):
             return await result if isawaitable(result) else result  # a sync wrapper of an async function
         handler = route.func
         plan = route.plan if route.plan is not None else self._plan_of(handler_name)
-        if not needs_plan(plan):  # no annotations to act on: called as before, at no cost
-            if plan.request_name is not None:  # it takes the request
+        if not needs_plan(plan):  # no annotations to act on: no binding cost
+            if plan.request_name is not None:
                 return await _call(handler, **path_params, **{plan.request_name: request})
-            if plan.request:  # under several names
+            if plan.request:  # several names
                 return await _call(handler, **path_params, **dict.fromkeys(plan.request, request))
             return await _call(handler, **path_params)
         if not plan.dependencies:
@@ -614,7 +607,7 @@ class App(_RouteDecorators):
             arguments = {**path_params, **await plan.bind(request, values, run)}
             response = plan.respond(await _call(handler, **arguments))
         except BaseException as exc:
-            await run.close(exc)  # raised at the yields; still answered as usual
+            await run.close(exc)  # raised at the yields
             raise
         if run.open:
             if isinstance(response, StreamingResponse):
@@ -624,8 +617,8 @@ class App(_RouteDecorators):
         return response
 
     def _plan_of(self, handler_name: str) -> Plan:
-        """The plan of an HTTP route's handler: the App's own routes (static
-        files, the docs) get theirs on first use."""
+        """The plan of an HTTP route's handler. The App's own routes (static
+        files, docs) get theirs on first use."""
         route = self._routes[handler_name]
         if route.plan is None:
             pattern = next((path for path, _, name, _ in self._router.routes() if name == handler_name), "")
@@ -636,7 +629,7 @@ class App(_RouteDecorators):
     async def _websocket(self, scope: dict, receive: Callable, send: Callable) -> None:
         """Runs a WebSocket connection: its handler, or a refusal (403) for
         an unknown path, a before hook answering, or a dependency raising
-        HTTPException. Whatever the handler leaves open gets closed."""
+        HTTPException. Leaves nothing open."""
         found, host_params = None, None
         host = self._host_for(_host_labels(Request(scope, receive, {}))) if self._hosts else None
         if host is not None:
@@ -660,7 +653,7 @@ class App(_RouteDecorators):
             path_params = {**_host_params_for(route, host_params), **path_params}
         handler = route.func
         plan = route.plan
-        assert plan is not None  # worked out when the route was registered
+        assert plan is not None  # built at registration
         run = Run(self.dependency_overrides, self._dependency_plan) if plan.dependencies else None
         try:
             arguments: dict[str, Any] = dict(path_params)
@@ -711,8 +704,8 @@ class App(_RouteDecorators):
 
     @staticmethod
     async def _close_quietly(run: Run, error: BaseException | None, where: str) -> None:
-        """Tears dependencies down when there's no response left to change:
-        a teardown error is logged."""
+        """Tears dependencies down with no response left to change; a
+        teardown error is logged."""
         try:
             await run.close(error)
         except Exception as raised:
@@ -782,12 +775,11 @@ class App(_RouteDecorators):
 
         - `workers` processes share the port, each running the startup and
           shutdown hooks. About 3 per 4 CPU cores works best.
-        - `threads` event loops per worker, each in its own thread, each
-          running the startup and shutdown hooks like a worker does: keep
-          what they open in `app.local`, one per loop. With a free-threaded
-          Python (3.14t), they run in parallel: one process uses several
-          cores and shares its memory. With the GIL, they take turns on one
-          core.
+        - `threads` event loops per worker, each in its own thread and
+          running the startup and shutdown hooks: keep what they open in
+          `app.local`. With a free-threaded Python (3.14t) they run in
+          parallel, sharing the process's memory. With the GIL, they take
+          turns on one core.
         - On stop, requests in progress get up to `graceful_timeout` seconds.
         - Request bodies over `max_body` bytes get a 413 (a route's own
           `max_body` overrides it); clients get `read_timeout` seconds to send
@@ -809,10 +801,10 @@ class App(_RouteDecorators):
           bounded by about `max_connections` x `max_body`.
         - With `max_requests` above 0, a worker stops gracefully after about
           that many HTTP requests (plus a random 0 to 10%, so workers don't
-          restart together) and the supervisor starts a new one, which caps
+          restart together) and the supervisor starts a new one, capping
           slow memory leaks. Counted per worker, all its threads together
-          (WebSocket handshakes aren't). With `workers=1`, a worker is still
-          forked, so the server survives the restarts.
+          (WebSocket handshakes excluded). With `workers=1`, a worker is
+          still forked, so the server survives the restarts.
         - A streamed response or a WebSocket waits whenever its client is
           1 MiB behind, until it catches up.
         """
@@ -845,7 +837,7 @@ class App(_RouteDecorators):
 
 
 def _server_error() -> Response:
-    """The answer to an error nothing handled: the cause is logged, never sent."""
+    """The 500 for an unhandled error: the cause is logged, never sent."""
     return Response.json({"detail": "Internal Server Error"}, status=500)
 
 
@@ -856,8 +848,8 @@ def _host_params_for(route: _Route | None, host_params: dict[str, str]) -> dict[
 
 
 def _raw_headers(response: Response, head: bool) -> list[tuple[bytes, bytes]]:
-    """The response headers as bytes. A HEAD response keeps the Content-Length
-    its body would have had, since the body itself isn't sent."""
+    """The response headers as bytes. A HEAD response keeps the
+    Content-Length its body would have had."""
     if head and not isinstance(response, StreamingResponse) and "Content-Length" not in response.headers:
         response.headers.set("Content-Length", str(len(response.body)))
     return [(name.encode("latin-1"), value.encode("latin-1")) for name, value in response.headers]
@@ -876,8 +868,8 @@ def _match(router: Router, request: Request) -> Any:
 
 
 async def _finish(response: StreamingResponse, path: str) -> None:
-    """Runs what waits for a streamed response to be sent (the teardown of
-    its handler's dependencies). The response is gone: errors are logged."""
+    """Runs what waits for a streamed response to be sent (its dependencies'
+    teardown). Errors are logged."""
     callbacks, response._on_close = response._on_close, []
     for callback in callbacks:
         try:
@@ -894,7 +886,7 @@ async def _call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
 
 def _add_hook(hooks: list, func: Callable | None) -> Any:
     """Registers `func` (`@app.on_startup`), or returns a decorator that
-    will (`@app.on_startup()`)."""
+    does (`@app.on_startup()`)."""
     if func is None:
         return lambda f: _add_hook(hooks, f)  # type: ignore[return-value]
     hooks.append(func)

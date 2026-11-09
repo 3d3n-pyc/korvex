@@ -26,9 +26,9 @@ def test_tasks():
   `url` it came from.
 - Cookies the app sets are kept in `client.cookies` and sent back.
 - `follow_redirects=True` follows a redirect.
-- A full URL sets the scheme and the host: `client.get("https://acme.example.com/")`.
+- A full URL sets the scheme and host: `client.get("https://acme.example.com/")`.
   Otherwise requests go to `base_url`, `http://testserver` by default.
-- `headers=` and `cookies=` given to the client are sent with every request:
+- `headers=` and `cookies=` given to the client go with every request:
   `TestClient(app, headers={"Authorization": "Bearer t0ken"})`.
 
 ## What the client does for you
@@ -37,8 +37,8 @@ def test_tasks():
   hooks last. Every request runs on the same event loop.
 - An error the app answers with a 500 is raised in the test, with its
   traceback. `raise_server_errors=False` gives you the 500 instead.
-- A request or a WebSocket message that doesn't come within `timeout`
-  (5 seconds) raises `TimeoutError`, rather than hang the test suite.
+- A request or WebSocket message not received within `timeout` (5
+  seconds) raises `TimeoutError`.
 
 ## Streams and WebSockets
 
@@ -61,8 +61,8 @@ app.dependency_overrides[current_user] = lambda: User(id=1, name="test")
 
 ## Async tests
 
-`AsyncTestClient` does the same, awaited, for `async` tests (with
-pytest-asyncio or anyio):
+`AsyncTestClient` does the same, awaited, for `async` tests (pytest-asyncio
+or anyio):
 
 ```python
 async with AsyncTestClient(app) as client:

@@ -41,12 +41,12 @@ class RateLimitStore(Protocol):
 
 
 class MemoryStore:
-    """Rate limit state in this process's memory. With several workers,
-    each has its own: a client can get up to `requests` x workers.
+    """Rate limit state in this process's memory. Each worker has its own,
+    so a client can get up to `requests` x workers.
 
     Uses GCRA (a token bucket kept as one timestamp per key): up to
     `requests` at once, then one every `per / requests` seconds. Safe with
-    several threads (`threads=` on free-threaded Python): one at a time."""
+    several threads (`threads=` on free-threaded Python)."""
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
@@ -104,23 +104,20 @@ return {1, remaining, '0', tostring(full_back - now)}
 
 
 class RedisStore:
-    """Rate limit state in Redis, shared by every worker and machine, so a
-    limit holds for the whole deployment. Needs the `redis` package
+    """Rate limit state in Redis, shared by every worker and machine. Needs the `redis` package
     (`pip install korvex[redis]`).
 
         rate_limit(app, requests=100, per=60, store=RedisStore("redis://localhost:6379/0"))
 
     - `client`: a URL, or a `redis.asyncio.Redis` you made yourself (TLS,
-      a password, Sentinel...). Connections open on first use, so creating
-      the store at import time is fine with several workers. From a URL,
-      each event loop (`threads=`) gets its own client; one you made
-      belongs to one loop.
+      a password, Sentinel...). Connections open on first use, so the
+      store can be created at import time. From a URL, each event loop
+      (`threads=`) gets its own client; one you made belongs to one loop.
     - `prefix`: put before each key, to keep them apart from your own.
     - `fail_open`: if Redis can't be reached, let requests through (the
-      default, so an outage of Redis isn't one of the app) or refuse them
-      with a 429. Either way, the error is logged.
+      default) or refuse them with a 429. Either way, the error is logged.
 
-    Same algorithm as `MemoryStore`, run atomically in Redis on its clock.
+    Same algorithm as `MemoryStore`, run atomically on Redis's clock.
     """
 
     def __init__(
@@ -245,9 +242,3 @@ def rate_limit(
                 response.headers.set("RateLimit-Limit", str(requests))
                 response.headers.set("RateLimit-Remaining", str(decision.remaining))
                 response.headers.set("RateLimit-Reset", str(math.ceil(decision.reset)))
-
-
-# --- compression ---
-
-# Text-like content worth compressing; images, video, archives and fonts
-# (woff2) are compressed already.

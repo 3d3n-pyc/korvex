@@ -15,9 +15,9 @@ in OpenAPI, so that Swagger UI's "Authorize" button can send it.
     @app.get("/me")
     def me(request, user: User = Depends(current_user)): ...
 
-A scheme only reads the credential; checking it is the dependency's job
-that takes it. Every route whose dependencies use a scheme, directly or
-through others (a group's included), lists it in OpenAPI.
+A scheme only reads the credential; the dependency that takes it checks
+it. Every route whose dependencies use a scheme, directly or through
+others (a group's included), lists it in OpenAPI.
 """
 
 from __future__ import annotations
@@ -32,10 +32,9 @@ __all__ = ["APIKey", "Bearer", "OAuth2Password", "SecurityScheme"]
 
 
 class SecurityScheme:
-    """What the schemes share. A scheme is a dependency: `Depends(scheme)`
-    gives the credential, a `str`. Without one, a `required` scheme
-    answers 401 (with `WWW-Authenticate`); with `required=False`, it gives
-    `None` and the dependency decides.
+    """What the schemes share. `Depends(scheme)` gives the credential, a
+    `str`. Without one, a `required` scheme answers 401 (with
+    `WWW-Authenticate`); with `required=False`, it gives `None`.
 
     `name` is its key in OpenAPI's `securitySchemes` (two schemes given the
     same name get `name_2`...), `description` shows in Swagger UI."""

@@ -9,7 +9,7 @@ Give them as the parameter's default, or inside `Annotated`:
     CurrentUser = Annotated[User, Depends(current_user)]
     async def tasks(request, user: CurrentUser, theme: Annotated[str, Cookie()] = "light"): ...
 
-They return `Any` so that `user: User = Depends(current_user)` type-checks.
+They return `Any`, so `user: User = Depends(current_user)` type-checks.
 """
 
 from __future__ import annotations

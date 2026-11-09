@@ -1,11 +1,11 @@
 # For AI assistants
 
-Korvex is young, so AI assistants know little about it, and what they
-know may be out of date. Give them its documentation:
+Korvex is young: AI assistants know little about it, and may know it
+wrong. Give them its documentation:
 
 ## The documentation, for LLMs
 
-The site publishes itself as Markdown, rebuilt with every change:
+The site also publishes Markdown, rebuilt with every change:
 
 - [`llms.txt`](https://3d3n-pyc.github.io/korvex/llms.txt): an index of
   every page, with a line on each.
@@ -19,8 +19,8 @@ The site publishes itself as Markdown, rebuilt with every change:
 
 The repository has an [agent skill](https://github.com/3d3n-pyc/korvex/tree/main/.agents/skills/korvex):
 a short `SKILL.md` that tells an agent how to write a Korvex app, with a
-complete example and the rules that differ from FastAPI. Its examples run
-in Korvex's test suite, so it stays true.
+complete example and the rules that differ from FastAPI. Korvex's test
+suite runs its examples.
 
 It comes with Korvex. In your project's folder, run once:
 
@@ -28,11 +28,10 @@ It comes with Korvex. In your project's folder, run once:
 korvex agents
 ```
 
-It writes the skill to `.agents/skills/korvex/` (read by Codex, Cursor
-and most agents) and `.claude/skills/korvex/` (Claude Code), in the
-version of the Korvex you have installed. Rerun it after upgrading
-Korvex; commit the two folders so everyone working on the project gets
-them.
+It writes the skill, in the installed Korvex's version, to
+`.agents/skills/korvex/` (Codex, Cursor and most agents) and
+`.claude/skills/korvex/` (Claude Code). Rerun it after upgrading Korvex;
+commit both folders.
 
 Without Python at hand, the [skills CLI](https://github.com/vercel-labs/skills)
 installs the latest one from GitHub: `npx skills add 3d3n-pyc/korvex`.

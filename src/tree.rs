@@ -85,10 +85,8 @@ impl<T> Methods<T> {
 struct Param<T> {
     name: String,
     constraint: Constraint,
-    /// A custom constraint's regex and name, kept here so that matching
-    /// needs nothing else. Boxed: most parameters have none, and a smaller
-    /// `Param` keeps the tree tighter in memory (measured: unboxed, lookups
-    /// were 4 to 8% slower).
+    /// A custom constraint's regex and name. Boxed: most parameters have
+    /// none, and unboxed, lookups were 4 to 8% slower.
     custom: Option<Box<(Regex, String)>>,
     node: Node<T>,
 }

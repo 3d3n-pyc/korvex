@@ -1,11 +1,11 @@
 """The standalone router: `Router`, `RouteGroup` and `MethodNotAllowed`.
 
 It maps a path and a method to a handler *name*, and never calls your
-code: for building your own framework on top, or routing outside HTTP.
-`App` uses it inside; an app doesn't need it.
+code: for building your own framework, or routing outside HTTP. `App`
+uses it inside; an app doesn't need it.
 
-Matching happens in Rust (`korvex._core.Router`). This module adds a
-lookup cache, the `get`/`post`/... shortcuts and route groups on top.
+Matching happens in Rust (`korvex._core.Router`); this module adds a
+lookup cache, the `get`/`post`/... shortcuts and route groups.
 """
 
 from __future__ import annotations
@@ -59,11 +59,10 @@ class Router(_CoreRouter, _Shortcuts):
         router.get("/users/{id:int}", "get_user")
         router.match("/users/42")  # ("get_user", {"id": 42}, ())
 
-    The matching itself is done by the Rust base class. `match` results
-    are cached: the last `CACHE_SIZE` distinct lookups are answered without
-    matching again. Results are immutable (`params` is a read-only
-    mapping, `middleware` a tuple), so sharing them is safe. Adding or
-    removing a route clears the cache.
+    `match` results are cached: the last `CACHE_SIZE` distinct lookups are
+    answered without matching again. Results are immutable (`params` is a
+    read-only mapping, `middleware` a tuple). Adding or removing a route
+    clears the cache.
     """
 
     def __init__(self) -> None:

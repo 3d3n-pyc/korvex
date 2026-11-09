@@ -35,8 +35,8 @@ def create_user(body: NewUser, notify: bool = False) -> User:
 | named `request`, or annotated `Request` | the request itself |
 
 - A default makes a parameter optional. Dates are ISO 8601.
-- Anything else is refused when the route is declared, with a message:
-  a mistake shows at import, not on a request.
+- Anything else is refused with a message when the route is declared, so
+  a mistake shows at import.
 - When a field is repeated (`?tag=a&tag=b`), a single value takes the
   first, and a `list[str]` takes them all.
 
@@ -62,7 +62,7 @@ async def upload(
 - A whole model can come from a form, field by field:
   `signup: Signup = Form()`. A checkbox's `on` is true, and text converts
   to numbers and dates as the model says.
-- They also work in `Annotated[...]`: `theme: Annotated[str, Cookie()] = "light"`.
+- All four also work in `Annotated[...]`: `theme: Annotated[str, Cookie()] = "light"`.
 
 ## What the handler returns
 
@@ -93,5 +93,4 @@ def invalid(request, exc: ValidationError):
     return Response.json({"problems": [e["loc"] for e in exc.errors]}, status=422)
 ```
 
-Annotations are read once, when the route is declared. A handler without
-them costs nothing more than before.
+Annotations are read once, when the route is declared.

@@ -1,14 +1,12 @@
 # Performance
 
 All numbers come from the scripts in [`benches/`](https://github.com/3d3n-pyc/korvex/tree/main/benches), on one
-machine. Results depend on the machine: measure your own workload before
-relying on any of them.
+machine. Results depend on the machine: measure your own workload.
 
 ## Servers
 
-The same app, served by each server on the same 4 CPU cores, each with its
-best number of workers. Measured with Korvex's main branch after 0.14.0
-(with the changes below) and FastrAPI 0.2.11:
+The same app on the same 4 CPU cores, each server with its best number of
+workers. Measured with Korvex's main branch after 0.14.0 and FastrAPI 0.2.11:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="servers-dark.svg">
@@ -26,39 +24,28 @@ best number of workers. Measured with Korvex's main branch after 0.14.0
 - Granian is a Rust ASGI server too, and comes second: the built-in
   server serves 8 to 15% more, because it skips the ASGI layer, with 40%
   less memory.
-- Robyn and FastrAPI run their own version of the app with their own
-  Rust server. FastrAPI runs one process (it has no workers option, and a
-  second process can't share the port): its Rust side uses the 4 cores,
-  but one Python process, under the GIL, runs every handler. Its handlers
-  are sync: in 0.2.11, async ones answer a 500.
+- Robyn and FastrAPI run their own version of the app on their own Rust
+  server. FastrAPI runs one process (no workers option, and a second process
+  can't share the port): its Rust side uses the 4 cores, but one Python
+  process, under the GIL, runs every handler. Its handlers are sync: in
+  0.2.11, async ones answer a 500.
 - No request failed.
-- From 0.7 to 0.14.0, the built-in server served 3 to 8% less per core
-  than in 0.6 (measured version by version, one worker on one core). Each
-  request checked its handler's plan, the validation 0.7 added, before
-  calling it. Alone that's 0.2 µs, but the core also runs the server's
-  Rust thread and the kernel's network stack, and its instruction cache
-  is full: perf showed the same instructions (+1.6%) taking 8% more
-  cycles, with 7% more instruction cache misses and 10% more branch
-  misses. A route now works out once how to call a handler with nothing
-  to read (+11%).
-- After that, a profile under load showed the rest of the Python code
-  between the server and the handler: the request's headers checked one
-  by one (since 0.14, for `headers=` dicts) though the server builds
-  them, a lookup before each Content-Type, and an ASGI scope built then
-  read back for each request. Without them, one worker on one core
-  serves 39.7k requests/s, 47% more than 0.14.0 (26.9k), measured side
-  by side. On 4 cores, the server's Rust threads and the kernel take a
-  bigger share, and the gain is smaller.
+- Per-request Python work between the server and the handler was cut
+  (handler plan checked once per route, headers no longer checked one by
+  one, no lookup before each Content-Type, no ASGI scope built and read
+  back). One worker on one core serves 39.7k requests/s, 47% more than
+  0.14.0 (26.9k), measured side by side. On 4 cores the server's Rust
+  threads and the kernel take a bigger share, so the gain is smaller.
 
 Reproduce with `uv run --group bench python benches/servers.py` (needs `cargo install oha`,
 takes about 5 minutes).
 
 ## Under load
 
-The same small app (1,000 routes, one JSON endpoint) in each framework,
-served the same way (uvicorn, one worker, one CPU core) and flooded with
-requests to random URLs by [oha](https://github.com/hatoo/oha). Measured
-with Korvex's main branch after 0.14.0:
+The same small app (1,000 routes, one JSON endpoint) in each framework, on
+uvicorn with one worker and one CPU core, flooded with requests to random
+URLs by [oha](https://github.com/hatoo/oha). Measured with Korvex's main
+branch after 0.14.0:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="load-dark.svg">
@@ -76,20 +63,20 @@ with Korvex's main branch after 0.14.0:
 | BlackSheep | 7.0k | 68 ms | 51 MB, 59 MB |
 | Django | 1.1k to 2.2k | 1.2 s to 1.7 s | 49 MB, 141 MB |
 
-- Every framework uses a full CPU core under load, so requests per second
-  is also how much work each one gets out of that core.
+- Every framework uses a full CPU core, so requests per second is the work
+  each gets out of that core.
 - Falcon, and Starlette in its best case, serve 11 to 12% less than
   Korvex.
 - Starlette, FastAPI and Django try routes one by one: the ranges go from
   the tested route declared after the 1,000 others to declared first.
-  BlackSheep tries them one by one too, but sorts them itself, deepest
-  first, so here the tested route always comes last.
-- No request failed. Throughput holds steady as clients are added; latency
-  grows because requests queue, not because each one gets slower. After
-  the flood, memory stays flat and speed is back to normal.
+  BlackSheep also tries them one by one, but sorts them deepest first, so
+  the tested route always comes last.
+- No request failed. Throughput holds as clients are added; latency grows
+  because requests queue. After the flood, memory stays flat and speed is
+  back to normal.
 
-Robyn and FastrAPI aren't in this table, since they can't run on
-uvicorn: they're compared with Korvex's built-in server above.
+Robyn and FastrAPI can't run on uvicorn, so they're compared with Korvex's
+built-in server above.
 
 Reproduce with `uv run --group bench python benches/load_test.py` (needs
 `cargo install oha`, takes about 11 minutes).
@@ -117,12 +104,12 @@ Median time per lookup, 10,000 routes:
 - Korvex is the fastest in both cases, and its time stays flat as routes
   are added. Django and Starlette try routes one by one, so they slow
   down linearly.
-- Korvex, Litestar and Sanic cache the last 1,024 lookups. The cache helps
-  most with static URLs; URLs with parameters (`/users/1`, `/users/2`, ...)
-  are often different, so they hit it less.
-- With few routes, the server and the handler cost more than the router.
-  With many routes, a router that tries them one by one becomes the main
-  cost (see Under load).
+- Korvex, Litestar and Sanic cache the last 1,024 lookups. It helps most
+  with static URLs; URLs with parameters (`/users/1`, `/users/2`, ...)
+  differ often, so they hit it less.
+- With few routes, the server and handler cost more than the router. With
+  many, a router that tries routes one by one becomes the main cost (see
+  Under load).
 
 Reproduce with `uv run --group bench pytest benches/bench_router.py --benchmark-only
 --benchmark-json=benches/results.json`, then `uv run --group bench python benches/plot.py`
@@ -131,7 +118,7 @@ to redraw both charts.
 ## Validation
 
 One POST with a small JSON body, answered with JSON, run through the app
-in-process (no server). Median time per request, with Korvex's main branch after 0.14.0:
+in-process (no server). Median time per request, Korvex's main branch after 0.14.0:
 
 | Handler | Time |
 |---|---|
@@ -142,16 +129,16 @@ in-process (no server). Median time per request, with Korvex's main branch after
 
 - With msgspec, validating is faster than not validating: it decodes and
   encodes JSON in compiled code, while `request.json()` and
-  `Response.json()` use Python's `json` module. pydantic costs about as
-  much as not validating.
+  `Response.json()` use Python's `json` module. pydantic costs about the
+  same as not validating.
 
 Reproduce with `uv run --group bench pytest benches/bench_validation.py --benchmark-only`.
 
 ## Dependencies
 
-One GET whose handler gets the user from a header and opens then closes a
-session, run through the app in-process. Median time per request, with
-Korvex's main branch after 0.14.0:
+One GET whose handler reads the user from a header and opens then closes a
+session, run in-process. Median time per request, Korvex's main branch
+after 0.14.0:
 
 | Handler | Time |
 |---|---|
@@ -160,19 +147,18 @@ Korvex's main branch after 0.14.0:
 | FastAPI, the same dependencies, async | 93.8 µs |
 | FastAPI, the same dependencies, sync | 405 µs |
 
-- FastAPI runs sync dependencies in a thread pool, which keeps a blocking
-  one from stopping the event loop but costs a lot. Korvex calls them on
-  the loop, like sync handlers: keep blocking work out of them, or make
-  them async.
-- Dependencies are worked out when the route is registered; a handler
+- FastAPI runs sync dependencies in a thread pool: a blocking one can't
+  stop the event loop, but it costs a lot. Korvex calls them on the loop,
+  like sync handlers: keep blocking work out of them, or make them async.
+- Dependencies are resolved when the route is registered; a handler
   without them pays nothing.
 
 Reproduce with `uv run --group bench pytest benches/bench_dependencies.py --benchmark-only`.
 
 ## Threads on free-threaded Python
 
-The built-in server on the same 4 cores as above, the same app and load
-(200 connections), with more threads or more workers. One run:
+The built-in server on the same 4 cores, app and load (200 connections) as
+above, with more threads or workers. One run:
 
 | Python, workers, threads | Requests/s | p99 | Memory |
 |---|---|---|---|
@@ -187,11 +173,11 @@ The built-in server on the same 4 cores as above, the same app and load
 | 3.14 (GIL), 4 workers, 1 thread | 98,304 | 4.6 ms | 124 MiB |
 
 - On 3.14t, 3 threads serve 57% more than one, within 4% of 4 workers,
-  with a third of the memory. Past 3, they don't gain: each loop has its
-  Rust thread too, so 4 of them already keep 8 threads busy on 4 cores.
+  with a third of the memory. Past 3 there is no gain: each loop has its
+  own Rust thread, so 4 loops already keep 8 threads busy on 4 cores.
 - With the GIL, threads don't help: use workers.
 - Workers still serve the most; threads are for when memory counts (one
-  copy of the app, its caches and connection pools per process).
+  copy of the app, caches and connection pools per process).
 - `compress()` leaves brotli out on 3.14t: the `brotli` package turns the
   GIL back on for the whole process. CI checks that nothing else does.
 
@@ -200,9 +186,9 @@ benches/threads.py` (see the file for the setup).
 
 ## With a database
 
-Each request reads one row from PostgreSQL through an asyncpg pool, then
-answers with JSON: the least a real API does. PostgreSQL gets 2 cores of
-its own, the server 4, each server 3 workers. Two runs:
+Each request reads one row from PostgreSQL through an asyncpg pool and
+answers with JSON. PostgreSQL gets 2 cores, the server 4, with 3 workers
+each. Two runs:
 
 | Server | Requests/s | p99 | Memory |
 |---|---|---|---|
@@ -210,11 +196,11 @@ its own, the server 4, each server 3 workers. Two runs:
 | Korvex on uvicorn | 22,035 / 23,524 | 30.9 / 23.5 ms | 170 MiB |
 | FastAPI on uvicorn | 13,407 / 15,356 | 41.7 / 41.6 ms | 229 MiB |
 
-- The database sets the pace: Korvex's two servers serve about the same,
-  uvicorn a little more in the second run, and the built-in server's lead
-  of the tests above is gone. It still uses the least memory.
-- FastAPI serves 35 to 40% less: its own cost per request comes on top of
-  the database's.
+- The database sets the pace: Korvex's two servers serve about the same
+  (uvicorn a little more in the second run), and the built-in server's
+  lead from the tests above is gone. It still uses the least memory.
+- FastAPI serves 35 to 40% less: its own cost per request adds to the
+  database's.
 
 Reproduce with `uv run --group bench python benches/database.py` (needs podman or
 docker for PostgreSQL, and oha).

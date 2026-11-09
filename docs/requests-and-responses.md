@@ -60,9 +60,8 @@ Response.stream(chunks)  # a generator, sync or async, of bytes or str
 Response.file("report.pdf", filename="report.pdf")  # read in chunks; `filename` makes it a download
 ```
 
-A handler can also return a model, if it says so with a return
-annotation (`-> Task`): it's sent as JSON. One annotated `-> None` sends an
-empty response. See [Validation](validation.md).
+A handler can also return a model (`-> Task`, sent as JSON) or `None`: see
+[Validation](validation.md#what-the-handler-returns).
 
 `headers=` takes a dict, or `(name, value)` pairs to repeat a name.
 

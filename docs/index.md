@@ -2,7 +2,7 @@
 
 A fast Python web framework, with a router and an HTTP server written in
 Rust. You write plain Python functions; Korvex calls them for the right
-requests, checks what comes in, and documents your API.
+requests, checks their input, and documents your API.
 
 ```sh
 pip install korvex
@@ -27,24 +27,21 @@ if __name__ == "__main__":
 
 Run `python main.py`, then open <http://127.0.0.1:8000/hello/Ada?polite=true>.
 
-- `name` comes from the path, `polite` from the query string, already
-  turned into a `bool`: a parameter's name and type say where it comes
-  from and what it must be.
-- A wrong `polite` (`?polite=maybe`) gets a clear 422 error, without any
-  code of yours.
+- `name` comes from the path, `polite` from the query string, turned into
+  a `bool`: a parameter's name and type say where it comes from and what
+  it must be.
+- A wrong `polite` (`?polite=maybe`) gets a 422 error, with no code of yours.
 - `Response.json()` sends JSON. With a model (msgspec or pydantic) and a
-  return annotation, returning the model is enough: see
-  [Validation](validation.md).
-- `app.docs()` would add an interactive page at `/docs`, listing every
-  route.
+  return annotation, return the model: see [Validation](validation.md).
+- `app.docs()` adds a Swagger UI page at `/docs`.
 
-Korvex is young (alpha): the API can still change before 1.0, each change
-listed in the [changelog](https://github.com/3d3n-pyc/korvex/blob/main/CHANGELOG.md)
+Korvex is young (alpha): the API can change before 1.0. Each change is in
+the [changelog](https://github.com/3d3n-pyc/korvex/blob/main/CHANGELOG.md)
 with how to update.
 
 ## The guide
 
-Read in order the first time; each page stands alone afterwards.
+Read in order the first time; each page stands alone after.
 
 1. [Routes](routes.md): paths, parameters, groups, hosts, links between routes, static files.
 2. [Requests and responses](requests-and-responses.md): what a handler gets and returns.
@@ -61,9 +58,9 @@ Read in order the first time; each page stands alone afterwards.
 The [reference](reference/app.md) lists every class, function and option,
 from the code's own docstrings.
 
-And for the curious:
+Also:
 
 - [Performance](performance.md): the benchmarks, and how to reproduce them.
 - [The standalone router](router.md): Korvex's Rust router on its own.
 - [Examples](https://github.com/3d3n-pyc/korvex/tree/main/examples): from
-  a few lines to a complete app laid out like a real project.
+  a few lines to a complete app.

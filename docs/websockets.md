@@ -31,4 +31,4 @@ async def chat(ws: WebSocket, room: str, user: CurrentUser):
 
 They work the same under any ASGI server and in the
 [built-in server](server.md), which also pings idle connections and makes a
-slow client wait rather than pile messages in memory.
+slow client wait instead of piling messages in memory.

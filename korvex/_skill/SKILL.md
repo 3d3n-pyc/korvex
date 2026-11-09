@@ -109,7 +109,7 @@ def test_tasks():
   on the request. For plain data, `return Response.json({...})`.
   `-> None` sends an empty body (use it with `status=204`).
 - **`status=` is the success status of a returned model** or `None`; a
-  returned `Response` keeps its own status.
+  returned `Response` keeps its own.
 - **Where a parameter comes from** depends on its name and type: a name
   in the path → path; a msgspec/pydantic model (or a list of them) → JSON
   body; `str`, `int`, `float`, `bool`, `UUID`, `date`, `datetime` (or
@@ -129,7 +129,7 @@ def test_tasks():
   first value, `.get_all(name)` every one. `headers.get()` is
   case-insensitive.
 - **Hooks, not middleware classes**: `@app.before_request` (gets a
-  `Connection`, returns a `Response` to answer early, or `None`) and
+  `Connection`; returns a `Response` to answer early, or `None`) and
   `@app.after_request` (gets `request, response`). Ready-made ones are
   functions taking the app: `cors(app, allow_origins=[...])`,
   `request_id(app)`, `rate_limit(app, requests=100, per=60)`,
@@ -178,6 +178,6 @@ def test_tasks():
 
 ## Before you finish
 
-- Run the tests with `TestClient`, and import the app module once: a
-  wrong parameter type fails at import, with a message saying why.
+- Run the tests with `TestClient` and import the app module once: a wrong
+  parameter type fails at import, with a message saying why.
 - Keep msgspec/pydantic imports where their models are used.

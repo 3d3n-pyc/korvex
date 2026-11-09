@@ -1,7 +1,7 @@
 # Dependencies
 
-A dependency is a function whose result a handler receives. It's where
-code shared by routes goes: who is signed in, a database connection, a
+A dependency is a function whose result a handler receives. Put code
+shared by routes there: who is signed in, a database connection, a
 permission check.
 
 ```python
@@ -25,9 +25,9 @@ def me(user: User = Depends(current_user)) -> User:
 - A dependency takes parameters like a handler: query, headers, cookies,
   body, path, the request, and other dependencies. It can be sync or
   async.
-- Within one request, it runs once, however many parameters ask for it.
+- It runs once per request, however many parameters ask for it.
   `Depends(func, cache=False)` runs it each time.
-- `Annotated` names it once for every use:
+- `Annotated` names it once for all uses:
   `CurrentUser = Annotated[User, Depends(current_user)]`, then
   `def me(user: CurrentUser)`.
 
@@ -70,7 +70,7 @@ async def tasks(user: CurrentUser, db=Depends(database)) -> list[Task]:
 app.dependency_overrides[current_user] = lambda: User(id=1, name="test")
 ```
 
-replaces a dependency everywhere it's used. See [Testing](testing.md).
+replaces a dependency everywhere. See [Testing](testing.md).
 
 ## Errors
 

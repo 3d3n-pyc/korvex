@@ -1,11 +1,11 @@
 # Working on Korvex
 
 Instructions for AI coding agents working on this repository. To build an
-app *with* Korvex instead, read `.agents/skills/korvex/SKILL.md`.
+app *with* Korvex, read `.agents/skills/korvex/SKILL.md`.
 
-Korvex is a Python web framework (ASGI) with a Rust router and HTTP server,
-built with PyO3 and maturin. [CONTRIBUTING.md](CONTRIBUTING.md) has the
-layout of the code, file by file: read it before changing anything.
+Korvex is a Python (ASGI) web framework with a Rust router and HTTP server,
+built with PyO3 and maturin. Read the file-by-file code layout in
+[CONTRIBUTING.md](CONTRIBUTING.md) before changing anything.
 
 ## Setup and checks
 
@@ -46,9 +46,8 @@ uv run --group docs mkdocs build --strict -d target/site   # if docs or docstrin
   `tree.rs`, `path.rs`, `method.rs` and `proxy.rs` stay plain Rust.
 - **New behavior needs a test.** `korvex.testing.TestClient` drives the
   app; `tests/support.py` helps with raw ASGI messages.
-- **Docstrings are documentation**: the reference pages of the site are
-  built from them. Write them for users, in plain English, and keep them
-  true.
+- **Docstrings are documentation**: the site's reference pages are built
+  from them. Write them for users, in plain English.
 - **Keep the docs in step**: the guide in `docs/`, the README when a
   headline changes, and `.agents/skills/korvex/SKILL.md` when something
   it shows changes (`tests/test_agent_skill.py` runs its examples).

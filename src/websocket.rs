@@ -138,8 +138,8 @@ impl WsConnection {
             .is_some_and(|sender| sender.send(message).is_ok())
     }
 
-    /// Queues a message, counted in the backlog first (the relay can't take
-    /// it out before): 1 sent, 2 sent but the client is behind, 0 gone.
+    /// Queues a message, counted in the backlog first so the relay can't
+    /// take it out before. Returns the `send_text()` codes.
     fn send_data(&self, message: Outgoing, size: usize) -> u8 {
         let next = self.backlog.add(size);
         if self.send(message) { next } else { GONE }

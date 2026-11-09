@@ -25,8 +25,7 @@ def cors(
     expose_headers: Sequence[str] = (),
     max_age: int = 600,
 ) -> None:
-    """Lets browsers call the app from other origins (Cross-Origin Resource
-    Sharing).
+    """Lets browsers call the app from other origins (CORS).
 
     - `allow_origins`: origins like `"https://example.com"`, or `"*"`.
     - `allow_methods`: methods a cross-origin request may use.

@@ -38,17 +38,16 @@ class ValidationError(HTTPException):
 
 
 class Abort(Exception):
-    """Raise it to stop a request with this exact response: from a
-    dependency, a handler or a before hook.
+    """Raise it from a dependency, a handler or a before hook to stop the
+    request with this exact response.
 
         def signed_in(session: Optional[str] = Cookie(None)) -> None:
             if session is None:
                 raise Abort(Response.redirect("/login"))
 
-    The response is sent as is, without going through exception handlers;
-    after hooks still apply. For an error status, `HTTPException` is
-    usually what you want. In a WebSocket's dependencies, it refuses the
-    connection (403): there's no other response to send before accepting."""
+    The response is sent as is, without exception handlers; after hooks
+    still apply. For an error status, prefer `HTTPException`. In a
+    WebSocket's dependencies, it refuses the connection (403)."""
 
     def __init__(self, response: Response) -> None:
         super().__init__(response)

@@ -27,8 +27,8 @@ COMPRESSIBLE = (
 
 
 class _Encoder:
-    """One content encoding: whole bodies at once, or a stream piece by
-    piece (each piece flushed, so a streamed response isn't held back)."""
+    """One content encoding: whole bodies, or a stream piece by piece (each
+    piece flushed, so a stream isn't held back)."""
 
     def __init__(
         self, name: str, whole: Callable[[bytes], bytes], stream: Callable[[], tuple[Callable, Callable]]
@@ -118,15 +118,15 @@ def compress(
     - `encodings`: in order of preference, among those the client accepts
       (`Accept-Encoding`); `("zstd", "br", "gzip")` by default. `gzip`
       always works; `br` needs the `brotli` package (`pip install
-      korvex[brotli]`), `zstd` Python 3.14 or later. Those not available
-      are skipped. On a free-threaded Python, `br` is left out of the
-      default: the `brotli` package turns the GIL back on for the whole
-      process when imported. Ask for it explicitly to use it anyway.
-    - `minimum_size`: smaller bodies are sent as they are (compressing them
-      gains little). Streamed responses are compressed whatever their size,
-      each piece flushed as it goes, so a live stream isn't held back.
-    - `levels`: per encoding (`{"gzip": 9}`); the defaults trade a little
-      size for speed: gzip 6, brotli 4, zstd 3.
+      korvex[brotli]`), `zstd` Python 3.14 or later. Unavailable ones are
+      skipped. On a free-threaded Python, `br` is left out of the default:
+      importing `brotli` turns the GIL back on for the whole process. Ask
+      for it explicitly to use it anyway.
+    - `minimum_size`: smaller bodies are sent as they are. Streamed
+      responses are compressed whatever their size, each piece flushed as
+      it goes.
+    - `levels`: per encoding (`{"gzip": 9}`); defaults: gzip 6, brotli 4,
+      zstd 3.
     - `content_types`: what's worth compressing: prefixes like `text/`, or
       suffixes like `+json`.
 
@@ -135,7 +135,7 @@ def compress(
     alone. Compressed responses get `Vary: Accept-Encoding`.
 
     Call it before the other hooks: after hooks run last-declared first,
-    so it then sees each response once the others have changed it.
+    so it sees each response once the others have changed it.
 
     Mind BREACH: compressing a response that contains both a secret (a
     CSRF token) and something the client sent lets an attacker guess the
@@ -199,6 +199,3 @@ async def _compressed(source: AsyncIterable[bytes], encoder: _Encoder) -> AsyncI
         if out:
             yield out
     yield finish()
-
-
-# --- security headers ---

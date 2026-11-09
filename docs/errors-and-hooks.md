@@ -11,8 +11,8 @@ raise HTTPException(404, "no such task")  # {"detail": "no such task"}, a 404
 - Raise it in a handler, a dependency or a before hook. Without a
   message, the standard one is used (`"Not Found"`). `headers=` adds
   headers: `{"WWW-Authenticate": "Bearer"}`.
-- Every error Korvex answers is JSON with a `detail`: these, the 404 and
-  405 of routing, validation's 422.
+- Every error Korvex answers is JSON with a `detail`: these, routing's 404
+  and 405, validation's 422.
 - Any other exception gives a 500, `{"detail": "Internal Server Error"}`.
   The error itself is logged to the `korvex` logger, never sent.
 
@@ -79,10 +79,10 @@ async def disconnect():
 
 - Startup hooks run before the first request; if one raises, the server
   doesn't start. Shutdown hooks run when it stops, last declared first.
-- `app.local` keeps attributes per event loop. With one loop it's a plain
-  attribute; with the built-in server's threads, each loop gets its own
-  pool, which is what asyncio needs. Prefer it to module globals for
-  what a startup hook opens, and read it from handlers and dependencies:
+- `app.local` keeps attributes per event loop: with the built-in server's
+  threads, each loop gets its own pool, as asyncio needs. Use it instead
+  of module globals for what a startup hook opens, and read it from
+  handlers and dependencies:
 
 ```python
 async def db():  # a dependency
