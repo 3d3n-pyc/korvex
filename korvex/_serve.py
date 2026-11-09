@@ -342,7 +342,12 @@ async def _serve_websocket(
         if not connected:
             connected = True
             return {"type": "websocket.connect"}
-        return await incoming.get()
+        message = await incoming.get()
+        data = message.get("text") if "text" in message else message.get("bytes")
+        if data is not None:  # tells the server it may read more from the client
+            size = len(data) if isinstance(data, bytes) or data.isascii() else len(data.encode())
+            connection.received(size)
+        return message
 
     async def send(message: dict) -> None:
         kind = message["type"]
