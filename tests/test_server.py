@@ -756,3 +756,29 @@ def test_negative_max_connections_is_refused():
 
     with pytest.raises(ValueError, match="max_connections"):
         App().run(max_connections=-1)
+
+
+def _pids_over_requests(port, count):
+    pids = set()
+    for _ in range(count):
+        status, _, body = fetch(f"http://127.0.0.1:{port}/pid")
+        assert status == 200
+        pids.add(body)
+    return pids
+
+
+@pytest.mark.parametrize("workers", ["1", "2"])
+def test_max_requests_replaces_workers(workers):
+    port = free_port()
+    process = start(port, WORKERS=workers, MAX_REQUESTS="20")
+    try:
+        assert len(_pids_over_requests(port, 100)) > int(workers)
+    finally:
+        process.kill()
+
+
+def test_negative_max_requests_is_refused():
+    from korvex import App
+
+    with pytest.raises(ValueError, match="max_requests"):
+        App().run(max_requests=-1)

@@ -99,3 +99,14 @@ def test_restart_delay_doubles_to_a_cap_and_resets_after_a_long_life():
     assert seen[:4] == [BACKOFF_START, 0.2, 0.4, 0.8]
     assert seen[-1] == BACKOFF_MAX
     assert restart_delay(BACKOFF_MAX, 30) == BACKOFF_START
+
+
+def test_a_clean_exit_is_replaced_at_once_without_backoff():
+    from korvex._serve import _Supervisor
+
+    supervisor = _Supervisor(None, None, 1.0, None)  # type: ignore[arg-type]
+    supervisor.children[42] = time.monotonic() - 60
+    supervisor.on_exit(42, 0)  # exit code 0
+    assert supervisor.delay == 0.0
+    assert len(supervisor.restarts) == 1
+    assert supervisor.restarts[0] <= time.monotonic()

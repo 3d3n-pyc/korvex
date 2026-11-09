@@ -28,6 +28,7 @@ app.run("0.0.0.0", 8000, workers=3, graceful_timeout=10, forwarded_allow_ips=["1
 | `--uds PATH` | | Listen on a Unix socket instead, for a proxy on the same machine. |
 | `--workers N` | `1` | Processes sharing the port; about 3 per 4 CPU cores works best. A worker that crashes is restarted. |
 | `--max-connections N` | `0` (no limit) | Open connections per worker and thread (WebSockets count). Beyond it, new clients wait in the listen backlog, not refused, until one closes. Memory is bounded by about N × `--max-body`. |
+| `--max-requests N` | `0` (never) | A worker stops gracefully after about N HTTP requests (N plus a random 0 to 10%, so workers don't restart together) and a new one replaces it at once: a cap on slow memory leaks. Counted per worker, all its threads together; WebSocket handshakes aren't counted. |
 | `--threads N` | `1` | Event loops per worker, each in its own thread: see below. |
 | `--graceful-timeout S` | `30` | On Ctrl+C or SIGTERM, seconds requests in progress get to finish. |
 | `--max-body BYTES` | 1 MiB | Larger bodies get a 413, larger WebSocket messages close the connection. A route can set its own: `@app.post("/upload", max_body=50_000_000)`. |
@@ -57,6 +58,9 @@ or huge upload never holds Python up.
 
 ## Good to know
 
+- `--max-requests` recycles workers: even with one worker, the server forks it and
+  restarts it as a supervisor would. A clean restart never triggers the crash
+  backoff.
 - In production, run it behind a reverse proxy (nginx, Caddy, Traefik):
   it speaks HTTP/1.1 and WebSocket, and leaves HTTPS, HTTP/2 and HTTP/3 to
   the proxy. The [deployment guide](deployment.md) has ready configurations.

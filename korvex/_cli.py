@@ -40,6 +40,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         default=0,
         help="most open connections per worker and thread; 0 for no limit (default: 0)",
     )
+    run.add_argument(
+        "--max-requests",
+        type=_non_negative,
+        default=0,
+        help="HTTP requests a worker serves before it restarts, give or take 10%%; 0 for never (default: 0)",
+    )
     run.add_argument("--max-body", type=int, default=1024 * 1024, help="largest request body in bytes (default: 1 MiB)")
     run.add_argument(
         "--read-timeout", type=float, default=30.0, help="seconds a client gets to send the headers, then the body"
@@ -85,6 +91,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         ws_ping_interval=args.ws_ping_interval,
         forwarded_host=args.forwarded_host,
         max_connections=args.max_connections,
+        max_requests=args.max_requests,
     )
 
 
