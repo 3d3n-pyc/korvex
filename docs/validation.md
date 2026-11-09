@@ -81,7 +81,17 @@ Invalid input gets a 422 listing the problems:
 
 `loc` says where: `["query", "page"]`, `["header", "x-client"]`,
 `["form", "title"]`. pydantic lists every problem; msgspec stops at the
-first. `@app.exception_handler(422)` can answer differently.
+first. To answer differently, handle the 422; the exception is a
+`ValidationError`, with the list in `errors`:
+
+```python
+from korvex import Response, ValidationError
+
+
+@app.exception_handler(422)
+def invalid(request, exc: ValidationError):
+    return Response.json({"problems": [e["loc"] for e in exc.errors]}, status=422)
+```
 
 Annotations are read once, when the route is declared. A handler without
 them costs nothing more than before.

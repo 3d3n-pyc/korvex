@@ -60,9 +60,36 @@ async def current_user(token: str = Depends(bearer)) -> User:
 ```
 
 - `Bearer(format="JWT")`, `APIKey(header="X-API-Key")` (or `query=`,
-  `cookie=`) and `OAuth2Password(token_url="/token", scopes={...})`.
+  `cookie=`) and `OAuth2Password(token_url="/token", scopes={...})`
+  (with `refresh_url=` if tokens can be refreshed).
+- Each takes `name=` (its name in OpenAPI) and `description=` (shown in
+  Swagger UI).
 - A scheme only reads the credential; checking it is the job of the
   dependency that takes it, like `current_user` above.
 - `required=False` gives `None` instead of a 401.
 - Every route that depends on a scheme, directly, through another
   dependency or through its group, lists it.
+
+### Your own scheme
+
+Subclass `SecurityScheme`: `credential()` finds it in the request,
+`openapi()` describes it, and `challenge` goes in the 401's
+`WWW-Authenticate`. HTTP Basic, for example:
+
+```python
+from korvex.security import SecurityScheme
+
+
+class Basic(SecurityScheme):
+    challenge = "Basic"
+
+    def __init__(self):
+        super().__init__(name="basic", description=None, required=True)
+
+    def credential(self, request):
+        scheme, _, value = request.headers.get("authorization", "").partition(" ")
+        return value if scheme.lower() == "basic" else None
+
+    def openapi(self):
+        return {"type": "http", "scheme": "basic"}
+```

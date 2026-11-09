@@ -82,4 +82,10 @@ async def disconnect():
 - `app.local` keeps attributes per event loop. With one loop it's a plain
   attribute; with the built-in server's threads, each loop gets its own
   pool, which is what asyncio needs. Prefer it to module globals for
-  what a startup hook opens.
+  what a startup hook opens, and read it from handlers and dependencies:
+
+```python
+async def db():  # a dependency
+    async with app.local.pool.acquire() as connection:
+        yield connection
+```
