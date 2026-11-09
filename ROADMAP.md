@@ -59,7 +59,7 @@ development, or a platform whose load balancer doesn't do everything.
 The API's open questions (0.10), ready-made middleware (0.11), more
 than one core per worker (0.12), what everyone expects from a framework
 (0.13: a test client, reverse URLs, a richer OpenAPI) and a review of the
-whole public API (0.14) are done. The public API is now what `korvex`,
+whole public API (0.14) and a documentation site (0.14.2) are done. The public API is now what `korvex`,
 `korvex.router`, `korvex.testing`, `korvex.security` and
 `korvex.middleware` export. Until 1.0 it can still change, each change
 listed in the changelog with how to update; after, it stays.
@@ -68,7 +68,6 @@ listed in the changelog with how to update; after, it stays.
 
 - An API that stays stable, with deprecations announced in advance: a
   deprecated feature warns for at least two minor versions before it goes.
-- A documentation site, built from `docs/` and the examples.
 - A built-in server that's solid in production behind a reverse proxy.
 - At least a few projects running it in production.
 

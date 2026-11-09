@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.14.2
+
+A documentation site, Korvex taught to AI coding agents, and the built-in
+server's speed checked in CI.
 
 - **A documentation site**, at <https://3d3n-pyc.github.io/korvex/>: the
   guide, a homepage with a first app, and a reference of every public
