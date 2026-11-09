@@ -1,50 +1,55 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="760" height="314" viewBox="0 0 760 314" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img">
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="344" viewBox="0 0 760 344" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img">
 <title>Requests per second per server on the same 4 CPU cores, higher is better</title>
-<desc>Korvex (built-in): 126,378 with 200 clients, 130,549 with 1,000; Granian + Korvex app: 111,560 with 200 clients, 113,371 with 1,000; uvicorn + Korvex app: 105,024 with 200 clients, 96,295 with 1,000; Robyn: 90,279 with 200 clients, 81,851 with 1,000.</desc>
-<rect width="760" height="314" rx="8" fill="#fcfcfb"/>
+<desc>Korvex (built-in): 142,692 with 200 clients, 145,437 with 1,000; Granian + Korvex app: 123,868 with 200 clients, 134,079 with 1,000; uvicorn + Korvex app: 117,454 with 200 clients, 110,416 with 1,000; Robyn: 95,696 with 200 clients, 91,709 with 1,000; FastrAPI: 61,392 with 200 clients, 67,135 with 1,000.</desc>
+<rect width="760" height="344" rx="8" fill="#fcfcfb"/>
 <text x="20" y="32" font-size="16" font-weight="600" fill="#0b0b0b">Requests per second on the same 4 CPU cores (higher is better)</text>
 <text x="20" y="54" font-size="12" fill="#52514e">Same app for all, each server with its best worker count. No request failed.</text>
 <circle cx="25" cy="78" r="5" fill="#86b6ef"/>
 <text x="35" y="82" font-size="12" fill="#52514e">200 clients</text>
 <circle cx="127.6" cy="78" r="5" fill="#104281"/>
 <text x="137.6" y="82" font-size="12" fill="#52514e">1,000 clients</text>
-<line x1="190.0" y1="96" x2="190.0" y2="232" stroke="#e1e0d9" stroke-width="1"/>
-<text x="190.0" y="250" font-size="11" text-anchor="middle" fill="#898781">0</text>
-<line x1="255.7" y1="96" x2="255.7" y2="232" stroke="#e1e0d9" stroke-width="1"/>
-<text x="255.7" y="250" font-size="11" text-anchor="middle" fill="#898781">20k</text>
-<line x1="321.4" y1="96" x2="321.4" y2="232" stroke="#e1e0d9" stroke-width="1"/>
-<text x="321.4" y="250" font-size="11" text-anchor="middle" fill="#898781">40k</text>
-<line x1="387.1" y1="96" x2="387.1" y2="232" stroke="#e1e0d9" stroke-width="1"/>
-<text x="387.1" y="250" font-size="11" text-anchor="middle" fill="#898781">60k</text>
-<line x1="452.9" y1="96" x2="452.9" y2="232" stroke="#e1e0d9" stroke-width="1"/>
-<text x="452.9" y="250" font-size="11" text-anchor="middle" fill="#898781">80k</text>
-<line x1="518.6" y1="96" x2="518.6" y2="232" stroke="#e1e0d9" stroke-width="1"/>
-<text x="518.6" y="250" font-size="11" text-anchor="middle" fill="#898781">100k</text>
-<line x1="584.3" y1="96" x2="584.3" y2="232" stroke="#e1e0d9" stroke-width="1"/>
-<text x="584.3" y="250" font-size="11" text-anchor="middle" fill="#898781">120k</text>
-<line x1="650.0" y1="96" x2="650.0" y2="232" stroke="#e1e0d9" stroke-width="1"/>
-<text x="650.0" y="250" font-size="11" text-anchor="middle" fill="#898781">140k</text>
-<line x1="190" y1="232" x2="650" y2="232" stroke="#c3c2b7" stroke-width="1"/>
+<line x1="190.0" y1="96" x2="190.0" y2="262" stroke="#e1e0d9" stroke-width="1"/>
+<text x="190.0" y="280" font-size="11" text-anchor="middle" fill="#898781">0</text>
+<line x1="255.7" y1="96" x2="255.7" y2="262" stroke="#e1e0d9" stroke-width="1"/>
+<text x="255.7" y="280" font-size="11" text-anchor="middle" fill="#898781">20k</text>
+<line x1="321.4" y1="96" x2="321.4" y2="262" stroke="#e1e0d9" stroke-width="1"/>
+<text x="321.4" y="280" font-size="11" text-anchor="middle" fill="#898781">40k</text>
+<line x1="387.1" y1="96" x2="387.1" y2="262" stroke="#e1e0d9" stroke-width="1"/>
+<text x="387.1" y="280" font-size="11" text-anchor="middle" fill="#898781">60k</text>
+<line x1="452.9" y1="96" x2="452.9" y2="262" stroke="#e1e0d9" stroke-width="1"/>
+<text x="452.9" y="280" font-size="11" text-anchor="middle" fill="#898781">80k</text>
+<line x1="518.6" y1="96" x2="518.6" y2="262" stroke="#e1e0d9" stroke-width="1"/>
+<text x="518.6" y="280" font-size="11" text-anchor="middle" fill="#898781">100k</text>
+<line x1="584.3" y1="96" x2="584.3" y2="262" stroke="#e1e0d9" stroke-width="1"/>
+<text x="584.3" y="280" font-size="11" text-anchor="middle" fill="#898781">120k</text>
+<line x1="650.0" y1="96" x2="650.0" y2="262" stroke="#e1e0d9" stroke-width="1"/>
+<text x="650.0" y="280" font-size="11" text-anchor="middle" fill="#898781">140k</text>
+<line x1="190" y1="262" x2="650" y2="262" stroke="#c3c2b7" stroke-width="1"/>
 <text x="20" y="116" font-size="13" font-weight="600" fill="#0b0b0b">Korvex (built-in)</text>
-<line x1="605.2" y1="112" x2="618.9" y2="112" stroke="#c3c2b7" stroke-width="2" stroke-linecap="round"/>
-<circle cx="605.2" cy="112" r="5" fill="#86b6ef" stroke="#fcfcfb" stroke-width="2"/>
-<circle cx="618.9" cy="112" r="5" fill="#104281" stroke="#fcfcfb" stroke-width="2"/>
-<text x="666" y="116" font-size="12" font-weight="600" fill="#0b0b0b">126.4k / 130.5k</text>
+<line x1="658.8" y1="112" x2="667.9" y2="112" stroke="#c3c2b7" stroke-width="2" stroke-linecap="round"/>
+<circle cx="658.8" cy="112" r="5" fill="#86b6ef" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="667.9" cy="112" r="5" fill="#104281" stroke="#fcfcfb" stroke-width="2"/>
+<text x="666" y="116" font-size="12" font-weight="600" fill="#0b0b0b">142.7k / 145.4k</text>
 <text x="20" y="146" font-size="13" fill="#52514e">Granian + Korvex app</text>
-<line x1="556.6" y1="142" x2="562.5" y2="142" stroke="#c3c2b7" stroke-width="2" stroke-linecap="round"/>
-<circle cx="556.6" cy="142" r="5" fill="#86b6ef" stroke="#fcfcfb" stroke-width="2"/>
-<circle cx="562.5" cy="142" r="5" fill="#104281" stroke="#fcfcfb" stroke-width="2"/>
-<text x="666" y="146" font-size="12" fill="#52514e">111.6k / 113.4k</text>
+<line x1="597.0" y1="142" x2="630.5" y2="142" stroke="#c3c2b7" stroke-width="2" stroke-linecap="round"/>
+<circle cx="597.0" cy="142" r="5" fill="#86b6ef" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="630.5" cy="142" r="5" fill="#104281" stroke="#fcfcfb" stroke-width="2"/>
+<text x="666" y="146" font-size="12" fill="#52514e">123.9k / 134.1k</text>
 <text x="20" y="176" font-size="13" fill="#52514e">uvicorn + Korvex app</text>
-<line x1="506.4" y1="172" x2="535.1" y2="172" stroke="#c3c2b7" stroke-width="2" stroke-linecap="round"/>
-<circle cx="535.1" cy="172" r="5" fill="#86b6ef" stroke="#fcfcfb" stroke-width="2"/>
-<circle cx="506.4" cy="172" r="5" fill="#104281" stroke="#fcfcfb" stroke-width="2"/>
-<text x="666" y="176" font-size="12" fill="#52514e">105.0k / 96.3k</text>
+<line x1="552.8" y1="172" x2="575.9" y2="172" stroke="#c3c2b7" stroke-width="2" stroke-linecap="round"/>
+<circle cx="575.9" cy="172" r="5" fill="#86b6ef" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="552.8" cy="172" r="5" fill="#104281" stroke="#fcfcfb" stroke-width="2"/>
+<text x="666" y="176" font-size="12" fill="#52514e">117.5k / 110.4k</text>
 <text x="20" y="206" font-size="13" fill="#52514e">Robyn</text>
-<line x1="458.9" y1="202" x2="486.6" y2="202" stroke="#c3c2b7" stroke-width="2" stroke-linecap="round"/>
-<circle cx="486.6" cy="202" r="5" fill="#86b6ef" stroke="#fcfcfb" stroke-width="2"/>
-<circle cx="458.9" cy="202" r="5" fill="#104281" stroke="#fcfcfb" stroke-width="2"/>
-<text x="666" y="206" font-size="12" fill="#52514e">90.3k / 81.9k</text>
-<text x="20" y="278" font-size="12" fill="#52514e">uvicorn and Granian run the Korvex ASGI app; Robyn runs its own version with its own server.</text>
-<text x="20" y="298" font-size="11" fill="#898781">Python 3.14.7, 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz</text>
+<line x1="491.3" y1="202" x2="504.4" y2="202" stroke="#c3c2b7" stroke-width="2" stroke-linecap="round"/>
+<circle cx="504.4" cy="202" r="5" fill="#86b6ef" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="491.3" cy="202" r="5" fill="#104281" stroke="#fcfcfb" stroke-width="2"/>
+<text x="666" y="206" font-size="12" fill="#52514e">95.7k / 91.7k</text>
+<text x="20" y="236" font-size="13" fill="#52514e">FastrAPI</text>
+<line x1="391.7" y1="232" x2="410.6" y2="232" stroke="#c3c2b7" stroke-width="2" stroke-linecap="round"/>
+<circle cx="391.7" cy="232" r="5" fill="#86b6ef" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="410.6" cy="232" r="5" fill="#104281" stroke="#fcfcfb" stroke-width="2"/>
+<text x="666" y="236" font-size="12" fill="#52514e">61.4k / 67.1k</text>
+<text x="20" y="308" font-size="12" fill="#52514e">uvicorn and Granian run the Korvex ASGI app; Robyn and FastrAPI run their own version with their own server.</text>
+<text x="20" y="328" font-size="11" fill="#898781">Python 3.14.7, 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz</text>
 </svg>

@@ -27,6 +27,7 @@ from urllib.parse import unquote
 
 from korvex import _core
 from korvex._app import _call, _finish, _raw_headers
+from korvex._requests import Request
 from korvex._response import StreamingResponse
 from korvex.middleware import current_request_id
 
@@ -284,20 +285,9 @@ async def _serve_http(
     error's response, as if the route had raised `HTTPException`. A
     streamed response waits on `writable(responder.id)` whenever its
     client falls behind."""
-    scope = {
-        "type": "http",
-        "method": method,
-        "path": unquote(path),
-        "query_string": query_string,
-        "headers": headers,
-        "client": client,
-        "scheme": scheme,
-    }
-
-    async def receive() -> dict:
-        return {"type": "http.request", "body": body, "more_body": False}
-
-    response = await app._respond(scope, receive, error)
+    decoded = unquote(path) if "%" in path else path
+    request = Request._from_server(method, decoded, query_string, headers, client, scheme, body, app)
+    response = await app._respond(request, error)
     head = method == "HEAD"
     raw_headers = _raw_headers(response, head)
     if head:

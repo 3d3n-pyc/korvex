@@ -27,6 +27,7 @@ from korvex._routing import (
     WebSocketHandler,
     _check_name_type,
     _Docs,
+    _fast_call,
     _Host,
     _host_labels,
     _Route,
@@ -497,7 +498,7 @@ class App(_RouteDecorators):
         if scope["type"] != "http":
             raise NotImplementedError(f"unsupported ASGI scope type: {scope['type']!r}")
 
-        response = await self._respond(scope, receive)
+        response = await self._respond(Request(scope, receive, {}, self))
         head = scope["method"] == "HEAD"
         if isinstance(response, StreamingResponse):
             await self._send_stream(response, send, head, scope["path"])
@@ -519,12 +520,11 @@ class App(_RouteDecorators):
         finally:
             await _finish(response, path)  # sent or not, what waited for it runs
 
-    async def _respond(self, scope: dict, receive: Callable, error: int = 0) -> Response:
+    async def _respond(self, request: Request, error: int = 0) -> Response:
         """The response to one request: before hooks, then the route (its
         dependencies and handler), then after hooks, with errors turned into
         responses at each step. With `error`, the route is replaced by that
         HTTP error."""
-        request = Request(scope, receive, {}, self)
         try:
             response = None
             for hook in self._before_request:
@@ -573,6 +573,13 @@ class App(_RouteDecorators):
             values = {**host_params, **path_params}
             path_params = {**_host_params_for(route, host_params), **path_params}
         request.path_params = values
+        fast = route.fast
+        if fast is not None:  # nothing to read from the request: call it as is
+            name, is_async = fast
+            result = route.func(**path_params, **{name: request}) if name is not None else route.func(**path_params)
+            if is_async:
+                return await result
+            return await result if isawaitable(result) else result  # a sync wrapper of an async function
         handler = route.func
         plan = route.plan if route.plan is not None else self._plan_of(handler_name)
         if not needs_plan(plan):  # no annotations to act on: called as before, at no cost
@@ -605,6 +612,7 @@ class App(_RouteDecorators):
         if route.plan is None:
             pattern = next((path for path, _, name, _ in self._router.routes() if name == handler_name), "")
             route.plan = self._plan(route.func, pattern)
+            route.fast = _fast_call(route.plan)
         return route.plan
 
     async def _websocket(self, scope: dict, receive: Callable, send: Callable) -> None:

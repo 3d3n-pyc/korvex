@@ -29,7 +29,15 @@ class Headers:
     __slots__ = ("_items",)
 
     def __init__(self, items: HeaderItems = ()) -> None:
-        self._items = header_pairs(items)
+        self._items = header_pairs(items) if items else []
+
+    @classmethod
+    def _trusted(cls, pairs: list[tuple[str, str]]) -> Headers:
+        """Headers from pairs already known to be right (a request's, from
+        the server), without checking each one again."""
+        headers = cls.__new__(cls)
+        headers._items = pairs
+        return headers
 
     def get(self, name: str, default: str | None = None) -> str | None:
         """The first value for `name`, or `default`."""
@@ -178,7 +186,9 @@ class Response:
     @classmethod
     def _with_type(cls, body: str, content_type: str, status: int, headers: HeaderItems) -> Response:
         response = cls(body, status=status, headers=headers)
-        if "Content-Type" not in response.headers:
+        if not headers:  # the usual case: nothing to look through
+            response.headers._items.append(("Content-Type", content_type))
+        elif "Content-Type" not in response.headers:
             response.headers.set("Content-Type", content_type)
         return response
 

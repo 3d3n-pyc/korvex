@@ -109,7 +109,7 @@ class Connection:
         self.scheme: str = scope.get("scheme", "http")
         """`"https"` or `"http"` (`"wss"` or `"ws"` for a WebSocket), as the
         client used it."""
-        self.headers = Headers((k.decode("latin-1"), v.decode("latin-1")) for k, v in scope["headers"])
+        self.headers = Headers._trusted([(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope["headers"]])
         self._query_string: bytes = scope.get("query_string", b"")
         self._query: MultiDict[str] | None = None
         self.path_params = path_params
@@ -166,6 +166,37 @@ class Request(Connection):
 
     __slots__ = ()
 
+    @classmethod
+    def _from_server(
+        cls,
+        method: str,
+        path: str,
+        query_string: bytes,
+        headers: list[tuple[bytes, bytes]],
+        client: tuple[str, int] | None,
+        scheme: str,
+        body: bytes,
+        app: App,
+    ) -> Request:
+        """A request from the built-in server, read in full: its fields set
+        directly, without going through an ASGI scope (the same fields as
+        `Connection.__init__`, on the busiest path there is)."""
+        request = cls.__new__(cls)
+        request.method = method
+        request.path = path
+        request.client = client
+        request.scheme = scheme
+        request.headers = Headers._trusted([(k.decode("latin-1"), v.decode("latin-1")) for k, v in headers])
+        request._query_string = query_string
+        request._query = None
+        request.path_params = {}
+        request.app = app
+        request._receive = _read_already
+        request._cookies = None
+        request._body = body  # body() gives it, without receiving
+        request._form = None
+        return request
+
     async def body(self) -> bytes:
         """Reads the whole request body (once: later calls get it again)."""
         if self._body is None:
@@ -208,6 +239,11 @@ class Request(Connection):
         except (UnicodeDecodeError, LookupError):  # bad bytes, or an unknown charset
             raise HTTPException(400, "invalid form encoding") from None
         raise HTTPException(415, "expected a form (urlencoded or multipart)")
+
+
+async def _read_already() -> dict:
+    """The `receive` of a request whose body came with it: never called."""
+    raise RuntimeError("the body of a request from the built-in server is already read")
 
 
 class WebSocketDisconnect(Exception):

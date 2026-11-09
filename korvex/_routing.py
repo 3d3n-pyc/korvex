@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from korvex._requests import Connection
-from korvex._schema import Plan, _library, path_params
+from korvex._schema import Plan, _library, needs_plan, path_params
 from korvex.router import RouteGroup, Router
 
 if TYPE_CHECKING:
@@ -249,11 +249,12 @@ class _RouteDecorators:
 class _Route:
     """What the App keeps about one route, under its handler name in the
     router: the function, what its annotations ask for (worked out on
-    first use for a function attached with `@app.handler`), the name
-    `url_for()` knows it by, how OpenAPI shows it, and which host
-    parameters the function takes (None: all of them, or not on a host)."""
+    first use for the App's own routes: static files, the docs), how to
+    call it when that's nothing (`fast`), the name `url_for()` knows it
+    by, how OpenAPI shows it, and which host parameters the function
+    takes (None: all of them, or not on a host)."""
 
-    __slots__ = ("func", "plan", "name", "explicit", "docs", "host_args")
+    __slots__ = ("func", "plan", "fast", "name", "explicit", "docs", "host_args")
 
     def __init__(
         self,
@@ -267,10 +268,22 @@ class _Route:
     ) -> None:
         self.func = func
         self.plan = plan
+        self.fast = _fast_call(plan)
         self.name = name  # None: url_for() can't link to it
         self.explicit = explicit  # given with name=, rather than the function's
         self.docs = docs
         self.host_args = host_args
+
+
+def _fast_call(plan: Plan | None) -> tuple[str | None, bool] | None:
+    """How to call a handler with nothing to read from the request: the
+    name it takes the request under (None: it doesn't), and whether it's
+    async. Worked out once, so a request skips the checks. None when the
+    plan has more to do (parameters, dependencies, a model), or isn't
+    known yet."""
+    if plan is None or needs_plan(plan) or len(plan.request) > 1:
+        return None
+    return plan.request_name, plan.coroutine
 
 
 class _Docs:
