@@ -782,3 +782,51 @@ def test_negative_max_requests_is_refused():
 
     with pytest.raises(ValueError, match="max_requests"):
         App().run(max_requests=-1)
+
+
+def test_max_requests_never_resets_a_fresh_connection():
+    port = free_port()
+    process = start(port, WORKERS="1", MAX_REQUESTS="5")
+    try:
+        for _ in range(60):
+            client = _ask(port)
+            assert client.recv(4096).startswith(b"HTTP/1.1 200")
+            client.close()
+    finally:
+        process.kill()
+
+
+def test_sigterm_still_serves_a_request_already_on_the_way():
+    port = free_port()
+    process = start(port)
+    try:
+        client = socket.create_connection(("127.0.0.1", port), timeout=5)
+        time.sleep(0.3)  # accepted by the worker, nothing sent yet
+        process.send_signal(signal.SIGTERM)
+        time.sleep(0.3)
+        client.sendall(b"GET /users/1 HTTP/1.1\r\nHost: t\r\n\r\n")
+        reply = b""
+        while chunk := client.recv(4096):
+            reply += chunk
+        assert reply.startswith(b"HTTP/1.1 200")
+        assert process.wait(timeout=10) is not None
+        client.close()
+    finally:
+        process.kill()
+
+
+def test_sigterm_waits_only_briefly_for_a_connection_that_sends_nothing():
+    """A browser's unused preconnection delays the stop by about 1 s, not
+    by the read timeout."""
+    port = free_port()
+    process = start(port)
+    try:
+        client = socket.create_connection(("127.0.0.1", port), timeout=5)
+        time.sleep(0.3)  # accepted by the worker, nothing sent
+        started = time.monotonic()
+        process.send_signal(signal.SIGTERM)
+        process.wait(timeout=10)
+        assert 0.8 < time.monotonic() - started < 3
+        client.close()
+    finally:
+        process.kill()

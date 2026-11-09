@@ -590,6 +590,29 @@ impl Listener {
 /// (a WebSocket outlives the HTTP connection it upgraded) is done.
 pub type Permit = Option<Arc<OwnedSemaphorePermit>>;
 
+/// On shutdown, how long a connection that has sent nothing yet gets to
+/// deliver a request its client may already have written.
+const FIRST_REQUEST_GRACE: Duration = Duration::from_secs(1);
+
+/// Whether a connection has received a request yet. The `Notify` wakes the
+/// shutdown wait; it stores a permit, so a request seen first is not lost.
+#[derive(Default)]
+struct Started(Notify, AtomicBool);
+
+impl Started {
+    /// Records that a request arrived, waking a pending shutdown once.
+    fn mark(&self) {
+        if !self.1.swap(true, Ordering::Relaxed) {
+            self.0.notify_one();
+        }
+    }
+
+    /// Tells whether any request has arrived on the connection.
+    fn is_set(&self) -> bool {
+        self.1.load(Ordering::Relaxed)
+    }
+}
+
 /// Serves one connection in its own task. It holds a `shutdown` receiver
 /// while it runs, which is how `accept_loop` knows when all are done, and
 /// the `permit` of its slot.
@@ -605,8 +628,11 @@ fn serve_connection<S>(
     let shared = Arc::clone(shared);
     let timeout = shared.timeout;
     let for_websockets = shutdown.clone();
+    let started = Arc::new(Started::default());
+    let seen = Arc::clone(&started);
     tokio::spawn(async move {
         let service = service_fn(move |request| {
+            seen.mark();
             handle(
                 request,
                 peer,
@@ -626,6 +652,17 @@ fn serve_connection<S>(
         tokio::select! {
             _ = connection.as_mut() => {}
             _ = shutdown.changed() => {
+                // A connection that has sent nothing yet may hold a request
+                // the client already wrote: wait for it before closing, but
+                // only briefly, since browsers open connections they may
+                // never use.
+                if !started.is_set() {
+                    tokio::select! {
+                        _ = connection.as_mut() => return,
+                        () = started.0.notified() => {}
+                        () = tokio::time::sleep(FIRST_REQUEST_GRACE) => {}
+                    }
+                }
                 // Finish the request in progress, then close (no more keep-alive).
                 connection.as_mut().graceful_shutdown();
                 let _ = connection.await;
