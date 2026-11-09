@@ -2,8 +2,8 @@
 
 An `App` runs on Korvex's built-in server (Linux and macOS) or on any
 ASGI server, including serverless platforms. The files below are in
-[`examples/deploy/`](../examples/deploy/), around a small
-[`main.py`](../examples/deploy/main.py).
+[`examples/deploy/`](https://github.com/3d3n-pyc/korvex/tree/main/examples/deploy), around a small
+[`main.py`](https://github.com/3d3n-pyc/korvex/blob/main/examples/deploy/main.py).
 
 | Setup | When | Checked |
 |---|---|---|
@@ -48,7 +48,7 @@ korvex run main:app --workers 3 --uds /run/korvex/korvex.sock
 - To listen on TCP instead, use `--host 127.0.0.1 --port 8000` with the
   proxy configurations of section 2.
 
-With [Caddy](../examples/deploy/Caddyfile-unix):
+With [Caddy](https://github.com/3d3n-pyc/korvex/blob/main/examples/deploy/Caddyfile-unix):
 
 ```
 example.com {
@@ -56,7 +56,7 @@ example.com {
 }
 ```
 
-With [nginx](../examples/deploy/nginx-unix.conf):
+With [nginx](https://github.com/3d3n-pyc/korvex/blob/main/examples/deploy/nginx-unix.conf):
 
 ```nginx
 # Passes WebSocket upgrades on, and keeps plain requests as they were.
@@ -108,7 +108,7 @@ uvicorn main:app --host 127.0.0.1 --port 8000 --workers 4 \
   `request.scheme` are the client's, and its logs show the real address.
 - Listen on `127.0.0.1`, not `0.0.0.0`, so only the proxy can reach the app.
 
-With [Caddy](../examples/deploy/Caddyfile), which gets and renews the
+With [Caddy](https://github.com/3d3n-pyc/korvex/blob/main/examples/deploy/Caddyfile), which gets and renews the
 HTTPS certificate by itself:
 
 ```
@@ -117,7 +117,7 @@ example.com {
 }
 ```
 
-With [nginx](../examples/deploy/nginx.conf) (add a certificate, for
+With [nginx](https://github.com/3d3n-pyc/korvex/blob/main/examples/deploy/nginx.conf) (add a certificate, for
 example with certbot, to serve HTTPS):
 
 ```nginx
@@ -178,7 +178,7 @@ On your own server, put Caddy or nginx in front as in section 1.
 ## 4. AWS Lambda
 
 [Mangum](https://pypi.org/project/mangum/) turns Lambda events into ASGI
-calls. [`lambda_handler.py`](../examples/deploy/lambda_handler.py):
+calls. [`lambda_handler.py`](https://github.com/3d3n-pyc/korvex/blob/main/examples/deploy/lambda_handler.py):
 
 ```python
 from mangum import Mangum

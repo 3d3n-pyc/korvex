@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **A documentation site**, at <https://3d3n-pyc.github.io/korvex/>: the
+  guide, a homepage with a first app, and a reference of every public
+  class, function and option, built from the docstrings. CI builds it on
+  each pull request (a broken link fails) and publishes it from main.
+- The guide covers every option: tables for each ready-made middleware,
+  your own rate-limit store or security scheme, `Headers` methods,
+  `ValidationError`, the test client's `base_url` and WebSocket
+  subprotocols, and `app.run()`'s Python names.
+
 ## 0.14.1
 
 The built-in server 47% faster, and the comparisons measured again.
@@ -108,7 +119,7 @@ each thing. Breaking changes are listed with how to update.
 
 - The README is short: what Korvex is, a quickstart and its test, the
   guide, and performance in brief. It was 793 lines.
-- The guide is in [`docs/`](docs/README.md), a page per topic, each
+- The guide is in [`docs/`](docs/index.md), a page per topic, each
   starting with an example: routes, requests and responses, validation,
   dependencies, errors and hooks, WebSockets, OpenAPI and security,
   middleware, testing, the built-in server, deployment, performance and
