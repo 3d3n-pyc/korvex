@@ -681,3 +681,44 @@ def test_websocket_pings_close_clients_that_went_silent():
         assert time.monotonic() - started < 2
     finally:
         process.kill()
+
+
+def cpu_seconds(pid):
+    """CPU time (user + system, all threads) of a process, from /proc."""
+    fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    return (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK")
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="needs /proc and RLIMIT_NOFILE")
+def test_accept_errors_do_not_spin_the_cpu():
+    """Out of file descriptors, the accept loop backs off, then recovers."""
+    import resource
+
+    port = free_port()
+    process = subprocess.Popen(
+        [sys.executable, str(SERVER_APP), str(port)],
+        stdout=subprocess.DEVNULL,
+        preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64)),
+    )
+    clients = []
+    try:
+        for _ in range(100):
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=0.1).close()
+                break
+            except OSError:
+                time.sleep(0.05)
+        clients = [socket.create_connection(("127.0.0.1", port)) for _ in range(100)]
+        time.sleep(0.2)
+        before = cpu_seconds(process.pid)
+        time.sleep(1)
+        assert cpu_seconds(process.pid) - before < 0.3
+        for client in clients:
+            client.close()
+        time.sleep(0.3)
+        assert fetch(f"http://127.0.0.1:{port}/")[0] in (200, 404)
+    finally:
+        for client in clients:
+            client.close()
+        process.kill()
+        process.wait()
