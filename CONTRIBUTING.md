@@ -29,6 +29,7 @@ src/
   server.rs   the built-in server (Unix only): HTTP in a Rust thread, handed to asyncio
   proxy.rs    trusted X-Forwarded-* headers
   websocket.rs WebSockets in the built-in server
+  escape.rs   HTML escaping for templates (plain Rust, bound in lib.rs)
 korvex/       public: korvex, korvex.router, .testing, .security, .middleware
   __init__.py   what `import korvex` gives
   router.py     the standalone Router (wraps the Rust one) and RouteGroup
@@ -46,6 +47,9 @@ korvex/       public: korvex, korvex.router, .testing, .security, .middleware
                 and resolving dependencies
   _openapi.py   the OpenAPI document and the Swagger UI page
   _urls.py      reverse URLs: url_for()
+  _templates/   server-side templates: parse.py (the parser), compile.py
+                (template to Python function), filters.py (filters, Markup),
+                env.py (Templates, loading, cache, reload)
   _serve.py     the built-in server's Python side: workers, threads, signals
   _cli.py       the `korvex run` command
 tests/        Python tests (Rust tests live next to the code)
@@ -54,6 +58,7 @@ benches/      comparisons with other frameworks:
   bench_app.py     the App's own cost per request, against Starlette
   bench_validation.py  validation from annotations, against FastAPI
   bench_dependencies.py  dependencies, against FastAPI
+  bench_templates.py  template rendering, against Jinja2 and minijinja
   perf_check.py    the check CI runs on pull requests: is the App slower than the base?
   server_check.py  the same for the built-in server, under load (needs oha)
   threads.py       the built-in server with more threads or workers, 3.14t and GIL
@@ -68,7 +73,7 @@ Modules starting with `_` are internal and can change in any version. The
 public API is what the five public modules export.
 
 Only `lib.rs`, `server.rs` and `websocket.rs` use PyO3; keep `tree`,
-`path`, `method` and `proxy` plain Rust.
+`path`, `method`, `proxy` and `escape` plain Rust.
 
 ## Before opening a PR
 

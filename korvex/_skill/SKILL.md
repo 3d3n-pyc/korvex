@@ -151,6 +151,22 @@ def test_tasks():
 - **Dependencies** run once per request (`Depends(f, cache=False)` to
   repeat), can `yield` for teardown, and can be replaced in tests with
   `app.dependency_overrides[f] = lambda: ...`.
+- **Templates** are not Jinja2Templates: no `TemplateResponse(request, ...)`.
+  Use `views.response("page.html", **context)`.
+
+## Pages (HTML templates)
+
+- `views = app.templates("templates")` loads the `.html` files of a folder.
+  A handler returns `views.response("page.html", post=post)`.
+- The syntax is Jinja-like, but it is Korvex's own engine: `{% extends %}`,
+  `{% block %}`, `{% include %}`, `{% if %}`, `{% for %}`, filters with `|`.
+  No macros.
+- A name that does not exist is an error, unless you write `|default`:
+  `{{ post.draft|default(False) }}`. `None` renders as an empty string.
+- `{{ static_url('css/app.css') }}` gives the hashed URL of a file under
+  `app.static()`. `{{ items|tojson }}` passes data to a `<script>`.
+- `app.templates("templates", reload=True)` recompiles changed templates:
+  use it in development only.
 
 ## Testing
 
