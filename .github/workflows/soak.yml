@@ -1,0 +1,63 @@
+name: Soak
+
+# Nightly load test: runs benches/soak.py against the built-in server for a
+# long period and fails if a worker's memory grows, a worker restarts or a
+# request fails. Results are uploaded as the soak-results artifact.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Seconds of load"
+        type: number
+        default: 600
+
+permissions:
+  contents: read
+
+jobs:
+  soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Build and install Korvex
+        run: |
+          uvx maturin build --release -o "$RUNNER_TEMP/wheels"
+          uv venv --python 3.13 "$RUNNER_TEMP/venv"
+          uv pip install --python "$RUNNER_TEMP/venv/bin/python" "$RUNNER_TEMP"/wheels/*.whl msgspec
+
+      - name: Install oha
+        env:
+          OHA_SHA256: 620bb9e16fb53eabc9a3fc45f88bdb41fefa3fee5c05e75892011ce320391716
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -sSfL -o "$RUNNER_TEMP/bin/oha" https://github.com/hatoo/oha/releases/download/v1.16.0/oha-linux-amd64
+          echo "$OHA_SHA256  $RUNNER_TEMP/bin/oha" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/bin/oha"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Soak
+        env:
+          DURATION: ${{ inputs.duration || 600 }}
+        run: |
+          case "$DURATION" in
+            ''|*[!0-9]*) echo "duration must be a whole number of seconds" >&2; exit 1 ;;
+          esac
+          "$RUNNER_TEMP/venv/bin/python" benches/soak.py --duration "$DURATION" --out target/soak
+
+      - name: Upload soak results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: soak-results
+          path: target/soak

@@ -204,3 +204,17 @@ each. Two runs:
 
 Reproduce with `uv run --group bench python benches/database.py` (needs podman or
 docker for PostgreSQL, and oha).
+
+## Memory under steady load
+
+`benches/soak.py` runs the built-in server with 2 workers for 10 minutes of
+mixed load: keep-alive and new connections, JSON POST, streams, files,
+WebSocket echo, slow clients and clients that hang up mid-stream. It samples
+each worker's memory every 5 seconds. It fails if a worker grows over 10%
+and 4 MiB after warm-up, on any error, or if a worker restarts. A nightly CI
+run uses it. Over 10 minutes (900,000 HTTP requests, 3.8 million
+WebSocket messages, 870,000 streams cut off), the workers grew +0.7% and
++0.1%, at 27 MiB each. With a deliberate leak (`SOAK_LEAK=1`), they grew
++150% and the test failed.
+
+Run it with `uv run python benches/soak.py --duration 60` (Linux, needs `oha`).

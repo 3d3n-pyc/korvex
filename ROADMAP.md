@@ -59,9 +59,10 @@ does less.
 Done: the API's open questions (0.10), ready-made middleware (0.11), more
 than one core per worker (0.12), what everyone expects from a framework
 (0.13: a test client, reverse URLs, a richer OpenAPI), a review of the
-whole public API (0.14), a documentation site (0.14.2) and a more robust
-built-in server (0.15). The public API is what `korvex`, `korvex.router`,
-`korvex.testing`, `korvex.security` and `korvex.middleware` export. Until
+whole public API (0.14), a documentation site (0.14.2), a more robust
+built-in server (0.15) and a soak test in CI (0.15.1). The public API is
+what `korvex`, `korvex.router`, `korvex.testing`, `korvex.security` and
+`korvex.middleware` export. Until
 1.0 it can change, each change listed in the changelog with how to
 update; after, it stays.
 

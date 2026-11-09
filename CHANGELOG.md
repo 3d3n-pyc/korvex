@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.15.1
+
+A fix for WebSocket clients in the built-in server.
+
+- **A WebSocket client that closes gets a Close frame back**, as RFC 6455
+  asks. The server used to just end the connection, and strict clients
+  saw an abnormal closure (1006).
+- **A soak test** (`benches/soak.py`) runs the server for 10 minutes under
+  mixed load each night, and fails on memory growth, errors or a worker
+  restart.
+
 ## 0.15.0
 
 The built-in server holds up in production: bounded memory, workers that
