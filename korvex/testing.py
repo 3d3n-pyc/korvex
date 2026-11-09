@@ -146,8 +146,9 @@ class AsyncTestClient:
 
     - `base_url`: the scheme and host requests go to, unless a request
       gives a full URL (`"https://acme.example.com/"`).
-    - `headers` and `cookies`: sent with every request. Cookies the app
-      sets are kept in `cookies` (a dict), and sent back.
+    - `headers` and `cookies`: sent with every request; a request's own
+      replace those of the same name. Cookies the app sets are kept in
+      `cookies` (a dict), and sent back.
     - `raise_server_errors`: an error the app logs as unhandled (the ones
       it answers with a 500, a failed hook or dependency teardown) is
       raised in the test, with its traceback. False gets the 500 instead.
@@ -336,7 +337,9 @@ class AsyncTestClient:
         if query:
             extra = query if isinstance(query, str) else urlencode(list(_pairs(query)), doseq=True)
             query_string = f"{query_string}&{extra}" if query_string else extra
-        given = list(self.headers) + list(_pairs(headers))
+        own = list(_pairs(headers))
+        replaced = {name.lower() for name, _ in own}
+        given = [(name, value) for name, value in self.headers if name.lower() not in replaced] + own
         names = {name.lower() for name, _ in given}
         all_headers = [("host", netloc)] if "host" not in names else []
         all_headers += [("user-agent", "testclient")] if "user-agent" not in names else []
