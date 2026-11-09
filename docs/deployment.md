@@ -225,3 +225,99 @@ options above don't apply. What was checked on a real deployment:
   AWS Lambda with Mangum): 20 requests in a row saw a single startup. So
   opening a database pool in `@app.on_startup` is fine here.
 - Each new instance starts with an empty lookup cache.
+
+## Running in production
+
+Four things that work in a quick test and break under real traffic.
+
+### Keep-alive timeouts
+
+Korvex closes a connection that sits idle for `--read-timeout` (30 seconds
+by default). If the proxy keeps idle connections to Korvex open longer, it
+can send a request on one that Korvex just closed, and the client gets a
+sporadic 502. The rule: **the proxy must close idle connections before
+Korvex does.**
+
+- **nginx.** The configurations above send `Connection: close` for plain
+  requests, so nginx opens a new connection each time and this can't
+  happen. If you turn on upstream keepalive to save those connections,
+  set `keepalive_timeout` below 30 seconds:
+
+  ```nginx
+  map $http_upgrade $connection_upgrade {
+      default upgrade;
+      ''      '';       # not "close": lets nginx reuse the connection
+  }
+
+  upstream korvex {
+      server 127.0.0.1:8000;
+      keepalive 32;
+      keepalive_timeout 25s;
+  }
+  ```
+
+  Keep `proxy_http_version 1.1;` and the `Connection $connection_upgrade`
+  header in the `location` block, as above.
+
+- **Caddy.** It keeps idle upstream connections for 2 minutes. Lower it:
+
+  ```
+  example.com {
+  	reverse_proxy 127.0.0.1:8000 {
+  		transport http {
+  			keepalive 25s
+  		}
+  	}
+  }
+  ```
+
+- **AWS Application Load Balancer.** Its idle timeout is 60 seconds by
+  default. Either set it below 30 seconds, or start Korvex with
+  `--read-timeout 65` or more. The second choice also gives slow clients
+  longer to send their request.
+
+### Kubernetes and containers
+
+On SIGTERM, Korvex stops accepting connections at once, then gives
+requests in progress up to `--graceful-timeout` (30 seconds) to finish.
+Kubernetes removes a pod from its Service at about the same moment, so
+the load balancer may still send it a few requests. A short `preStop`
+sleep keeps the pod serving until the balancer has caught up, and the
+grace period must cover the sleep and the graceful timeout:
+
+```yaml
+spec:
+  terminationGracePeriodSeconds: 45   # preStop 5 + graceful timeout 30 + margin
+  containers:
+    - name: app
+      image: example/app:latest
+      lifecycle:
+        preStop:
+          exec:
+            command: ["sleep", "5"]
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 8000
+```
+
+The `sleep` command must exist in the image (`python:slim` has it).
+
+### A health route
+
+Proxies and orchestrators need a URL that answers 200 when the app is up:
+
+```python
+@app.get("/health", include_in_schema=False)
+def health():
+    return Response.json({"ok": True})
+```
+
+### File descriptors
+
+Each open connection, WebSockets included, uses one file descriptor, and
+the default limit is often 1024 per process. Past it, new connections fail.
+Raise it if you expect many clients at once:
+
+- systemd: `LimitNOFILE=65536` in the `[Service]` section.
+- Docker: `docker run --ulimit nofile=65536:65536 ...`.

@@ -554,18 +554,18 @@ impl Listener {
     /// Accepts one connection and serves it in its own task.
     async fn serve_next(&self, shared: &Arc<Shared>, shutdown: &watch::Sender<bool>) {
         // An accept error (e.g. too many open files) skips this connection only.
-        match self {
-            Self::Tcp(listener) => {
-                if let Ok((stream, peer)) = listener.accept().await {
-                    let _ = stream.set_nodelay(true);
-                    serve_connection(stream, Some(peer), shared, shutdown.subscribe());
-                }
-            }
-            Self::Unix(listener) => {
-                if let Ok((stream, _)) = listener.accept().await {
-                    serve_connection(stream, None, shared, shutdown.subscribe());
-                }
-            }
+        // Pause briefly so a persistent error doesn't spin the CPU.
+        let accepted = match self {
+            Self::Tcp(listener) => listener.accept().await.map(|(stream, peer)| {
+                let _ = stream.set_nodelay(true);
+                serve_connection(stream, Some(peer), shared, shutdown.subscribe());
+            }),
+            Self::Unix(listener) => listener.accept().await.map(|(stream, _)| {
+                serve_connection(stream, None, shared, shutdown.subscribe());
+            }),
+        };
+        if accepted.is_err() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
 }
