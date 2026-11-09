@@ -20,6 +20,10 @@ always stop, and options to cap connections and recycle workers.
   it outright, without its shutdown hooks, when it came between the
   startup hooks and the signal handlers (a rollout signalling a pod that
   just started).
+- **A graceful stop serves a request already on its way.** A connection
+  the worker had just accepted, whose request it hadn't read yet, was
+  closed as idle, and its client got a reset. It now gets up to 1 s to
+  deliver that request, which is served.
 - **`--max-connections N`** (`app.run(max_connections=N)`): at N open
   connections, per worker and per thread, the server stops accepting
   until one closes; new clients wait in the kernel's backlog. It bounds
