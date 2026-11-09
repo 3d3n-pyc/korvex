@@ -19,9 +19,10 @@
   [`llms.txt`](https://3d3n-pyc.github.io/korvex/llms.txt) and
   [`llms-full.txt`](https://3d3n-pyc.github.io/korvex/llms-full.txt),
   rebuilt with the docs; an agent skill
-  (`.agents/skills/korvex/SKILL.md`, `npx skills add 3d3n-pyc/korvex`)
-  teaches coding agents to write Korvex apps, its examples run in the
-  tests; and `AGENTS.md` gives agents working on Korvex its checks and
+  teaches coding agents to write Korvex apps (its examples run in the
+  tests): `korvex agents` installs it in a project, for the installed
+  version, or `npx skills add 3d3n-pyc/korvex`; the `korvex` module's
+  docstring points agents to both; and `AGENTS.md` gives agents working on Korvex its checks and
   rules.
 - `TestClient` and `AsyncTestClient`: a request's `headers=` replace the
   client's headers of the same name, rather than being sent next to them
