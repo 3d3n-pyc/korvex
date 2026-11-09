@@ -181,13 +181,22 @@ async def serve(
     In a thread of its own, signals go to the main thread instead: it sets
     the event `joined(loop, event)` was given."""
 
+    # Signals are handled from here on, startup included: a SIGTERM during
+    # startup then stops the server gracefully, shutdown hooks and all,
+    # rather than kill it.
+    loop = asyncio.get_running_loop()
+    stopping = asyncio.Event()
+    if joined is None:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, stopping.set)
+    else:
+        joined(loop, stopping)
     try:
         for hook in app._on_startup:  # if one raises, the server doesn't start
             await _call(hook)
     except BaseException:
         os.close(fd)
         raise
-    loop = asyncio.get_running_loop()
     server = _core.Server(
         fd,
         config.uds is not None,
@@ -202,12 +211,6 @@ async def serve(
     handle = functools.partial(_serve_http, app)
     if config.access_log:
         handle = _logged(handle)
-    stopping = asyncio.Event()
-    if joined is None:
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, stopping.set)
-    else:
-        joined(loop, stopping)
     tasks: set[asyncio.Task] = set()
     websockets: dict[int, asyncio.Queue] = {}  # connection id -> its incoming messages
     waiting: dict[int, asyncio.Future] = {}  # stream or WebSocket id -> woken when its client catches up
