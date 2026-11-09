@@ -27,6 +27,7 @@ app.run("0.0.0.0", 8000, workers=3, graceful_timeout=10, forwarded_allow_ips=["1
 | `--host`, `--port` | `127.0.0.1`, `8000` | Address to listen on. |
 | `--uds PATH` | | Listen on a Unix socket instead, for a proxy on the same machine. |
 | `--workers N` | `1` | Processes sharing the port; about 3 per 4 CPU cores works best. A worker that crashes is restarted. |
+| `--max-connections N` | `0` (no limit) | Open connections per worker and thread (WebSockets count). Beyond it, new clients wait in the listen backlog, not refused, until one closes. Memory is bounded by about N × `--max-body`. |
 | `--threads N` | `1` | Event loops per worker, each in its own thread: see below. |
 | `--graceful-timeout S` | `30` | On Ctrl+C or SIGTERM, seconds requests in progress get to finish. |
 | `--max-body BYTES` | 1 MiB | Larger bodies get a 413, larger WebSocket messages close the connection. A route can set its own: `@app.post("/upload", max_body=50_000_000)`. |

@@ -31,7 +31,7 @@ use tokio_tungstenite::tungstenite::protocol::{Role, WebSocketConfig};
 
 use crate::proxy::resolve;
 use crate::server::{
-    Backlog, Event, GONE, HIGH_WATER, Headers, ResponseBody, Shared, internal_error, plain,
+    Backlog, Event, GONE, HIGH_WATER, Headers, Permit, ResponseBody, Shared, internal_error, plain,
     request_headers,
 };
 
@@ -223,6 +223,7 @@ pub async fn handshake(
     peer: Option<std::net::SocketAddr>,
     shared: Arc<Shared>,
     shutdown: watch::Receiver<bool>,
+    permit: Permit,
 ) -> Response<ResponseBody> {
     let accept_key = request
         .headers()
@@ -264,6 +265,7 @@ pub async fn handshake(
         return plain(StatusCode::FORBIDDEN, "Forbidden");
     };
     tokio::spawn(async move {
+        let _permit = permit; // the connection's slot lasts as long as the WebSocket
         let Ok(upgraded) = on_upgrade.await else {
             shared.push(Event::WebSocketMessage(id, Incoming::Closed(1006)));
             return;

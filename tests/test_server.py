@@ -722,3 +722,37 @@ def test_accept_errors_do_not_spin_the_cpu():
             client.close()
         process.kill()
         process.wait()
+
+
+def _ask(port):
+    """Opens a connection and sends a keep-alive request; returns the socket."""
+    client = socket.create_connection(("127.0.0.1", port), timeout=5)
+    client.sendall(b"GET /users/1 HTTP/1.1\r\nHost: t\r\n\r\n")
+    return client
+
+
+def test_max_connections_makes_further_clients_wait_for_a_slot():
+    port = free_port()
+    process = start(port, MAX_CONNECTIONS="2")
+    try:
+        first, second = _ask(port), _ask(port)
+        assert first.recv(4096).startswith(b"HTTP/1.1 200")
+        assert second.recv(4096).startswith(b"HTTP/1.1 200")
+        third = _ask(port)  # waits in the backlog: the two are idle but open
+        third.settimeout(0.5)
+        with pytest.raises(socket.timeout):
+            third.recv(4096)
+        first.close()
+        third.settimeout(3)
+        assert third.recv(4096).startswith(b"HTTP/1.1 200")
+        second.close()
+        third.close()
+    finally:
+        process.kill()
+
+
+def test_negative_max_connections_is_refused():
+    from korvex import App
+
+    with pytest.raises(ValueError, match="max_connections"):
+        App().run(max_connections=-1)

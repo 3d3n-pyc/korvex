@@ -37,7 +37,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, UnixListener};
-use tokio::sync::{Notify, mpsc, oneshot, watch};
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
 
 use crate::method::Method;
 use crate::path::Constraints;
@@ -170,6 +170,9 @@ pub struct Shared {
     pub max_body: u64,
     /// Per-route body limits, matched like routes: `(method, pattern) -> bytes`.
     body_limits: Node<u64>,
+    /// One permit per open connection when the number is limited; `None`
+    /// for no limit.
+    connections: Option<Arc<Semaphore>>,
     /// How long a client gets to send the headers, then the body.
     timeout: Duration,
     /// How often open WebSocket connections get a ping; `None` for never.
@@ -230,7 +233,9 @@ impl Server {
     /// forwarded host only with `forwarded_host`. `constraints` are the
     /// app's own, as `(name, pattern)`, for the patterns of `body_limits`. Open WebSocket
     /// connections get a ping every `ws_ping_interval` seconds (0: never),
-    /// and are closed if the client stays silent until the next one.
+    /// and are closed if the client stays silent until the next one. At
+    /// most `max_connections` connections are open at once (0: no limit);
+    /// the others wait in the listen backlog.
     #[new]
     #[allow(clippy::needless_pass_by_value)] // PyO3 hands over owned values
     #[allow(clippy::too_many_arguments)] // one per App.run() option it serves
@@ -244,6 +249,7 @@ impl Server {
         ws_ping_interval: f64,
         forwarded_host: bool,
         constraints: Vec<(String, String)>,
+        max_connections: usize,
     ) -> PyResult<Self> {
         let mut defined = Constraints::default();
         for (name, pattern) in &constraints {
@@ -297,6 +303,7 @@ impl Server {
                 .then(|| Duration::from_secs_f64(ws_ping_interval)),
             trusted,
             next_id: AtomicU64::new(0),
+            connections: (max_connections > 0).then(|| Arc::new(Semaphore::new(max_connections))),
         });
         let stop = Arc::new(Notify::new());
         let thread = {
@@ -553,15 +560,24 @@ enum Listener {
 impl Listener {
     /// Accepts one connection and serves it in its own task.
     async fn serve_next(&self, shared: &Arc<Shared>, shutdown: &watch::Sender<bool>) {
+        // At the limit, wait for a connection to close before accepting
+        // another: clients queue in the kernel's backlog meanwhile.
+        let permit = match &shared.connections {
+            Some(semaphore) => Semaphore::acquire_owned(Arc::clone(semaphore))
+                .await
+                .ok()
+                .map(Arc::new),
+            None => None,
+        };
         // An accept error (e.g. too many open files) skips this connection only.
         // Pause briefly so a persistent error doesn't spin the CPU.
         let accepted = match self {
             Self::Tcp(listener) => listener.accept().await.map(|(stream, peer)| {
                 let _ = stream.set_nodelay(true);
-                serve_connection(stream, Some(peer), shared, shutdown.subscribe());
+                serve_connection(stream, Some(peer), shared, shutdown.subscribe(), permit);
             }),
             Self::Unix(listener) => listener.accept().await.map(|(stream, _)| {
-                serve_connection(stream, None, shared, shutdown.subscribe());
+                serve_connection(stream, None, shared, shutdown.subscribe(), permit);
             }),
         };
         if accepted.is_err() {
@@ -570,13 +586,19 @@ impl Listener {
     }
 }
 
+/// A connection's slot under `max_connections`, kept until its last task
+/// (a WebSocket outlives the HTTP connection it upgraded) is done.
+pub type Permit = Option<Arc<OwnedSemaphorePermit>>;
+
 /// Serves one connection in its own task. It holds a `shutdown` receiver
-/// while it runs, which is how `accept_loop` knows when all are done.
+/// while it runs, which is how `accept_loop` knows when all are done, and
+/// the `permit` of its slot.
 fn serve_connection<S>(
     stream: S,
     peer: Option<SocketAddr>,
     shared: &Arc<Shared>,
     mut shutdown: watch::Receiver<bool>,
+    permit: Permit,
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -585,7 +607,13 @@ fn serve_connection<S>(
     let for_websockets = shutdown.clone();
     tokio::spawn(async move {
         let service = service_fn(move |request| {
-            handle(request, peer, Arc::clone(&shared), for_websockets.clone())
+            handle(
+                request,
+                peer,
+                Arc::clone(&shared),
+                for_websockets.clone(),
+                permit.clone(),
+            )
         });
         // Covers slow headers and idle keep-alive connections alike.
         let connection = http1::Builder::new()
@@ -646,9 +674,10 @@ async fn handle(
     peer: Option<SocketAddr>,
     shared: Arc<Shared>,
     shutdown: watch::Receiver<bool>,
+    permit: Permit,
 ) -> Result<Response<ResponseBody>, Infallible> {
     if websocket::is_upgrade(&request) {
-        return Ok(websocket::handshake(request, peer, shared, shutdown).await);
+        return Ok(websocket::handshake(request, peer, shared, shutdown, permit).await);
     }
     let (parts, body) = request.into_parts();
     let resolved = resolve(peer, &parts.headers, &shared.trusted);

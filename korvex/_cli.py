@@ -10,6 +10,14 @@ from collections.abc import Sequence
 from pathlib import Path
 
 
+def _non_negative(text: str) -> int:
+    """An argparse type: an integer of 0 or more."""
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be 0 or more")
+    return value
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="korvex", description="Korvex: serve an app, or set up coding agents.")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -26,6 +34,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="event loops per worker, in parallel on free-threaded Python (default: 1)",
     )
     run.add_argument("--graceful-timeout", type=float, default=30.0, help="seconds requests get to finish on stop")
+    run.add_argument(
+        "--max-connections",
+        type=_non_negative,
+        default=0,
+        help="most open connections per worker and thread; 0 for no limit (default: 0)",
+    )
     run.add_argument("--max-body", type=int, default=1024 * 1024, help="largest request body in bytes (default: 1 MiB)")
     run.add_argument(
         "--read-timeout", type=float, default=30.0, help="seconds a client gets to send the headers, then the body"
@@ -70,6 +84,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         access_log=args.access_log,
         ws_ping_interval=args.ws_ping_interval,
         forwarded_host=args.forwarded_host,
+        max_connections=args.max_connections,
     )
 
 

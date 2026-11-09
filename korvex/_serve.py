@@ -66,6 +66,7 @@ class Config(NamedTuple):
     forwarded_host: bool = False
     constraints: tuple[tuple[str, str], ...] = ()  # the app's own route constraints, for body_limits
     threads: int = 1  # event loops per worker, each in its own thread
+    max_connections: int = 0  # open connections per worker and thread; 0 for no limit
 
 
 def run(app: App, host: str, port: int, *, workers: int, graceful_timeout: float, config: Config) -> None:
@@ -75,6 +76,8 @@ def run(app: App, host: str, port: int, *, workers: int, graceful_timeout: float
         raise ValueError("workers must be at least 1")
     if config.threads < 1:
         raise ValueError("threads must be at least 1")
+    if config.max_connections < 0:
+        raise ValueError("max_connections must be 0 (no limit) or more")
     if config.threads > 1 and getattr(sys, "_is_gil_enabled", lambda: True)():
         logger.warning(
             "threads=%d with the GIL on: the threads share one core. A free-threaded Python (3.14t) runs them in parallel",
@@ -207,6 +210,7 @@ async def serve(
         config.ws_ping_interval,
         config.forwarded_host,
         list(config.constraints),
+        config.max_connections,
     )
     handle = functools.partial(_serve_http, app)
     if config.access_log:
