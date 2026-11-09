@@ -7,10 +7,11 @@ import argparse
 import importlib
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="korvex", description="Korvex's built-in server.")
+    parser = argparse.ArgumentParser(prog="korvex", description="Korvex: serve an app, or set up coding agents.")
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run", help="serve an App", description="Serves an App with the built-in server.")
     run.add_argument("target", help="the App to serve, as module:attribute (attribute defaults to app)")
@@ -44,8 +45,17 @@ def main(argv: Sequence[str] | None = None) -> None:
         "--ws-ping-interval", type=float, default=20.0, help="seconds between WebSocket pings; 0 for none (default: 20)"
     )
     run.add_argument("--app-dir", default=".", help="directory to import the module from (default: current directory)")
+    agents = commands.add_parser(
+        "agents",
+        help="teach coding agents Korvex",
+        description="Installs Korvex's agent skill in a project: .agents/skills/korvex and .claude/skills/korvex.",
+    )
+    agents.add_argument("--dir", default=".", help="the project directory (default: current directory)")
     args = parser.parse_args(argv)
 
+    if args.command == "agents":
+        install_skill(Path(args.dir))
+        return
     app = load(args.target, args.app_dir)
     app.run(
         args.host,
@@ -61,6 +71,18 @@ def main(argv: Sequence[str] | None = None) -> None:
         ws_ping_interval=args.ws_ping_interval,
         forwarded_host=args.forwarded_host,
     )
+
+
+def install_skill(project: Path) -> None:
+    """Writes the packaged agent skill into `project`, for the coding agents
+    that read .agents/skills and for Claude Code, replacing any older copy."""
+    skill = (Path(__file__).parent / "_skill" / "SKILL.md").read_bytes()
+    for folder in (".agents", ".claude"):
+        target = project / folder / "skills" / "korvex" / "SKILL.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(skill)
+        print(target)
+    print("Coding agents now read how to write Korvex apps. Rerun after upgrading Korvex.")
 
 
 def load(target: str, app_dir: str = "."):

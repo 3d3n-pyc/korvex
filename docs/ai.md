@@ -22,13 +22,23 @@ a short `SKILL.md` that tells an agent how to write a Korvex app, with a
 complete example and the rules that differ from FastAPI. Its examples run
 in Korvex's test suite, so it stays true.
 
-Copy the `korvex` folder into your project's `.agents/skills/` (or
-`.claude/skills/` for Claude Code), or install it with the
-[skills CLI](https://github.com/vercel-labs/skills):
+It comes with Korvex. In your project's folder, run once:
 
 ```sh
-npx skills add 3d3n-pyc/korvex
+korvex agents
 ```
+
+It writes the skill to `.agents/skills/korvex/` (read by Codex, Cursor
+and most agents) and `.claude/skills/korvex/` (Claude Code), in the
+version of the Korvex you have installed. Rerun it after upgrading
+Korvex; commit the two folders so everyone working on the project gets
+them.
+
+Without Python at hand, the [skills CLI](https://github.com/vercel-labs/skills)
+installs the latest one from GitHub: `npx skills add 3d3n-pyc/korvex`.
+
+An agent that opens `korvex/__init__.py`, or runs `help(korvex)`, also
+finds a note pointing it to `llms-full.txt` and `korvex agents`.
 
 ## Working on Korvex itself
 
