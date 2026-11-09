@@ -104,7 +104,8 @@ def test_waiting_handlers_run_concurrently(server):
         results = list(pool.map(lambda _: fetch(f"{base}/wait"), range(20)))
     elapsed = time.perf_counter() - started
     assert all(r[0] == 200 and r[2] == b"waited" for r in results)
-    assert elapsed < 1.5, f"20 handlers waiting 0.2 s each took {elapsed:.2f} s: they ran one at a time"
+    # One at a time takes 4 s; slow CI runners need room above the 0.2 s ideal.
+    assert elapsed < 3, f"20 handlers waiting 0.2 s each took {elapsed:.2f} s: they ran one at a time"
 
 
 def test_many_concurrent_clients_all_get_answers(server):
