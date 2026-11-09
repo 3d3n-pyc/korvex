@@ -107,15 +107,17 @@ class LoopLocal:
 
 
 class App(_RouteDecorators):
-    """An ASGI application.
+    """The application: its routes, hooks and error handlers, OpenAPI,
+    and `run()` for the built-in server. It's an ASGI app, so any ASGI
+    server runs it too.
 
-    app = App()
+        app = App()
 
-    @app.get("/users/{id:int}")
-    def get_user(id: int):
-        return Response.json({"id": id})
+        @app.get("/users/{id:int}")
+        def get_user(id: int):
+            return Response.json({"id": id})
 
-    # uvicorn mymodule:app
+        app.run()                # or: uvicorn mymodule:app
     """
 
     def __init__(self) -> None:
@@ -157,8 +159,24 @@ class App(_RouteDecorators):
         include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        """Decorator: registers the function as the handler for `path`
-        (see `get()` for the options)."""
+        """Decorator: the function answers `path` for `method`. `@app.get(path)`
+        and the other shortcuts take the same options:
+
+        - `name`: what `url_for()` knows the route by (the function's name
+          by default).
+        - `status`: the status of the response made from what the handler
+          returns, a model or `None` (annotated `-> None`, for an empty
+          response: `status=204`). A `Response` it returns keeps its own.
+          OpenAPI documents it as the route's success.
+        - `dependencies` (`[Depends(func), ...]`): run before the handler,
+          for what they check rather than what they return.
+        - `tags`, `deprecated`, `responses` and `include_in_schema`: how the
+          route shows in OpenAPI. `responses` documents other answers, by
+          status: `{404: "No such task"}`, `{409: Conflict}` (a model), or
+          `{409: ("Name taken", Conflict)}`.
+        - `max_body` (bytes): raises or lowers the built-in server's body
+          size limit for that route; ASGI servers ignore it.
+        """
         return self._root.route(
             path,
             method=method,
@@ -182,7 +200,7 @@ class App(_RouteDecorators):
         responses: Mapping[int | str, Any] | None = None,
         include_in_schema: bool = True,
     ) -> Group:
-        """Returns an `Group` that registers handlers under `prefix`, with
+        """Returns a `Group` that registers handlers under `prefix`, with
         `dependencies` for all of them, and the OpenAPI options (`tags`,
         `deprecated`, `responses`, `include_in_schema`) their own add to."""
         return self._root.group(

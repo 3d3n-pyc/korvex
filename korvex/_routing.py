@@ -28,22 +28,7 @@ WebSocketHandler = Callable[..., Awaitable[None]]
 
 
 class _RouteDecorators:
-    """`@get(path)` and friends, for any class with a `route()` decorator.
-
-    - `name`: what `url_for()` knows the route by (the function's name by
-      default).
-    - `status`: the status of the response made from what the handler
-      returns, a model or `None` (annotated `-> None`, for an empty
-      response: `status=204`). A `Response` it returns keeps its own.
-      OpenAPI documents it as the route's success.
-    - `dependencies` (`[Depends(func), ...]`): run before the handler, for
-      what they check rather than what they return.
-    - `tags`, `deprecated`, `responses` and `include_in_schema`: how the
-      route shows in OpenAPI. `responses` documents other answers, by
-      status: `{404: "No such task"}`, `{409: Conflict}` (a model), or
-      `{409: ("Name taken", Conflict)}`.
-    - `max_body` (bytes): raises or lowers the built-in server's body size
-      limit for that route; ASGI servers ignore it."""
+    """`@get(path)` and friends, for any class with a `route()` decorator."""
 
     __slots__ = ()
 
@@ -76,6 +61,8 @@ class _RouteDecorators:
         include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
+        """Decorator: the function answers `GET path`. The options are
+        those of `App.route()`."""
         return self.route(
             path,
             method="GET",
@@ -102,6 +89,8 @@ class _RouteDecorators:
         include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
+        """Decorator: the function answers `POST path`. The options are
+        those of `App.route()`."""
         return self.route(
             path,
             method="POST",
@@ -128,6 +117,8 @@ class _RouteDecorators:
         include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
+        """Decorator: the function answers `PUT path`. The options are
+        those of `App.route()`."""
         return self.route(
             path,
             method="PUT",
@@ -154,6 +145,8 @@ class _RouteDecorators:
         include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
+        """Decorator: the function answers `PATCH path`. The options are
+        those of `App.route()`."""
         return self.route(
             path,
             method="PATCH",
@@ -180,6 +173,8 @@ class _RouteDecorators:
         include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
+        """Decorator: the function answers `DELETE path`. The options are
+        those of `App.route()`."""
         return self.route(
             path,
             method="DELETE",
@@ -206,6 +201,8 @@ class _RouteDecorators:
         include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
+        """Decorator: the function answers `HEAD path`. The options are
+        those of `App.route()`."""
         return self.route(
             path,
             method="HEAD",
@@ -232,6 +229,8 @@ class _RouteDecorators:
         include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
+        """Decorator: the function answers `OPTIONS path`. The options are
+        those of `App.route()`."""
         return self.route(
             path,
             method="OPTIONS",

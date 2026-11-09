@@ -39,7 +39,7 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/3d3n-pyc/korvex"
-Documentation = "https://github.com/3d3n-pyc/korvex#readme"
+Documentation = "https://3d3n-pyc.github.io/korvex/"
 Changelog = "https://github.com/3d3n-pyc/korvex/blob/main/CHANGELOG.md"
 Issues = "https://github.com/3d3n-pyc/korvex/issues"
 Repository = "https://github.com/3d3n-pyc/korvex"
@@ -87,6 +87,10 @@ bench = [
     "sanic>=25.3.0",
     "starlette>=0.49.3",
     "uvicorn>=0.39.0",
+]
+docs = [
+    "mkdocs-material>=9.7.7",
+    "mkdocstrings[python]>=0.30.1",
 ]
 
 [tool.pytest.ini_options]
