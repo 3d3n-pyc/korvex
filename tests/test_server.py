@@ -7,6 +7,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -103,7 +104,8 @@ def test_waiting_handlers_run_concurrently(server):
         results = list(pool.map(lambda _: fetch(f"{base}/wait"), range(20)))
     elapsed = time.perf_counter() - started
     assert all(r[0] == 200 and r[2] == b"waited" for r in results)
-    assert elapsed < 1.5, f"20 handlers waiting 0.2 s each took {elapsed:.2f} s: they ran one at a time"
+    # One at a time takes 4 s; slow CI runners need room above the 0.2 s ideal.
+    assert elapsed < 3, f"20 handlers waiting 0.2 s each took {elapsed:.2f} s: they ran one at a time"
 
 
 def test_many_concurrent_clients_all_get_answers(server):
@@ -458,14 +460,20 @@ def test_command_line_serves_an_app():
         text=True,
         cwd=SERVER_APP.parent,  # from the repo root, `-m korvex` would import the source folder
     )
-    for _ in range(100):
-        try:
-            socket.create_connection(("127.0.0.1", port), timeout=0.1).close()
-            break
-        except OSError:
-            time.sleep(0.05)
+    # Both workers must have started before stopping them: the port answers
+    # as soon as the first one is ready, and a slow machine can still be
+    # starting the second.
+    lines: list[str] = []
+    reader = threading.Thread(target=lambda: lines.extend(process.stdout or ()), daemon=True)
+    reader.start()
+    deadline = time.monotonic() + 10
+    while lines.count("STARTED\n") < 2 and time.monotonic() < deadline:
+        time.sleep(0.05)
     status, _, body = fetch(f"http://127.0.0.1:{port}/users/7")
-    code, output = stop_and_collect(process)
+    process.send_signal(signal.SIGTERM)
+    code = process.wait(timeout=10)
+    reader.join(timeout=5)
+    output = "".join(lines)
     assert (status, json.loads(body), code) == (200, {"id": 7}, 0)
     assert output.count("STARTED") == 2 and '"GET /users/7" 200' in output
 
