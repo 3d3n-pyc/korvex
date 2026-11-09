@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.14.3
+
+The built-in server made safer in production: the first part of the
+work before 1.0.
+
+- **The built-in server no longer spins at 100% CPU when it runs out of
+  file descriptors**: after an error accepting a connection (too many
+  open files...), it waits 50 ms before trying again, where it used to
+  retry at once, in a loop, until a connection closed.
+- **Tests of malformed and ambiguous HTTP** against a real server, over
+  raw sockets: request smuggling (`Content-Length` with
+  `Transfer-Encoding`, two `Content-Length`s), invalid bytes and folded
+  lines in headers, too many or too large headers, bad chunk sizes,
+  pipelining, keep-alive and the idle timeout. All were already handled;
+  the tests keep it that way.
+- **"Running in production" in the deployment guide**: the proxy must
+  close idle connections before Korvex does (`--read-timeout`, 30 s), or
+  it can send a request on one Korvex just closed and get a sporadic
+  502: settings for nginx, Caddy and AWS ALB. Also: Kubernetes
+  (`preStop`, grace period), a health route, file descriptor limits.
+
 ## 0.14.2
 
 A documentation site, Korvex taught to AI coding agents, and the built-in
