@@ -17,6 +17,7 @@ from korvex._params import Cookie, Depends, Form, Header, Query
 from korvex._requests import Connection, Request, UploadedFile, WebSocket, WebSocketDisconnect
 from korvex._response import Headers, Response
 from korvex._routing import Group
+from korvex._templates import Markup, TemplateError, Templates
 
 __all__ = [
     "Abort",
@@ -32,7 +33,10 @@ __all__ = [
     "LoopLocal",
     "Query",
     "Request",
+    "Markup",
     "Response",
+    "TemplateError",
+    "Templates",
     "UploadedFile",
     "ValidationError",
     "WebSocket",
