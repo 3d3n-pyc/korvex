@@ -15,6 +15,8 @@ Server-side HTML templates, and static files with hashed URLs.
   `app.static_url()`, gives `/static/css/app.3f2a1c9b.css`. The file is
   served with a one-year immutable cache, so a changed file gets a new URL.
 - **New exports**: `Templates`, `Markup` and `TemplateError`.
+- **Fixes**: `rate_limit` could refuse a request within the allowance when
+  requests arrived at the same clock tick (seen on Windows).
 - Rendering is 4 to 6 times faster than Jinja2, on par with minijinja
   (see [Performance](docs/performance.md#templates)).
 
