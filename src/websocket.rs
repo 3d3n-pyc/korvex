@@ -343,7 +343,10 @@ async fn relay<S>(
                     Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => {
                         let _ = sink.flush().await;
                     }
-                    Some(Ok(Message::Close(frame))) => break frame.map_or(1005, |frame| u16::from(frame.code)),
+                    Some(Ok(Message::Close(frame))) => {
+                        let _ = sink.flush().await; // sends the queued close reply
+                        break frame.map_or(1005, |frame| u16::from(frame.code));
+                    }
                     Some(Err(_)) | None => break 1006, // closed without a close frame
                 }
             },

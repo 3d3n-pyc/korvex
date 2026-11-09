@@ -591,6 +591,16 @@ def test_websocket_echo_on_the_built_in_server(server):
     client.close()
 
 
+def test_websocket_close_is_answered_with_a_close_frame(server):
+    port = int(server[0].rsplit(":", 1)[1])
+    client = WebSocketClient(port, "/ws/lobby?token=secret")
+    client.send(8, (1000).to_bytes(2, "big"))
+    opcode, payload = client.recv()
+    assert (opcode, int.from_bytes(payload[:2], "big")) == (8, 1000)
+    assert client.recv() == (None, b"")  # then EOF
+    client.sock.close()
+
+
 def test_websocket_refusals_on_the_built_in_server(server):
     port = int(server[0].rsplit(":", 1)[1])
     assert WebSocketClient(port, "/ws/lobby").status == 403  # no token: the handler refused
