@@ -1,0 +1,81 @@
+site_name: Korvex
+site_description: A fast Python web framework, with a router and an HTTP server written in Rust.
+site_url: https://3d3n-pyc.github.io/korvex/
+repo_url: https://github.com/3d3n-pyc/korvex
+repo_name: 3d3n-pyc/korvex
+edit_uri: edit/main/docs/
+copyright: MIT License
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.instant
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep orange
+      toggle: {icon: material/weather-night, name: Dark mode}
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep orange
+      toggle: {icon: material/weather-sunny, name: Light mode}
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc: {permalink: true}
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_root_heading: true
+            show_root_full_path: false
+            show_bases: false
+            inherited_members: true
+            show_source: false
+            members_order: source
+            filters: ["!^_"]
+            merge_init_into_class: true
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            docstring_style: null
+
+nav:
+  - Home: index.md
+  - Guide:
+      - Routes: routes.md
+      - Requests and responses: requests-and-responses.md
+      - Validation: validation.md
+      - Dependencies: dependencies.md
+      - Errors and hooks: errors-and-hooks.md
+      - WebSockets: websockets.md
+      - OpenAPI and security: openapi.md
+      - Ready-made middleware: middleware.md
+      - Testing: testing.md
+      - The built-in server: server.md
+      - Deployment: deployment.md
+  - Reference:
+      - The App: reference/app.md
+      - Requests: reference/requests.md
+      - Responses: reference/responses.md
+      - Parameters: reference/parameters.md
+      - Errors: reference/errors.md
+      - korvex.testing: reference/testing.md
+      - korvex.security: reference/security.md
+      - korvex.middleware: reference/middleware.md
+      - korvex.router: reference/router.md
+  - More:
+      - Performance: performance.md
+      - The standalone router: router.md
+      - Changelog: https://github.com/3d3n-pyc/korvex/blob/main/CHANGELOG.md

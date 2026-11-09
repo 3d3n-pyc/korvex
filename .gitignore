@@ -72,3 +72,4 @@ Thumbs.db
 benches/results.json
 benches/load_results.json
 benches/servers_results.json
+/site/

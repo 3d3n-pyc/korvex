@@ -22,10 +22,14 @@ def test_tasks():
   `options()` take `query=`, `headers=`, `cookies=`, and a body:
   `json=`, `form=` (with `files={"doc": ("a.pdf", data, "application/pdf")}`
   for a multipart form), or raw `body=`.
-- A response has `status`, `headers`, `body`, `text` and `json()`.
+- A response has `status`, `headers`, `body`, `text`, `json()`, and the
+  `url` it came from.
 - Cookies the app sets are kept in `client.cookies` and sent back.
 - `follow_redirects=True` follows a redirect.
 - A full URL sets the scheme and the host: `client.get("https://acme.example.com/")`.
+  Otherwise requests go to `base_url`, `http://testserver` by default.
+- `headers=` and `cookies=` given to the client are sent with every request:
+  `TestClient(app, headers={"Authorization": "Bearer t0ken"})`.
 
 ## What the client does for you
 
@@ -45,7 +49,9 @@ with client.stream("GET", "/events") as response:
 
 `client.websocket(path)` opens one: `send_text()`, `send_json()`...,
 `receive_text()`, `receive_json()`... A refused connection raises
-`WebSocketDisconnect`.
+`WebSocketDisconnect`. It takes `query=`, `headers=`, `cookies=` and
+`subprotocols=["chat"]`; `ws.subprotocol` and `ws.headers` are those the
+app accepted with.
 
 ## Replacing a dependency
 
@@ -55,9 +61,12 @@ app.dependency_overrides[current_user] = lambda: User(id=1, name="test")
 
 ## Async tests
 
-`AsyncTestClient` does the same, awaited:
+`AsyncTestClient` does the same, awaited, for `async` tests (with
+pytest-asyncio or anyio):
 
 ```python
 async with AsyncTestClient(app) as client:
     response = await client.get("/")
+    async with client.websocket("/live") as ws:
+        await ws.send_text("hi")
 ```

@@ -66,6 +66,18 @@ empty response. See [Validation](validation.md).
 
 `headers=` takes a dict, or `(name, value)` pairs to repeat a name.
 
+`response.headers` is a `Headers`, the same as `request.headers`: names
+in any case, and a name can repeat (several `Set-Cookie`).
+
+| | |
+|---|---|
+| `get(name)`, `headers[name]` | the first value (`[]` raises `KeyError` if missing) |
+| `get_all(name)` | every value |
+| `set(name, value)`, `headers[name] = value` | replaces every value |
+| `add(name, value)` | adds one more |
+| `remove(name)` | removes them all |
+| `name in headers`, `for name, value in headers` | test, and go through the pairs |
+
 ### Cookies
 
 ```python

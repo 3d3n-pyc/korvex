@@ -35,6 +35,9 @@ api = router.group("/api", middleware=["auth"])
 api.get("/users", "list_users")  # GET /api/users, middleware ("auth",)
 ```
 
+A group has `get()`, `post()`... like the router, `group()` for a nested
+one, and `full_path("users")`, which gives `/api/users`.
+
 - `middleware` names are given back by `match()`, for your code to run.
 - `match()` keeps the last 1,024 lookups in a cache; adding or removing a
   route clears it. Its results are read-only, since they're shared.

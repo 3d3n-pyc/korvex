@@ -68,6 +68,9 @@ def test_get_task():
 
 ## The guide
 
+Also on the [documentation site](https://3d3n-pyc.github.io/korvex/), with
+the full API reference.
+
 - [Routes](docs/routes.md): path parameters, groups, hosts, links, static files.
 - [Requests and responses](docs/requests-and-responses.md): what a handler gets and returns.
 - [Validation](docs/validation.md): typed parameters, JSON bodies, headers, cookies, forms.

@@ -1,6 +1,6 @@
 # Performance
 
-All numbers come from the scripts in [`benches/`](../benches/), on one
+All numbers come from the scripts in [`benches/`](https://github.com/3d3n-pyc/korvex/tree/main/benches), on one
 machine. Results depend on the machine: measure your own workload before
 relying on any of them.
 

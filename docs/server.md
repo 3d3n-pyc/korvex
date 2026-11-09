@@ -15,7 +15,12 @@ run it too, and Windows needs one of them.
 
 ## Options
 
-The same in `korvex run` and `app.run()`:
+The same in `korvex run` and `app.run()`. In Python, write them with
+underscores, and give lists as lists:
+
+```python
+app.run("0.0.0.0", 8000, workers=3, graceful_timeout=10, forwarded_allow_ips=["10.0.0.5"])
+```
 
 | Option | Default | Does |
 |---|---|---|

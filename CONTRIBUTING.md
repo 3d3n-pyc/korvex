@@ -93,6 +93,16 @@ Coverage, the built-in server's subprocesses included:
 uv run coverage run -m pytest && uv run coverage combine && uv run coverage report
 ```
 
+The docs are Markdown in `docs/`, published at
+<https://3d3n-pyc.github.io/korvex/>; the reference pages are built from
+the docstrings. To see your changes as the site shows them:
+
+```sh
+uv run --group docs mkdocs serve      # http://127.0.0.1:8000, reloads on save
+```
+
+CI builds them with `--strict`: a broken link fails the PR.
+
 msgspec and pydantic stay optional: import them only where a model of
 theirs is being used, never at the top of a module.
 

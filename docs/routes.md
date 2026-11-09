@@ -70,6 +70,9 @@ def list_tasks(): ...
 admin = api.group("/admin")  # /api/admin, signed_in too
 ```
 
+A group also takes `tags=`, `deprecated=`, `responses=` and
+`include_in_schema=` for [OpenAPI](openapi.md); a route's own add to them.
+
 ## Hosts
 
 A host group answers only for one host name:
