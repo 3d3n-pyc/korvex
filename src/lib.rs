@@ -9,6 +9,7 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyMappingProxy, PyTuple, PyType};
 
+mod escape;
 mod method;
 mod path;
 #[cfg(unix)]
@@ -177,9 +178,19 @@ fn parse_method(method: &str) -> PyResult<Method> {
         .ok_or_else(|| PyValueError::new_err(format!("unknown HTTP method: {method:?}")))
 }
 
+/// Escape `& < > " '` in a str; returns the same object when nothing changes.
+#[pyfunction]
+fn escape_html<'py>(s: &Bound<'py, pyo3::types::PyString>) -> PyResult<Bound<'py, PyAny>> {
+    match escape::escape(&s.to_cow()?) {
+        std::borrow::Cow::Borrowed(_) => Ok(s.clone().into_any()),
+        std::borrow::Cow::Owned(o) => Ok(pyo3::types::PyString::new(s.py(), &o).into_any()),
+    }
+}
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Router>()?;
+    m.add_function(wrap_pyfunction!(escape_html, m)?)?;
     #[cfg(unix)]
     {
         m.add_class::<server::Server>()?;
