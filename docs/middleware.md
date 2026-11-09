@@ -71,6 +71,12 @@ with `Retry-After`.
 It counts WebSocket handshakes too. Requests can come in bursts of up to
 `requests`, then one every `per / requests` seconds.
 
+- Hooks declared before it run first: call `cors()` before it, so
+  browsers' preflight requests are answered without being counted.
+- Behind a proxy, trust it with `--forwarded-allow-ips`, or every client
+  counts as the proxy. Requests with no client address at all share one
+  limit.
+
 ### Where the counts live
 
 - `MemoryStore()`, the default: in each worker's memory. With 3 workers,

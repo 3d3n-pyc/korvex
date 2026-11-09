@@ -34,9 +34,7 @@ _V = TypeVar("_V")
 
 
 class MultiDict(Mapping[str, _V], Generic[_V]):
-    """Names with one value or more, in order: a query string or a form.
-    `fields["tag"]` and `fields.get("tag")` give the first value;
-    `fields.get_all("tag")` gives them all."""
+    """Names with one or more values, in order: `[name]` and `get()` give the first, `get_all()` all."""
 
     __slots__ = ("_lists",)
 
@@ -71,10 +69,10 @@ FormData = MultiDict[Union[str, UploadedFile]]
 
 
 class Connection:
-    """What an HTTP request and a WebSocket share: the path, headers,
-    cookies, query string, path parameters, client and scheme. Before hooks
-    get one (`isinstance(connection, WebSocket)` tells a handshake apart),
-    and a dependency annotated `Connection` serves both."""
+    """What an HTTP request and a WebSocket share: path, headers, cookies, query, client, scheme.
+
+    Guide: https://3d3n-pyc.github.io/korvex/requests-and-responses/
+    """
 
     __slots__ = (
         "method",
@@ -121,8 +119,7 @@ class Connection:
 
     @property
     def query(self) -> MultiDict[str]:
-        """The query string's fields, parsed on first use:
-        `request.query.get("page")`, `request.query.get_all("tag")`."""
+        """The query string's fields, parsed on first use."""
         if self._query is None:
             self._query = MultiDict(parse_qs(self._query_string.decode("latin-1")))
         return self._query
@@ -140,16 +137,11 @@ class Connection:
         return self._cookies
 
     def url_for(self, name: str, /, **params: Any) -> str:
-        """The full URL of the route named `name`, where `App.url_for()`
-        gives its path: `"https://example.com/users/42"`. The scheme is the
-        request's (`ws` or `wss` for a WebSocket route). The host is the
-        route's own for an `app.host()` route (give its parameters too,
-        `tenant="acme"`), with the request's port; for other routes, the
-        request's `Host` header.
+        """The full URL of the route named `name`, with the request's scheme and host.
 
-        That header comes from the client: for a link sent elsewhere (an
-        email to reset a password), build it from a configured base URL
-        and `app.url_for()`, not from the request."""
+        The `Host` header comes from the client: for an emailed link, use a configured base URL.
+        Guide: https://3d3n-pyc.github.io/korvex/routes/#links-to-a-route
+        """
         if self.app is None:
             raise RuntimeError("this request doesn't come from an App: url_for() needs one to find the route")
         from korvex import _urls as urls
@@ -161,7 +153,10 @@ class Connection:
 
 
 class Request(Connection):
-    """An incoming HTTP request: a `Connection`, and its body."""
+    """An incoming HTTP request: a `Connection`, and its body.
+
+    Guide: https://3d3n-pyc.github.io/korvex/requests-and-responses/
+    """
 
     __slots__ = ()
 
@@ -196,7 +191,7 @@ class Request(Connection):
         return request
 
     async def body(self) -> bytes:
-        """Reads the whole request body (once: later calls get it again)."""
+        """Reads the whole body, once; later calls return it again."""
         if self._body is None:
             chunks = []
             more_body = True
@@ -208,18 +203,17 @@ class Request(Connection):
         return self._body
 
     async def json(self) -> JSONValue:
-        """Reads the body and parses it as JSON. A body that isn't valid
-        JSON is answered with a 400 error."""
+        """Reads the body as JSON; invalid JSON answers a 400."""
         try:
             return json.loads(await self.body())
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise HTTPException(400, "invalid JSON body") from None
 
     async def form(self) -> FormData:
-        """Reads the body as a form: `form.get("title")` gives a field's
-        first value, `form.get_all("tag")` all of them. Files from a
-        `multipart/form-data` form are `UploadedFile`s. Any other content
-        type is answered with a 415 error, undecodable text with a 400."""
+        """Reads the body as a urlencoded or multipart form; files are `UploadedFile`s.
+
+        Any other content type answers a 415, undecodable text a 400.
+        """
         if self._form is None:
             self._form = await self._read_form()
         return self._form
@@ -252,15 +246,9 @@ class WebSocketDisconnect(Exception):
 
 
 class WebSocket(Connection):
-    """A WebSocket connection, passed to `@app.websocket` handlers. As a
-    `Connection`, it has the handshake's headers, cookies, params, client
-    and scheme (`"ws"` or `"wss"`), to check who connects before `accept()`.
+    """A WebSocket connection, passed to `@app.websocket` handlers.
 
-        @app.websocket("/ws")
-        async def echo(ws):
-            await ws.accept()
-            async for message in ws:
-                await ws.send_text(message)
+    Guide: https://3d3n-pyc.github.io/korvex/websockets/
     """
 
     __slots__ = ("subprotocols", "_send", "_connected", "_accepted", "_closed")
@@ -291,8 +279,7 @@ class WebSocket(Connection):
         self._accepted = True
 
     async def receive(self) -> str | bytes:
-        """The next message, text or binary. Raises `WebSocketDisconnect`
-        when the client has gone."""
+        """The next message, text or binary; raises `WebSocketDisconnect` once the client has gone."""
         message = await self._receive()
         if message["type"] == "websocket.disconnect":
             self._closed = True

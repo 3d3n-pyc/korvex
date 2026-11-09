@@ -1,20 +1,6 @@
-"""A test client that runs an ASGI app in-process: no server, no network.
+"""An in-process test client for any ASGI app: no server, no network.
 
-    from korvex.testing import TestClient
-
-    def test_login():
-        with TestClient(app) as client:          # startup hooks; shutdown on exit
-            response = client.post("/login", form={"password": "s3cret"})
-            assert response.status == 303
-            assert client.get("/api/me").json() == {"name": "admin"}
-
-`TestClient` is for regular tests; `AsyncTestClient` is the awaited version
-for `async` tests (pytest-asyncio, anyio):
-
-    async with AsyncTestClient(app) as client:
-        response = await client.get("/health")
-
-It takes any ASGI app, Korvex's or not.
+Guide: https://3d3n-pyc.github.io/korvex/testing/
 """
 
 from __future__ import annotations
@@ -54,9 +40,7 @@ T = TypeVar("T")
 
 
 class TestResponse:
-    """A response: `status`, `headers` (case-insensitive, repeated names
-    kept), `body` (bytes), `text` and `json()`. `url` is the URL that
-    answered: the last one when redirects were followed."""
+    """A response: `status`, `headers`, `body`, `text`, `json()` and the final `url`."""
 
     __test__ = False  # not a test class, despite its name
     __slots__ = ("status", "headers", "body", "url")
@@ -81,8 +65,7 @@ class TestResponse:
 
 
 class AsyncTestStream:
-    """A response from `AsyncTestClient.stream()`: `status` and `headers`
-    at once, then the body with `aiter_bytes()`, `aiter_text()` or `aread()`."""
+    """A streamed response: `status` and `headers` at once, then `aiter_bytes()`, `aiter_text()` or `aread()`."""
 
     __test__ = False
 
@@ -109,8 +92,7 @@ class AsyncTestStream:
 
 
 class TestStream:
-    """`AsyncTestStream` for `TestClient.stream()`: `iter_bytes()`,
-    `iter_text()` and `read()`."""
+    """The sync `AsyncTestStream`: `iter_bytes()`, `iter_text()` and `read()`."""
 
     __test__ = False
 
@@ -138,20 +120,18 @@ class TestStream:
 
 
 class AsyncTestClient:
-    """Calls an ASGI app in-process, from `async` tests. As an async
-    context manager, it runs the app's lifespan: startup hooks on entry,
-    shutdown hooks on exit. Without it, requests work but no hook runs.
+    """Calls an ASGI app in-process, from `async` tests.
 
-    - `base_url`: the scheme and host requests go to, unless a request
-      gives a full URL (`"https://acme.example.com/"`).
-    - `headers` and `cookies`: sent with every request; a request's own
-      replace those of the same name. Cookies the app sets are kept in
-      `cookies` (a dict) and sent back.
-    - `raise_server_errors`: an error the app logs as unhandled (one it
-      answers with a 500, a failed hook or dependency teardown) is raised
-      in the test, with its traceback. False gets the 500 instead.
-    - `timeout`: seconds to wait for a response or a WebSocket message,
-      then `TimeoutError`. None waits forever.
+    As an async context manager it runs the app's lifespan (startup and shutdown hooks);
+    without it, no hook runs.
+
+    - `base_url`: scheme and host requests go to, unless a request gives a full URL
+    - `headers`, `cookies`: sent with every request; a request's own replace the same name
+    - `raise_server_errors`: raise in the test an error the app logs as unhandled (a 500)
+    - `timeout`: seconds to wait for a response or WebSocket message, then `TimeoutError`;
+      None waits forever
+
+    Guide: https://3d3n-pyc.github.io/korvex/testing/
     """
 
     __test__ = False
@@ -199,11 +179,12 @@ class AsyncTestClient:
         body: bytes | str | None = None,
         follow_redirects: bool = False,
     ) -> TestResponse:
-        """Sends a request and returns the whole response. Give the body as
-        `json` (any JSON value), `form` (fields, with `files` for a
-        multipart form: `{"avatar": ("me.png", data, "image/png")}`), or
-        raw `body`. With `follow_redirects`, a redirect is followed (a 303,
-        or a 301/302 after a POST, as a GET without body), up to 20."""
+        """Sends a request and returns the whole response.
+
+        Give the body as `json`, `form` (with `files`: `{"f": ("a.png", data, "image/png")}`)
+        or raw `body`, one way only (`TypeError` otherwise). `follow_redirects` follows up to 20
+        redirects (a 303, or a 301/302 after a POST, becomes a GET without body).
+        """
         content_type, data = _encode_body(json, form, files, body)
         for _ in range(_MAX_REDIRECTS + 1):
             call = self._call(method, url, query, headers, cookies, content_type, data)
@@ -237,14 +218,11 @@ class AsyncTestClient:
         files: Files | None = None,
         body: bytes | str | None = None,
     ) -> _StreamContext:
-        """Sends a request and returns the response before its body is read,
-        for a stream that doesn't end (events):
+        """Sends a request and returns the response before its body is read.
 
-            async with client.stream("GET", "/events") as response:
-                async for chunk in response.aiter_bytes(): ...
-
-        Leaving the block stops the app's handler, as a client going away
-        would: its `finally` blocks and dependency teardowns run."""
+        Leaving the block stops the app's handler, as a client going away would.
+        Takes the arguments of `request()`, but not `follow_redirects`.
+        """
         content_type, data = _encode_body(json, form, files, body)
         return _StreamContext(self, self._call(method, url, query, headers, cookies, content_type, data))
 
@@ -253,21 +231,27 @@ class AsyncTestClient:
         return await self.request("GET", url, **kwargs)
 
     async def head(self, url: str, **kwargs: Any) -> TestResponse:
+        """A HEAD request; see `request()`."""
         return await self.request("HEAD", url, **kwargs)
 
     async def options(self, url: str, **kwargs: Any) -> TestResponse:
+        """A OPTIONS request; see `request()`."""
         return await self.request("OPTIONS", url, **kwargs)
 
     async def post(self, url: str, **kwargs: Any) -> TestResponse:
+        """A POST request; see `request()`."""
         return await self.request("POST", url, **kwargs)
 
     async def put(self, url: str, **kwargs: Any) -> TestResponse:
+        """A PUT request; see `request()`."""
         return await self.request("PUT", url, **kwargs)
 
     async def patch(self, url: str, **kwargs: Any) -> TestResponse:
+        """A PATCH request; see `request()`."""
         return await self.request("PATCH", url, **kwargs)
 
     async def delete(self, url: str, **kwargs: Any) -> TestResponse:
+        """A DELETE request; see `request()`."""
         return await self.request("DELETE", url, **kwargs)
 
     def websocket(
@@ -279,14 +263,10 @@ class AsyncTestClient:
         headers: HeadersLike | None = None,
         cookies: Mapping[str, str] | None = None,
     ) -> AsyncTestWebSocket:
-        """Opens a WebSocket, as an async context manager:
+        """Opens a WebSocket, as an async context manager.
 
-            async with client.websocket("/ws") as ws:
-                await ws.send_text("hi")
-                assert await ws.receive_text() == "hi"
-
-        Entering raises `WebSocketDisconnect` if the app closes the
-        connection before accepting it."""
+        Entering raises `WebSocketDisconnect` if the app closes before accepting.
+        """
         scope = self._scope("websocket", "GET", url, query, headers, cookies)
         scope["subprotocols"] = list(subprotocols)
         return AsyncTestWebSocket(self, scope)
@@ -497,9 +477,7 @@ async def _chunks(call: _Call) -> AsyncIterator[bytes]:
 
 
 class AsyncTestWebSocket:
-    """A WebSocket open on the app, from `AsyncTestClient.websocket()`.
-    `subprotocol` and `headers` are those the app accepted with. Each
-    `receive...()` waits up to `timeout`, by default the client's."""
+    """A WebSocket open on the app: `subprotocol` and `headers` are those it accepted with."""
 
     __test__ = False
 
@@ -559,8 +537,10 @@ class AsyncTestWebSocket:
         await self.send_text(jsonlib.dumps(data))
 
     async def receive(self, timeout: float | None = _UNSET) -> str | bytes:
-        """The next message the app sends, text or bytes. Raises
-        `WebSocketDisconnect` once the app has closed the connection."""
+        """The next message from the app, text or bytes; `WebSocketDisconnect` once it closed.
+
+        `timeout` (seconds) overrides the client's.
+        """
         if self._closed:
             raise WebSocketDisconnect(1000)
         message = await self._next(timeout)
@@ -588,8 +568,7 @@ class AsyncTestWebSocket:
         return jsonlib.loads(await self.receive(timeout))
 
     async def close(self, code: int = 1000) -> None:
-        """Disconnects (if the app hasn't closed first) and waits for the
-        app's handler to end."""
+        """Disconnects (unless the app closed first) and waits for the handler to end."""
         if not self._closed:
             self._closed = self._gone = True
             await self._to_app.put({"type": "websocket.disconnect", "code": code})
@@ -622,20 +601,13 @@ class AsyncTestWebSocket:
 
 
 class TestClient:
-    """Calls an ASGI app in-process, from regular tests: `AsyncTestClient`
-    on an event loop of its own. As a context manager, it runs the app's
-    lifespan (startup hooks on entry, shutdown hooks on exit); without it,
-    requests work but no hook runs.
+    """Calls an ASGI app in-process, from regular tests.
 
-        with TestClient(app) as client:
-            assert client.get("/health").status == 200
+    Same arguments as `AsyncTestClient`. As a context manager it runs the app's lifespan.
+    Raises `RuntimeError` inside a running event loop: use `AsyncTestClient` there.
 
-    Every request runs on the same event loop, in the test's thread, so
-    what startup hooks keep in `app.local` is there for the handlers. The
-    loop runs only during the client's calls: a background task the app
-    starts progresses while the test sends a request or waits for a
-    WebSocket message. In an `async` test, use `AsyncTestClient`, which
-    also documents the arguments."""
+    Guide: https://3d3n-pyc.github.io/korvex/testing/
+    """
 
     __test__ = False
 
@@ -687,57 +659,49 @@ class TestClient:
             self.close()
 
     def close(self) -> None:
-        """Closes the event loop, cancelling what the app left running on it.
-        Leaving the `with` block does it."""
+        """Closes the event loop, cancelling what the app left running."""
         if self._close_loop is not None:
             self._close_loop()
         self._loop = None
 
     def request(self, method: str, url: str, **kwargs: Any) -> TestResponse:
-        """Sends a request and returns the whole response: see
-        `AsyncTestClient.request()` for the arguments."""
+        """Sends a request and returns the whole response; see `AsyncTestClient.request()`."""
         return self._run(self._client.request(method, url, **kwargs))
 
     def get(self, url: str, **kwargs: Any) -> TestResponse:
+        """A GET request; see `request()`."""
         return self.request("GET", url, **kwargs)
 
     def head(self, url: str, **kwargs: Any) -> TestResponse:
+        """A HEAD request; see `request()`."""
         return self.request("HEAD", url, **kwargs)
 
     def options(self, url: str, **kwargs: Any) -> TestResponse:
+        """A OPTIONS request; see `request()`."""
         return self.request("OPTIONS", url, **kwargs)
 
     def post(self, url: str, **kwargs: Any) -> TestResponse:
+        """A POST request; see `request()`."""
         return self.request("POST", url, **kwargs)
 
     def put(self, url: str, **kwargs: Any) -> TestResponse:
+        """A PUT request; see `request()`."""
         return self.request("PUT", url, **kwargs)
 
     def patch(self, url: str, **kwargs: Any) -> TestResponse:
+        """A PATCH request; see `request()`."""
         return self.request("PATCH", url, **kwargs)
 
     def delete(self, url: str, **kwargs: Any) -> TestResponse:
+        """A DELETE request; see `request()`."""
         return self.request("DELETE", url, **kwargs)
 
     def stream(self, method: str, url: str, **kwargs: Any) -> _SyncStreamContext:
-        """Sends a request and returns the response before its body is read:
-
-            with client.stream("GET", "/events") as response:
-                for chunk in response.iter_bytes(): ...
-
-        Leaving the block stops the app's handler, as a client going away
-        would. Arguments: see `AsyncTestClient.stream()`."""
+        """Sends a request and returns the response before its body is read."""
         return _SyncStreamContext(self, self._client.stream(method, url, **kwargs))
 
     def websocket(self, url: str, **kwargs: Any) -> TestWebSocket:
-        """Opens a WebSocket, as a context manager:
-
-            with client.websocket("/ws") as ws:
-                ws.send_text("hi")
-                assert ws.receive_text() == "hi"
-
-        Entering raises `WebSocketDisconnect` if the app refuses the
-        connection. Arguments: see `AsyncTestClient.websocket()`."""
+        """Opens a WebSocket, as a context manager; see `AsyncTestClient.websocket()`."""
         return TestWebSocket(self._client.websocket(url, **kwargs), self._run)
 
     def _run(self, awaitable: Awaitable[T]) -> T:
@@ -768,8 +732,7 @@ class _SyncStreamContext:
 
 
 class TestWebSocket:
-    """A WebSocket open on the app, from `TestClient.websocket()`: the
-    methods of `AsyncTestWebSocket`, not awaited."""
+    """The sync `AsyncTestWebSocket`."""
 
     __test__ = False
 

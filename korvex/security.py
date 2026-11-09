@@ -1,23 +1,6 @@
-"""Security schemes: dependencies that read a credential from the request
-(a bearer token, an API key), refuse the request without one, and show
-in OpenAPI, so that Swagger UI's "Authorize" button can send it.
+"""Security schemes: dependencies that read a credential and show in OpenAPI.
 
-    from korvex.security import Bearer
-
-    bearer = Bearer()
-
-    async def current_user(token: str = Depends(bearer)) -> User:
-        user = await users.by_token(token)
-        if user is None:
-            raise HTTPException(401, "invalid token", headers=[("WWW-Authenticate", "Bearer")])
-        return user
-
-    @app.get("/me")
-    def me(request, user: User = Depends(current_user)): ...
-
-A scheme only reads the credential; the dependency that takes it checks
-it. Every route whose dependencies use a scheme, directly or through
-others (a group's included), lists it in OpenAPI.
+Guide: https://3d3n-pyc.github.io/korvex/openapi/
 """
 
 from __future__ import annotations
@@ -32,12 +15,14 @@ __all__ = ["APIKey", "Bearer", "OAuth2Password", "SecurityScheme"]
 
 
 class SecurityScheme:
-    """What the schemes share. `Depends(scheme)` gives the credential, a
-    `str`. Without one, a `required` scheme answers 401 (with
-    `WWW-Authenticate`); with `required=False`, it gives `None`.
+    """What the schemes share: `Depends(scheme)` gives the credential, a `str`.
 
-    `name` is its key in OpenAPI's `securitySchemes` (two schemes given the
-    same name get `name_2`...), `description` shows in Swagger UI."""
+    - `name`: its key in OpenAPI's `securitySchemes` (a duplicate gets `name_2`...)
+    - `description`: shown in Swagger UI
+    - `required`: without a credential, answer 401 with `WWW-Authenticate` (False gives None)
+
+    Guide: https://3d3n-pyc.github.io/korvex/openapi/#signing-in-from-swagger-ui
+    """
 
     __slots__ = ("name", "description", "required")
     challenge = "Bearer"  # the WWW-Authenticate of a 401
@@ -71,8 +56,7 @@ class SecurityScheme:
 
 
 class Bearer(SecurityScheme):
-    """A token in `Authorization: Bearer <token>` (a JWT, an opaque
-    token...). `format` documents which (`"JWT"`)."""
+    """A token in `Authorization: Bearer <token>`; `format` documents it (`"JWT"`)."""
 
     __slots__ = ("format",)
 
@@ -93,10 +77,10 @@ class Bearer(SecurityScheme):
 
 
 class APIKey(SecurityScheme):
-    """A key in a header, a query parameter or a cookie, one of them:
-    `APIKey(header="X-API-Key")`, `APIKey(query="api_key")` or
-    `APIKey(cookie="session")`. In a query string, it ends up in access
-    logs and browser history: prefer a header."""
+    """A key in a header, query parameter or cookie: give exactly one (`TypeError` otherwise).
+
+    A query key ends up in access logs and browser history: prefer a header.
+    """
 
     __slots__ = ("location", "key")
     challenge = "APIKey"
@@ -129,11 +113,10 @@ class APIKey(SecurityScheme):
 
 
 class OAuth2Password(SecurityScheme):
-    """OAuth2's password flow: the client posts `username` and `password`
-    as a form to `token_url`, gets a token back
-    (`{"access_token": ..., "token_type": "bearer"}`), then sends it as
-    `Authorization: Bearer <token>`. Swagger UI shows the sign-in form.
-    `scopes` (`{"tasks:write": "Change tasks"}`) are offered there."""
+    """OAuth2 password flow: Swagger UI posts the form to `token_url`, then sends the bearer token.
+
+    `scopes` maps scope to description; `refresh_url` is optional.
+    """
 
     __slots__ = ("token_url", "scopes", "refresh_url")
 

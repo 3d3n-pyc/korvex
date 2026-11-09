@@ -22,11 +22,14 @@ _SAFE_ID = re.compile(r"[A-Za-z0-9._:-]{1,200}")
 
 
 def request_id(app: App, *, header: str = "X-Request-ID", trust_incoming: bool = True) -> None:
-    """Gives every request an ID: the incoming `header` (from the client or
-    a proxy) when `trust_incoming` and it's safe, otherwise a new random
-    one. The ID goes back in the response's `header`, `current_request_id()`
-    returns it while the request runs, and `RequestIdFilter` adds it to
-    log records. The built-in server's access logs show it too."""
+    """Gives every request an ID, sent back in the response and put in the logs.
+
+    - `header`: the header the ID is read from and sent back in.
+    - `trust_incoming`: reuse a safe incoming ID, else make a new one.
+
+    The built-in server's access logs show it too.
+    Guide: https://3d3n-pyc.github.io/korvex/middleware/#request-ids-request_idapp
+    """
 
     @app.before_request
     def assign(request: Connection) -> None:
@@ -46,10 +49,9 @@ def current_request_id() -> str | None:
 
 
 class RequestIdFilter(logging.Filter):
-    """A logging filter that adds `request_id` to every record (`-` outside
-    a request), for formats like `"%(request_id)s %(message)s"`:
+    """Logging filter that adds `request_id` to records (`-` outside a request).
 
-        handler.addFilter(RequestIdFilter())
+    Guide: https://3d3n-pyc.github.io/korvex/middleware/#request-ids-request_idapp
     """
 
     def filter(self, record: logging.LogRecord) -> bool:

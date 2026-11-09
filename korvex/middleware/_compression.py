@@ -112,35 +112,20 @@ def compress(
     levels: dict[str, int] | None = None,
     content_types: Sequence[str] = COMPRESSIBLE,
 ) -> None:
-    """Compresses responses for clients that accept it, for deployments
-    without a proxy to do it.
+    """Compresses responses for clients that accept it.
 
-    - `encodings`: in order of preference, among those the client accepts
-      (`Accept-Encoding`); `("zstd", "br", "gzip")` by default. `gzip`
-      always works; `br` needs the `brotli` package (`pip install
-      korvex[brotli]`), `zstd` Python 3.14 or later. Unavailable ones are
-      skipped. On a free-threaded Python, `br` is left out of the default:
-      importing `brotli` turns the GIL back on for the whole process. Ask
-      for it explicitly to use it anyway.
-    - `minimum_size`: smaller bodies are sent as they are. Streamed
-      responses are compressed whatever their size, each piece flushed as
-      it goes.
-    - `levels`: per encoding (`{"gzip": 9}`); defaults: gzip 6, brotli 4,
-      zstd 3.
-    - `content_types`: what's worth compressing: prefixes like `text/`, or
-      suffixes like `+json`.
+    - `encodings`: in order of preference; `("zstd", "br", "gzip")` by default
+      (`br` is left out of the default on free-threaded Python, but can be
+      asked for). Unavailable ones are skipped.
+    - `minimum_size`: smaller bodies are sent as they are; streams are always
+      compressed.
+    - `levels`: per encoding, like `{"gzip": 9}`.
+    - `content_types`: prefixes like `text/` or suffixes like `+json`.
 
-    Responses that already have a `Content-Encoding`, ask for no change
-    (`Cache-Control: no-transform`), or carry no body (204, 304) are left
-    alone. Compressed responses get `Vary: Accept-Encoding`.
-
-    Call it before the other hooks: after hooks run last-declared first,
-    so it sees each response once the others have changed it.
-
-    Mind BREACH: compressing a response that contains both a secret (a
-    CSRF token) and something the client sent lets an attacker guess the
-    secret, over HTTPS too. Don't compress such pages, or change the
-    secret on every response.
+    Call it first: after hooks run last-declared first. Compressed responses
+    get `Vary: Accept-Encoding`. Don't compress pages mixing a secret with
+    client input (BREACH), over HTTPS too.
+    Guide: https://3d3n-pyc.github.io/korvex/middleware/#compression-compressapp
     """
     if encodings is None:
         encodings = ("zstd", "gzip") if _gil_disabled() else ("zstd", "br", "gzip")

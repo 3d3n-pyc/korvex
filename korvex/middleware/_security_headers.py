@@ -24,24 +24,19 @@ def security_headers(
     cross_origin_opener_policy: str | None = "same-origin",
     permissions_policy: str | None = None,
 ) -> None:
-    """Adds the usual security headers to every response, for deployments
-    without a proxy to do it. A response that sets one itself keeps its own.
+    """Adds the usual security headers to every response; one a response sets keeps its own.
 
-    - `hsts`: `Strict-Transport-Security` with this `max-age` (one year by
-      default), so browsers stick to HTTPS. Only on HTTPS requests
-      (`request.scheme`, which a trusted proxy sets): browsers ignore it
-      over HTTP. `hsts_subdomains` and `hsts_preload` add those directives;
-      only use them once every subdomain serves HTTPS.
-    - `content_security_policy`: off by default, since the right policy
-      depends on the pages: `"default-src 'self'"` is a strict start.
-      `/docs` (Swagger UI) loads its script and style from
-      cdn.jsdelivr.net, which a strict policy blocks.
-    - `frame_options`: `X-Frame-Options`, `DENY` so other sites can't put
-      the pages in a frame (clickjacking); `SAMEORIGIN` to allow your own.
-    - `content_type_options`: `X-Content-Type-Options: nosniff`, so
-      browsers trust `Content-Type` instead of guessing.
+    - `hsts`: `Strict-Transport-Security` max-age in seconds, `None` to leave it
+      out; sent only when `request.scheme` is `https` (set by a trusted proxy);
+      raises ValueError if negative.
+    - `hsts_subdomains`, `hsts_preload`: add those directives.
+    - `content_security_policy`: off by default, like `"default-src 'self'"`.
+    - `frame_options`: `X-Frame-Options`.
+    - `content_type_options`: send `X-Content-Type-Options: nosniff`.
     - `referrer_policy`, `cross_origin_opener_policy`, `permissions_policy`:
-      those headers, `None` to leave one out.
+      those headers; `None` leaves one out.
+
+    Guide: https://3d3n-pyc.github.io/korvex/middleware/#security-headers-security_headersapp
     """
     always = []
     if frame_options:

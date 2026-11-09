@@ -63,46 +63,44 @@ class Dependency:
 
 
 def Query(default: Any = REQUIRED, *, alias: str | None = None) -> Any:
-    """From the query string. Typed parameters come from there anyway: use
-    it for a name that isn't a Python identifier (`alias="page-size"`)."""
+    """From the query string; `alias` gives a name that isn't a Python identifier.
+
+    Guide: https://3d3n-pyc.github.io/korvex/validation/#headers-cookies-and-forms
+    """
     return Source("query", default, alias)
 
 
 def Header(default: Any = REQUIRED, *, alias: str | None = None) -> Any:
-    """From a request header. `x_client` reads `X-Client`: underscores
-    become hyphens and case doesn't matter. `alias` gives the name as is.
-    A `list[str]` gets every value of a repeated header."""
+    """From a request header (`x_client` reads `X-Client`); `alias` gives the exact name.
+
+    A `list[str]` gets every value of a repeated header.
+    Guide: https://3d3n-pyc.github.io/korvex/validation/#headers-cookies-and-forms
+    """
     return Source("header", default, alias)
 
 
 def Cookie(default: Any = REQUIRED, *, alias: str | None = None) -> Any:
-    """From a cookie of that name (or `alias`)."""
+    """From a cookie of that name (or `alias`).
+
+    Guide: https://3d3n-pyc.github.io/korvex/validation/#headers-cookies-and-forms
+    """
     return Source("cookie", default, alias)
 
 
 def Form(default: Any = REQUIRED, *, alias: str | None = None) -> Any:
-    """From a form field, urlencoded or multipart. Annotated `UploadedFile`
-    (or `list[UploadedFile]`), it's a file. An empty field counts as
-    missing, except for `str`. Annotated with a msgspec or pydantic model,
-    it's the model, each of its fields from the form field of that name."""
+    """From a form field, urlencoded or multipart; annotated `UploadedFile`, a file.
+
+    Annotated with a msgspec or pydantic model, each of its fields is read from the form field of that name.
+    Guide: https://3d3n-pyc.github.io/korvex/validation/#headers-cookies-and-forms
+    """
     return Source("form", default, alias)
 
 
 def Depends(dependency: Callable[..., Any], *, cache: bool = True) -> Any:
-    """The value `dependency` returns, computed before the handler runs.
+    """The value `dependency` returns (or yields), computed before the handler runs.
 
-    A dependency takes parameters like a handler does (query, headers,
-    cookies, body, path, other dependencies), plus the request if it asks
-    for one (annotated `Request`, or named `request`). It can be sync or
-    async, and can raise `HTTPException` to stop the request.
+    - `cache`: call it once per request; `False` calls it for each parameter
 
-    - One that `yield`s instead of returning is torn down once the handler
-      is done: the code after `yield` runs when the handler returns (for a
-      streamed response, once the stream is sent), and an error from the
-      handler is raised at the `yield`, so `try`/`except`/`finally` work
-      there. The error still gets its usual response afterwards.
-    - Within one request, a dependency is called once however many
-      parameters ask for it; `cache=False` calls it for each.
-    - `app.dependency_overrides[dependency] = other` replaces it, in tests.
+    Guide: https://3d3n-pyc.github.io/korvex/dependencies/
     """
     return Dependency(dependency, cache)

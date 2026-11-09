@@ -33,20 +33,21 @@ class Decision(NamedTuple):
 
 
 class RateLimitStore(Protocol):
-    """Where rate limit state lives. The store decides, rather than just
-    storing numbers, so a shared store (Redis, say) can do it atomically.
-    `hit` can be a coroutine function, for a store over the network."""
+    """Where rate limit state lives: `hit` decides for one request, sync or async.
+
+    Guide: https://3d3n-pyc.github.io/korvex/middleware/#your-own-store
+    """
 
     def hit(self, key: Hashable, requests: int, per: float) -> Decision | Awaitable[Decision]: ...
 
 
 class MemoryStore:
-    """Rate limit state in this process's memory. Each worker has its own,
-    so a client can get up to `requests` x workers.
+    """Rate limit state in this process's memory, one store per worker.
 
-    Uses GCRA (a token bucket kept as one timestamp per key): up to
-    `requests` at once, then one every `per / requests` seconds. Safe with
-    several threads (`threads=` on free-threaded Python)."""
+    Algorithm: GCRA, safe with several threads.
+
+    Guide: https://3d3n-pyc.github.io/korvex/middleware/#where-the-counts-live
+    """
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
@@ -104,20 +105,18 @@ return {1, remaining, '0', tostring(full_back - now)}
 
 
 class RedisStore:
-    """Rate limit state in Redis, shared by every worker and machine. Needs the `redis` package
-    (`pip install korvex[redis]`).
+    """Rate limit state in Redis, shared by every worker and machine.
 
-        rate_limit(app, requests=100, per=60, store=RedisStore("redis://localhost:6379/0"))
+    Needs `pip install korvex[redis]`.
 
-    - `client`: a URL, or a `redis.asyncio.Redis` you made yourself (TLS,
-      a password, Sentinel...). Connections open on first use, so the
-      store can be created at import time. From a URL, each event loop
-      (`threads=`) gets its own client; one you made belongs to one loop.
-    - `prefix`: put before each key, to keep them apart from your own.
-    - `fail_open`: if Redis can't be reached, let requests through (the
-      default) or refuse them with a 429. Either way, the error is logged.
+    - `client`: a URL, or a `redis.asyncio.Redis` you made. Connections open
+      on first use; from a URL, each event loop gets its own client.
+    - `prefix`: put before each key.
+    - `fail_open`: if Redis is unreachable, allow requests (default) or refuse
+      them with a 429; the error is logged either way.
 
     Same algorithm as `MemoryStore`, run atomically on Redis's clock.
+    Guide: https://3d3n-pyc.github.io/korvex/middleware/#where-the-counts-live
     """
 
     def __init__(
@@ -186,20 +185,15 @@ def rate_limit(
     store: RateLimitStore | None = None,
     headers: bool = True,
 ) -> None:
-    """Allows each key `requests` requests per `per` seconds; beyond that,
-    requests get a 429 with Retry-After.
+    """Allows each key `requests` requests per `per` seconds; beyond, a 429 with Retry-After.
 
-    - `key(request)`: who the limit applies to. The client's address by
-      default (requests with an unknown address share one limit); an API
-      key or user ID is fairer behind shared addresses. Return `None` to
-      exempt a request (a health check, say).
-    - `store`: where the state lives; a `MemoryStore` by default, one per
-      worker process. `RedisStore` shares it between workers and machines.
-    - `headers`: send RateLimit-Limit, RateLimit-Remaining and
-      RateLimit-Reset on every limited response, so clients can slow down.
+    - `key(request)`: who the limit applies to, the client's address by default
+      (unknown addresses share one limit); `None` exempts a request.
+    - `store`: where the state lives, a `MemoryStore` by default.
+    - `headers`: send RateLimit-Limit, RateLimit-Remaining and RateLimit-Reset.
 
-    Runs as a before hook, so it sees every request; hooks declared before
-    it (like `cors()`, for preflight requests) run first.
+    Runs as a before hook: hooks declared before it (like `cors()`) run first.
+    Guide: https://3d3n-pyc.github.io/korvex/middleware/#rate-limiting-rate_limitapp-requests100-per60
     """
     if requests < 1 or per <= 0:
         raise ValueError("requests must be at least 1 and per positive")

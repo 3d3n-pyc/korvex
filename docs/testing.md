@@ -25,7 +25,8 @@ def test_tasks():
 - A response has `status`, `headers`, `body`, `text`, `json()`, and the
   `url` it came from.
 - Cookies the app sets are kept in `client.cookies` and sent back.
-- `follow_redirects=True` follows a redirect.
+- `follow_redirects=True` follows redirects, up to 20 (after a 303, or a
+  301/302 answering a POST, as a GET).
 - A full URL sets the scheme and host: `client.get("https://acme.example.com/")`.
   Otherwise requests go to `base_url`, `http://testserver` by default.
 - `headers=` and `cookies=` given to the client go with every request:
@@ -34,11 +35,11 @@ def test_tasks():
 ## What the client does for you
 
 - In a `with` block, the app's startup hooks run first and its shutdown
-  hooks last. Every request runs on the same event loop.
+  hooks last; without one, no hook runs. Every request runs on the same event loop.
 - An error the app answers with a 500 is raised in the test, with its
   traceback. `raise_server_errors=False` gives you the 500 instead.
 - A request or WebSocket message not received within `timeout` (5
-  seconds) raises `TimeoutError`.
+  seconds) raises `TimeoutError`; `timeout=None` waits forever.
 
 ## Streams and WebSockets
 

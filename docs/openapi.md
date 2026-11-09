@@ -61,7 +61,8 @@ async def current_user(token: str = Depends(bearer)) -> User:
 
 - `Bearer(format="JWT")`, `APIKey(header="X-API-Key")` (or `query=`,
   `cookie=`) and `OAuth2Password(token_url="/token", scopes={...})`
-  (with `refresh_url=` if tokens can be refreshed).
+  (with `refresh_url=` if tokens can be refreshed). Prefer a header for
+  an API key: one in the query string ends up in access logs.
 - Each takes `name=` (its name in OpenAPI) and `description=` (shown in
   Swagger UI).
 - A scheme only reads the credential; the dependency that takes it

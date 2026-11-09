@@ -19,7 +19,8 @@ async def chat(ws: WebSocket, room: str, user: CurrentUser):
 - `receive()` gives the next message, `receive_text()`, `receive_bytes()`
   and `receive_json()` one of that kind; they raise `WebSocketDisconnect`
   once the client is gone. `send_text()`, `send_bytes()`, `send_json()`
-  and `close(code)` go the other way.
+  and `close(code)` go the other way; `close()` once the client is gone
+  does nothing.
 - Parameters and [dependencies](dependencies.md) work as for HTTP, without
   a body. A dependency raising `HTTPException` refuses the connection. A
   dependency both kinds of route share takes a `Connection`, not a

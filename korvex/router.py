@@ -1,11 +1,6 @@
-"""The standalone router: `Router`, `RouteGroup` and `MethodNotAllowed`.
+"""The standalone router: maps a path and method to a handler name.
 
-It maps a path and a method to a handler *name*, and never calls your
-code: for building your own framework, or routing outside HTTP. `App`
-uses it inside; an app doesn't need it.
-
-Matching happens in Rust (`korvex._core.Router`); this module adds a
-lookup cache, the `get`/`post`/... shortcuts and route groups.
+Guide: https://3d3n-pyc.github.io/korvex/router/
 """
 
 from __future__ import annotations
@@ -53,16 +48,11 @@ CACHE_SIZE = 1024
 
 
 class Router(_CoreRouter, _Shortcuts):
-    """Maps a path and method to a handler name.
+    """Maps a path and method to a handler name; never calls your code.
 
-        router = Router()
-        router.get("/users/{id:int}", "get_user")
-        router.match("/users/42")  # ("get_user", {"id": 42}, ())
+    `match` caches the last `CACHE_SIZE` lookups; results are read-only.
 
-    `match` results are cached: the last `CACHE_SIZE` distinct lookups are
-    answered without matching again. Results are immutable (`params` is a
-    read-only mapping, `middleware` a tuple). Adding or removing a route
-    clears the cache.
+    Guide: https://3d3n-pyc.github.io/korvex/router/
     """
 
     def __init__(self) -> None:
@@ -88,13 +78,9 @@ class Router(_CoreRouter, _Shortcuts):
 
 
 class RouteGroup(_Shortcuts):
-    """Registers routes on a router under a shared prefix and middleware.
+    """Registers routes on a router under a prefix and middleware, from `Router.group()`.
 
-    api = router.group("/api", middleware=["auth"])
-    api.get("/users", "list_users")       # GET /api/users, ["auth"]
-
-    admin = api.group("/admin", middleware=["admin"])
-    admin.get("/stats", "stats")          # GET /api/admin/stats, ["auth", "admin"]
+    Guide: https://3d3n-pyc.github.io/korvex/router/
     """
 
     __slots__ = ("router", "prefix", "middleware")

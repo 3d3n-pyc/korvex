@@ -12,12 +12,13 @@ if TYPE_CHECKING:
 
 
 class HTTPException(Exception):
-    """Raise it in a handler, a dependency or a before hook to answer with
-    an HTTP error: `raise HTTPException(404, "user not found")` answers
-    `{"detail": "user not found"}`, as JSON, like a validation error's 422.
-    Without a `detail`, the standard reason (`Not Found`) is used.
-    `headers` is a dict or pairs. `@app.exception_handler(404)` answers
-    differently."""
+    """Raise it to answer with an HTTP error: `{"detail": ...}` as JSON.
+
+    - `detail`: the message; the standard reason if omitted
+    - `headers`: extra response headers, a dict or pairs
+
+    Guide: https://3d3n-pyc.github.io/korvex/errors-and-hooks/
+    """
 
     def __init__(self, status: int, detail: str | None = None, *, headers: HeaderItems = ()) -> None:
         self.status = status
@@ -27,10 +28,10 @@ class HTTPException(Exception):
 
 
 class ValidationError(HTTPException):
-    """Raised when a request doesn't match a handler's annotations; answered
-    with a 422 and `{"detail": errors}`, or by `@app.exception_handler(422)`.
-    Each error has `loc` (where: `["body", "age"]`, `["query", "limit"]`...),
-    `msg` and `type`."""
+    """Raised when a request doesn't match a handler's annotations: a 422 with `errors`.
+
+    Guide: https://3d3n-pyc.github.io/korvex/validation/#errors
+    """
 
     def __init__(self, errors: list[dict]) -> None:
         super().__init__(422)
@@ -38,16 +39,11 @@ class ValidationError(HTTPException):
 
 
 class Abort(Exception):
-    """Raise it from a dependency, a handler or a before hook to stop the
-    request with this exact response.
+    """Raise it to stop the request with this exact response, past exception handlers.
 
-        def signed_in(session: Optional[str] = Cookie(None)) -> None:
-            if session is None:
-                raise Abort(Response.redirect("/login"))
-
-    The response is sent as is, without exception handlers; after hooks
-    still apply. For an error status, prefer `HTTPException`. In a
-    WebSocket's dependencies, it refuses the connection (403)."""
+    After hooks still apply. In a WebSocket's dependencies, it refuses the connection (403).
+    Guide: https://3d3n-pyc.github.io/korvex/errors-and-hooks/
+    """
 
     def __init__(self, response: Response) -> None:
         super().__init__(response)

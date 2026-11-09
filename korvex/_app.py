@@ -54,25 +54,9 @@ logger = logging.getLogger("korvex")
 
 
 class LoopLocal:
-    """Attributes kept per event loop: `app.local`. A startup hook stores
-    what it opens for its loop (a pool, a client) there; handlers and
-    dependencies on that loop read it:
+    """Attributes kept per event loop: `app.local`, for what a startup hook opens (a pool, a client).
 
-        @app.on_startup
-        async def connect():
-            app.local.pool = await asyncpg.create_pool(DATABASE_URL)
-
-        @app.on_shutdown
-        async def disconnect():
-            await app.local.pool.close()
-
-        async def db():                        # a dependency
-            async with app.local.pool.acquire() as connection:
-                yield connection
-
-    With `threads=`, each loop runs the hooks, so a module-level global
-    would hold one loop's pool for all: asyncio objects only work on the
-    loop that made them. Use it from a running loop only."""
+    Use it from a running loop only. Guide: https://3d3n-pyc.github.io/korvex/server/#threads"""
 
     __slots__ = ("_by_loop", "_lock")
     _by_loop: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, Any]]
@@ -105,17 +89,9 @@ class LoopLocal:
 
 
 class App(_RouteDecorators):
-    """The application: routes, hooks, error handlers, OpenAPI, and `run()`
-    for the built-in server. It is an ASGI app.
+    """The application: routes, hooks, error handlers, OpenAPI, and `run()`. It is an ASGI app.
 
-        app = App()
-
-        @app.get("/users/{id:int}")
-        def get_user(id: int):
-            return Response.json({"id": id})
-
-        app.run()                # or: uvicorn mymodule:app
-    """
+    Guide: https://3d3n-pyc.github.io/korvex/routes/"""
 
     def __init__(self) -> None:
         self._router = Router()  # HTTP routes
@@ -128,9 +104,7 @@ class App(_RouteDecorators):
         """Attributes per event loop: see `LoopLocal`."""
         self._dependency_plans: dict[tuple, Plan] = {}  # (function, pattern, websocket) -> its plan
         self.dependency_overrides: dict[Callable[..., Any], Callable[..., Any]] = {}
-        """`{dependency: replacement}`: the replacement is called instead,
-        wherever the dependency is used. For tests:
-        `app.dependency_overrides[current_user] = lambda: test_user`."""
+        """`{dependency: replacement}`: called instead of the dependency, for tests."""
         self._root = Group(self, self._router.group())
         self._on_startup: list[Hook] = []
         self._on_shutdown: list[Hook] = []
@@ -156,24 +130,15 @@ class App(_RouteDecorators):
         include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        """Decorator: the function answers `path` for `method`. `@app.get(path)`
-        and the other shortcuts take the same options:
+        """Decorator: the function answers `path` for `method`. `@app.get(path)` and the others take the same options.
 
-        - `name`: what `url_for()` knows the route by (the function's name
-          by default).
-        - `status`: the status of the response made from a model or `None`
-          the handler returns (`-> None` with `status=204` for an empty
-          response). A returned `Response` keeps its own. OpenAPI documents
-          it as the route's success.
-        - `dependencies` (`[Depends(func), ...]`): run before the handler,
-          for what they check rather than what they return.
-        - `tags`, `deprecated`, `responses` and `include_in_schema`: how the
-          route shows in OpenAPI. `responses` documents other answers, by
-          status: `{404: "No such task"}`, `{409: Conflict}` (a model), or
-          `{409: ("Name taken", Conflict)}`.
-        - `max_body` (bytes): raises or lowers the built-in server's body
-          limit for that route; ASGI servers ignore it.
-        """
+        - `name`: what `url_for()` knows the route by (the function's name by default).
+        - `status`: the status of a response made from a model or `None` (`-> None` with `204`: empty).
+        - `dependencies`: `[Depends(func), ...]`, run before the handler.
+        - `tags`, `deprecated`, `responses`, `include_in_schema`: the route's OpenAPI entry.
+        - `max_body` (bytes): the built-in server's body limit for this route; ASGI servers ignore it.
+
+        Guide: https://3d3n-pyc.github.io/korvex/routes/#route-options"""
         return self._root.route(
             path,
             method=method,
@@ -197,10 +162,9 @@ class App(_RouteDecorators):
         responses: Mapping[int | str, Any] | None = None,
         include_in_schema: bool = True,
     ) -> Group:
-        """Returns a `Group` that registers handlers under `prefix`, with
-        `dependencies` for all of them. Its OpenAPI options (`tags`,
-        `deprecated`, `responses`, `include_in_schema`) combine with each
-        route's own."""
+        """Returns a `Group` that registers handlers under `prefix`, with `dependencies` and OpenAPI options for all.
+
+        Guide: https://3d3n-pyc.github.io/korvex/routes/#groups"""
         return self._root.group(
             prefix,
             dependencies=dependencies,
@@ -220,25 +184,11 @@ class App(_RouteDecorators):
         responses: Mapping[int | str, Any] | None = None,
         include_in_schema: bool = True,
     ) -> Group:
-        """Returns a group whose routes only answer for requests to that
-        host (its `Host` header, without the port):
+        """Returns a group whose routes only answer for requests to `pattern`, a host (`{param}` takes one label).
 
-            api = app.host("api.example.com")
-            @api.get("/users")                      # https://api.example.com/users
-
-            tenants = app.host("{tenant}.example.com")
-            @tenants.get("/")                       # acme.example.com: tenant="acme"
-            def home(request, tenant): ...
-
-        A `{param}` takes one whole label of the host name and reaches the
-        dependencies and handlers that take it, like a path parameter (and
-        `request.path_params`). The first pattern that fits owns the
-        request (those without parameters are tried first, then in the
-        order declared): its routes answer, then routes declared without a
-        host; another pattern's never do. Calling `host()` again with the
-        same pattern adds to the same routes. In the built-in server, a
-        route's `max_body` applies to its path on every host. The OpenAPI
-        options (`tags`...) work as for `group()`."""
+        Calling it again with the same pattern adds to the same routes; a route's `max_body`
+        applies to its path on every host.
+        Guide: https://3d3n-pyc.github.io/korvex/routes/#hosts"""
         normalized = pattern.lower().rstrip(".")
         found = next((h for h in self._hosts if h.pattern == normalized), None)
         if found is None:
@@ -252,42 +202,24 @@ class App(_RouteDecorators):
     def websocket(
         self, path: str, *, name: str | None = None, dependencies: Sequence[Any] = ()
     ) -> Callable[[WebSocketHandler], WebSocketHandler]:
-        """Decorator: registers the function as the WebSocket handler for
-        `path`. It gets a `WebSocket`, the path params, and parameters and
-        dependencies as HTTP handlers do (no body). A dependency raising
-        `HTTPException` refuses the connection (403). Before hooks run on
-        the handshake; after hooks don't. `name` is what `url_for()` knows
-        it by (the function's name by default)."""
+        """Decorator: registers the function as the WebSocket handler for `path`.
+
+        It gets a `WebSocket`, path params, and parameters and dependencies as HTTP
+        handlers do (no body). `name`: for `url_for()`.
+        Guide: https://3d3n-pyc.github.io/korvex/websockets/"""
         return self._root.websocket(path, name=name, dependencies=dependencies)
 
     def url_for(self, name: str, /, **params: Any) -> str:
-        """The path of the route named `name`, with `params` for its path
-        parameters:
+        """The path of the route named `name`, with `params` for its path parameters.
 
-            @app.get("/users/{id:int}")
-            def get_user(request, id): ...
-
-            app.url_for("get_user", id=42)           # "/users/42"
-            app.url_for("static", path="css/a.css")  # "/static/css/a.css"
-
-        A route's name is its `name=`, or else its function's name (an
-        `app.static()` directory's is `"static"`). If routes share a
-        function's name, `url_for()` needs a `name=` to tell them apart
-        (LookupError). Routes can share a `name=` only on the same path,
-        for different methods.
-
-        Values can be `str`, `int`, `float`, `bool`, `UUID`, `date` or
-        `datetime`, and are percent-encoded. Each must fit its constraint
-        (`{id:int}`, `{id:uuid}`, a custom one) and the handler's
-        annotation, can't be empty, `.` or `..`, and only a `*wildcard`
-        takes a `/`. The path must also reach that route, not another
-        that answers it first (`/users/me` rather than `/users/{name}`).
-        Otherwise, ValueError (TypeError for a value of another type).
-        Every path parameter must be given, and nothing else: add a query
-        string yourself (`urllib.parse.urlencode`).
-
-        For a route of `app.host()`, this is the path only.
-        `request.url_for()` gives the full URL, host included."""
+        Raises LookupError if several routes share a function's name (give a `name=`; routes
+        share a `name=` only on one path, for different methods). Raises ValueError for a value
+        that doesn't fit its constraint or the handler's annotation, is empty, `.` or `..`,
+        or has a `/` outside a `*wildcard`, or when another route answers the path first
+        (TypeError for an unsupported type). Every path parameter must be given, and nothing
+        else: add a query string yourself. Values are percent-encoded; a host route gives the
+        path only.
+        Guide: https://3d3n-pyc.github.io/korvex/routes/#links-to-a-route"""
         from korvex import _urls as urls
 
         return urls.path_for(self, urls.lookup(self._url_index(), name), params)
@@ -336,12 +268,10 @@ class App(_RouteDecorators):
     def openapi(
         self, *, title: str = "API", version: str = "0.1.0", description: str | None = None, host: str | None = None
     ) -> dict:
-        """An OpenAPI 3.1 description of the app's routes: paths, typed path
-        and query parameters, request and response models, and each
-        handler's docstring (first line as summary). Static files and
-        WebSockets are left out. With `host`, the routes that answer on
-        that host (its own from `app.host()`, then those without a host);
-        without, only those without a host."""
+        """An OpenAPI 3.1 description of the app's routes (static files and WebSockets left out).
+
+        With `host`, the routes that answer there; without, only those with no host.
+        Guide: https://3d3n-pyc.github.io/korvex/openapi/"""
         from korvex import _openapi as openapi
 
         return openapi.build(self, title=title, version=version, description=description, host=host)
@@ -376,9 +306,10 @@ class App(_RouteDecorators):
         openapi_path: str = "/openapi.json",
         docs_path: str | None = "/docs",
     ) -> None:
-        """Serves the OpenAPI document at `openapi_path` (rebuilt on each
-        call) and Swagger UI at `docs_path` (loaded from a CDN; `None` to
-        leave it out)."""
+        """Serves the OpenAPI document at `openapi_path` and Swagger UI at `docs_path` (`None`: none).
+
+        `title`, `version` and `description` go in the document.
+        Guide: https://3d3n-pyc.github.io/korvex/openapi/"""
         from korvex import _openapi as openapi
 
         def serve_openapi(request: Request) -> Response:
@@ -398,30 +329,22 @@ class App(_RouteDecorators):
             self._routes["korvex.docs"] = _Route(serve_docs)
 
     def constraint(self, name: str, pattern: str) -> None:
-        """Defines a route constraint, beyond `int`, `uuid` and `str`:
+        """Defines a route constraint `{param:name}`, matching the whole value against `pattern`.
 
-            app.constraint("slug", r"[a-z0-9]+(?:-[a-z0-9]+)*")
-
-            @app.get("/posts/{post:slug}")       # /posts/hello-world, not /posts/Hello
-
-        A value fits when the whole of it matches the regex (Rust's `regex`
-        syntax: no look-around or backreferences, so matching is linear).
-        A value that doesn't fit gives a 404, or another route's match:
-        constrained parameters are tried in registration order, before
-        plain ones. The handler gets a `str`; an annotation converts it.
-        Define a constraint before the routes that use it; it can't be
-        redefined differently."""
+        Rust `regex` syntax. Constrained parameters are tried in registration order, before
+        plain ones; the handler gets a `str`. Define it before the routes that use it; it
+        can't be redefined differently.
+        Guide: https://3d3n-pyc.github.io/korvex/routes/#your-own-constraints"""
         self._router.constraint(name, pattern)
         for host in self._hosts:
             host.router.constraint(name, pattern)
             host.ws_router.constraint(name, pattern)
 
     def static(self, prefix: str, directory: str | os.PathLike[str], *, name: str | None = None) -> None:
-        """Serves the files in `directory` under `prefix`:
-        `app.static("/static", "public")` answers `/static/css/app.css` with
-        `public/css/app.css`. Paths that leave the directory get a 404.
-        `url_for("static", path="css/app.css")` links to a file; `name`
-        (`"static"` by default) tells several directories apart."""
+        """Serves the files in `directory` under `prefix`; paths leaving it get a 404.
+
+        `name` (`"static"` by default) is what `url_for()` knows it by.
+        Guide: https://3d3n-pyc.github.io/korvex/routes/#static-files"""
         root = Path(directory).resolve()
         if not root.is_dir():
             raise NotADirectoryError(f"not a directory: {directory}")
@@ -447,9 +370,9 @@ class App(_RouteDecorators):
     @overload
     def on_startup(self, func: None = None) -> Callable[[Hook], Hook]: ...
     def on_startup(self, func: Hook | None = None) -> Hook | Callable[[Hook], Hook]:
-        """Decorator: runs the function when the server starts, before the
-        first request. If it raises, the server doesn't start. Works with
-        or without parentheses."""
+        """Decorator: runs the function at server start; if it raises, the server doesn't start.
+
+        Guide: https://3d3n-pyc.github.io/korvex/errors-and-hooks/#startup-and-shutdown"""
         return _add_hook(self._on_startup, func)
 
     @overload
@@ -457,8 +380,9 @@ class App(_RouteDecorators):
     @overload
     def on_shutdown(self, func: None = None) -> Callable[[Hook], Hook]: ...
     def on_shutdown(self, func: Hook | None = None) -> Hook | Callable[[Hook], Hook]:
-        """Decorator: runs the function when the server stops, in reverse
-        order of declaration. Works with or without parentheses."""
+        """Decorator: runs the function at server stop, in reverse order of declaration.
+
+        Guide: https://3d3n-pyc.github.io/korvex/errors-and-hooks/#startup-and-shutdown"""
         return _add_hook(self._on_shutdown, func)
 
     @overload
@@ -466,16 +390,11 @@ class App(_RouteDecorators):
     @overload
     def before_request(self, func: None = None) -> Callable[[BeforeHook], BeforeHook]: ...
     def before_request(self, func: BeforeHook | None = None) -> BeforeHook | Callable[[BeforeHook], BeforeHook]:
-        """Decorator: runs the function before every request, ahead of
-        routing, so it sees unknown paths too. It gets the request
-        (`path_params` not filled yet) and returns a `Response` to answer
-        right away, or `None` to carry on. Hooks run in declaration order.
+        """Decorator: runs the function before routing, so also for unknown paths and handshakes.
 
-        They also run for WebSocket handshakes, with the `WebSocket` as the
-        request (`isinstance(request, WebSocket)` tells them apart): a hook
-        answering, or raising `HTTPException` or `Abort`, refuses the
-        connection (403). Check a handshake's `Origin` here: browsers don't
-        for WebSockets."""
+        It gets the request (`path_params` empty) and returns a `Response` to answer, or `None`.
+        For a WebSocket handshake, answering or raising `HTTPException` or `Abort` refuses it.
+        Guide: https://3d3n-pyc.github.io/korvex/errors-and-hooks/#hooks-around-every-request"""
         return _add_hook(self._before_request, func)  # type: ignore[arg-type]
 
     @overload
@@ -483,16 +402,18 @@ class App(_RouteDecorators):
     @overload
     def after_request(self, func: None = None) -> Callable[[AfterHook], AfterHook]: ...
     def after_request(self, func: AfterHook | None = None) -> AfterHook | Callable[[AfterHook], AfterHook]:
-        """Decorator: runs the function on every response, errors included.
-        It gets the request and the response, and returns the response to
-        send, or `None` to keep it. Hooks run in reverse order: the first
-        declared sees the response last."""
+        """Decorator: runs the function on every response, errors included, in reverse order.
+
+        It returns the response to send, or `None` to keep it.
+        Guide: https://3d3n-pyc.github.io/korvex/errors-and-hooks/#hooks-around-every-request"""
         return _add_hook(self._after_request, func)  # type: ignore[arg-type]
 
     def exception_handler(self, key: int | type[Exception]) -> Callable[[ExceptionHandler], ExceptionHandler]:
-        """Decorator: answers errors with the function's `Response`. `key` is
-        an HTTP status (`404`, also used for unknown paths) or an exception
-        class (`ValueError`, which also catches its subclasses)."""
+        """Decorator: answers errors with the function's `Response`.
+
+        - `key`: an HTTP status (`404` also covers unknown paths) or an exception class.
+
+        Guide: https://3d3n-pyc.github.io/korvex/errors-and-hooks/#answering-errors-your-way"""
 
         def register(func: ExceptionHandler) -> ExceptionHandler:
             self._exception_handlers[key] = func
@@ -770,44 +691,22 @@ class App(_RouteDecorators):
         max_connections: int = 0,
         max_requests: int = 0,
     ) -> None:
-        """Serves the app with Korvex's built-in server until Ctrl+C or
-        SIGTERM. Linux and macOS only; on Windows, use an ASGI server.
+        """Serves the app with the built-in server until Ctrl+C or SIGTERM (Linux and macOS only).
 
-        - `workers` processes share the port, each running the startup and
-          shutdown hooks. About 3 per 4 CPU cores works best.
-        - `threads` event loops per worker, each in its own thread and
-          running the startup and shutdown hooks: keep what they open in
-          `app.local`. With a free-threaded Python (3.14t) they run in
-          parallel, sharing the process's memory. With the GIL, they take
-          turns on one core.
-        - On stop, requests in progress get up to `graceful_timeout` seconds.
-        - Request bodies over `max_body` bytes get a 413 (a route's own
-          `max_body` overrides it); clients get `read_timeout` seconds to send
-          the headers, then the body (408 after that).
-        - `uds` listens on a Unix socket at that path instead of host:port,
-          for a reverse proxy on the same machine.
-        - From `forwarded_allow_ips` (`"*"` for any) or a Unix socket,
-          `X-Forwarded-For` and `-Proto` (or `Forwarded`, when neither is
-          there) set `request.client` and `request.scheme`. With
-          `forwarded_host`, for a proxy that sets `X-Forwarded-Host` itself,
-          the host they forward replaces the `Host` header too.
-        - `access_log` logs each request to the `korvex.access` logger.
-        - Open WebSockets get a ping every `ws_ping_interval` seconds, and
-          are closed (1011) if the client stays silent until the next one;
-          0 turns pings off.
-        - With `max_connections` above 0, each worker and thread keeps at
-          most that many connections open (WebSockets included); further
-          clients wait in the listen backlog until one closes. Memory use is
-          bounded by about `max_connections` x `max_body`.
-        - With `max_requests` above 0, a worker stops gracefully after about
-          that many HTTP requests (plus a random 0 to 10%, so workers don't
-          restart together) and the supervisor starts a new one, capping
-          slow memory leaks. Counted per worker, all its threads together
-          (WebSocket handshakes excluded). With `workers=1`, a worker is
-          still forked, so the server survives the restarts.
-        - A streamed response or a WebSocket waits whenever its client is
-          1 MiB behind, until it catches up.
-        """
+        - `workers`: processes sharing the port, each running the startup and shutdown hooks.
+        - `threads`: event loops per worker; keep what they open in `app.local`.
+        - `graceful_timeout`: seconds requests in progress get on stop.
+        - `max_body`: bytes; larger bodies get a 413 (a route's `max_body` overrides it).
+        - `read_timeout`: seconds a client gets to send headers, then body (408).
+        - `uds`: a Unix socket path to listen on instead of host:port.
+        - `forwarded_allow_ips`: proxies trusted for `X-Forwarded-For`/`-Proto` (`"*"`: any).
+        - `forwarded_host`: also take the forwarded host, only if your proxy sets it itself.
+        - `access_log`: log each request to `korvex.access`.
+        - `ws_ping_interval`: seconds between WebSocket pings; `0` turns them off.
+        - `max_connections`: open connections per worker and thread; `0`: no limit.
+        - `max_requests`: a worker restarts after about that many requests; `0`: never.
+
+        Guide: https://3d3n-pyc.github.io/korvex/server/"""
         from korvex import _serve as serve
 
         serve.run(

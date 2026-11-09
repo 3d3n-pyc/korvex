@@ -61,8 +61,7 @@ class _RouteDecorators:
         include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        """Decorator: the function answers `GET path`. The options are
-        those of `App.route()`."""
+        """Decorator: the function answers `GET path`, with the options of `App.route()`."""
         return self.route(
             path,
             method="GET",
@@ -89,8 +88,7 @@ class _RouteDecorators:
         include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        """Decorator: the function answers `POST path`. The options are
-        those of `App.route()`."""
+        """Decorator: the function answers `POST path`, with the options of `App.route()`."""
         return self.route(
             path,
             method="POST",
@@ -117,8 +115,7 @@ class _RouteDecorators:
         include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        """Decorator: the function answers `PUT path`. The options are
-        those of `App.route()`."""
+        """Decorator: the function answers `PUT path`, with the options of `App.route()`."""
         return self.route(
             path,
             method="PUT",
@@ -145,8 +142,7 @@ class _RouteDecorators:
         include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        """Decorator: the function answers `PATCH path`. The options are
-        those of `App.route()`."""
+        """Decorator: the function answers `PATCH path`, with the options of `App.route()`."""
         return self.route(
             path,
             method="PATCH",
@@ -173,8 +169,7 @@ class _RouteDecorators:
         include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        """Decorator: the function answers `DELETE path`. The options are
-        those of `App.route()`."""
+        """Decorator: the function answers `DELETE path`, with the options of `App.route()`."""
         return self.route(
             path,
             method="DELETE",
@@ -201,8 +196,7 @@ class _RouteDecorators:
         include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        """Decorator: the function answers `HEAD path`. The options are
-        those of `App.route()`."""
+        """Decorator: the function answers `HEAD path`, with the options of `App.route()`."""
         return self.route(
             path,
             method="HEAD",
@@ -229,8 +223,7 @@ class _RouteDecorators:
         include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        """Decorator: the function answers `OPTIONS path`. The options are
-        those of `App.route()`."""
+        """Decorator: the function answers `OPTIONS path`, with the options of `App.route()`."""
         return self.route(
             path,
             method="OPTIONS",
@@ -315,14 +308,9 @@ class _Docs:
 
 
 class Group(_RouteDecorators):
-    """Registers handlers under a shared prefix and dependencies, and
-    OpenAPI's `tags`, `deprecated`, `responses` and `include_in_schema`
-    for all of them.
+    """Registers routes under a shared prefix, dependencies and OpenAPI options.
 
-        api = app.group("/api", dependencies=[Depends(signed_in)], tags=["api"])
-
-        @api.get("/users")           # GET /api/users, after signed_in
-        def list_users(request): ...
+    Guide: https://3d3n-pyc.github.io/korvex/routes/#groups
     """
 
     __slots__ = ("_app", "_routes", "_dependencies", "_host", "_docs")
@@ -365,9 +353,10 @@ class Group(_RouteDecorators):
         include_in_schema: bool = True,
         max_body: int | None = None,
     ) -> Callable[[Handler], Handler]:
-        """Decorator: registers the function as the handler for `path`, under
-        this group's prefix. Its own `dependencies` run after the group's;
-        its OpenAPI options add to the group's."""
+        """Decorator: registers the handler for `path` under the group's prefix.
+
+        Guide: https://3d3n-pyc.github.io/korvex/routes/#route-options
+        """
         _check_name_type(name)
         _check_status(status)
         docs = self._docs.merge(_Docs(tags, deprecated, responses, include_in_schema))
@@ -395,12 +384,10 @@ class Group(_RouteDecorators):
     def websocket(
         self, path: str, *, name: str | None = None, dependencies: Sequence[Any] = ()
     ) -> Callable[[WebSocketHandler], WebSocketHandler]:
-        """Decorator: registers the function as the WebSocket handler for
-        `path`, under this group's prefix. Parameters and dependencies work
-        as for HTTP handlers (no body), the group's dependencies run too,
-        and one raising `HTTPException` refuses the connection (403).
-        Before hooks run on the handshake; after hooks don't. `name` is
-        the `url_for()` name (the function's name by default)."""
+        """Decorator: registers the WebSocket handler for `path` under the group's prefix.
+
+        Guide: https://3d3n-pyc.github.io/korvex/websockets/
+        """
         _check_name_type(name)
 
         def register(func: WebSocketHandler) -> WebSocketHandler:
@@ -433,8 +420,7 @@ class Group(_RouteDecorators):
         responses: Mapping[int | str, Any] | None = None,
         include_in_schema: bool = True,
     ) -> Group:
-        """Returns a nested group. Its `dependencies` run after this
-        group's; its OpenAPI options add to this group's."""
+        """Returns a nested group, adding its prefix, dependencies and OpenAPI options."""
         docs = self._docs.merge(_Docs(tags, deprecated, responses, include_in_schema))
         return Group(self._app, self._routes.group(prefix), (*self._dependencies, *dependencies), self._host, docs)
 

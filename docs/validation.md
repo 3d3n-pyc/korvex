@@ -57,7 +57,8 @@ async def upload(
 ```
 
 - `x_client` reads `X-Client`: underscores become hyphens, and case
-  doesn't matter. `alias=` gives the exact name.
+  doesn't matter. `alias=` gives the exact name. `list[str]` gets every
+  value of a repeated header.
 - An empty form field counts as missing, except for a `str`.
 - A whole model can come from a form, field by field:
   `signup: Signup = Form()`. A checkbox's `on` is true, and text converts

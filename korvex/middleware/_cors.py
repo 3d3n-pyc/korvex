@@ -29,16 +29,13 @@ def cors(
 
     - `allow_origins`: origins like `"https://example.com"`, or `"*"`.
     - `allow_methods`: methods a cross-origin request may use.
-    - `allow_headers`: request headers it may send beyond the basic ones,
-      or `"*"` for any.
-    - `allow_credentials`: whether it may send cookies. With `"*"` origins,
-      the request's origin is sent back instead of `*`, as browsers require.
+    - `allow_headers`: request headers allowed beyond the basic ones, or `"*"`.
+    - `allow_credentials`: whether cookies may be sent. With `"*"` origins, the
+      request's origin is sent back instead of `*`, as browsers require.
     - `expose_headers`: response headers the page's code may read.
-    - `max_age`: seconds the browser may cache a preflight answer.
+    - `max_age`: seconds a preflight answer may be cached.
 
-    Preflight requests (`OPTIONS` with `Access-Control-Request-Method`) are
-    answered before routing: 204 if allowed, 400 if not. Other responses
-    from an allowed origin, errors included, get the CORS headers.
+    Guide: https://3d3n-pyc.github.io/korvex/middleware/#cors-cors-app-allow-origins
     """
     any_origin = allow_origins == "*"
     origins = set() if any_origin else set(allow_origins)

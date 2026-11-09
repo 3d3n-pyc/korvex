@@ -27,6 +27,9 @@ def signed_in(session: Optional[str] = Cookie(None)) -> None:
         raise Abort(Response.redirect("/login"))
 ```
 
+After hooks still see that response. In a WebSocket's dependency, `Abort`
+refuses the connection (a 403).
+
 ### Answering errors your way
 
 ```python
@@ -55,8 +58,8 @@ def add_header(request, response):
     response.headers.set("X-Served-By", "korvex")  # change it, or return another
 ```
 
-- Before hooks run before routing, so for unknown paths too, in the
-  order declared. They also run for WebSocket handshakes: they get a
+- Before hooks run before routing, so for unknown paths too (and with
+  `path_params` still empty), in the order declared. They also run for WebSocket handshakes: they get a
   `Connection`, and `isinstance(connection, WebSocket)` tells a
   handshake apart. Answering refuses the connection.
 - After hooks get every response, errors included, and run in reverse

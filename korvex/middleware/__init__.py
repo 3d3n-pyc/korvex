@@ -1,9 +1,6 @@
-"""Ready-made hooks for common jobs. Each function registers its hooks
-on an App:
+"""Ready-made hooks (CORS, request IDs, rate limiting, compression, security headers).
 
-    from korvex.middleware import cors
-
-    cors(app, allow_origins=["https://example.com"])
+Guide: https://3d3n-pyc.github.io/korvex/middleware/
 """
 
 from korvex.middleware._compression import compress
