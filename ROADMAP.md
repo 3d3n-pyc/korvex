@@ -2,7 +2,7 @@
 
 Where Korvex is going. Versions are a rough order, not promises.
 
-## Where it stands (0.14)
+## Where it stands (0.14.1)
 
 - **Fast.** On one CPU core, Korvex serves the most requests of the
   frameworks tested (34.4k requests/s, Falcon 30.5k, Starlette's best

@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.14.1
+
+The built-in server 47% faster, and the comparisons measured again.
 
 - **The built-in server serves 47% more than 0.14.0**: 39.7k requests/s
   against 26.9k, one worker on one core, measured side by side. Three
