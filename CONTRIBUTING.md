@@ -60,6 +60,7 @@ benches/      comparisons with other frameworks:
   database.py      a request that reads PostgreSQL, Korvex and FastAPI (apps in benches/db/)
   load_test.py     frameworks on the same server under load (apps in benches/load/)
   servers.py       servers on the same CPU cores, built-in one included
+  soak.py          memory and errors under steady mixed load (nightly; `uv run python benches/soak.py --duration 60` locally, Linux, needs oha)
   plot.py          draws the charts in docs/
 ```
 
