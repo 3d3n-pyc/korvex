@@ -8,6 +8,12 @@
   compile time. This needs control of a template's source; reported externally.
   Migration: an object's own `.format()` method can't be called from a
   template; register a filter instead.
+- **Fixed: malformed multipart part headers return 400, not 500.** A part
+  with an empty field name, a header line without a colon, or bare LF line
+  endings caused a 500. Found by fuzzing.
+- **New: fuzzing for contributors.** `fuzz/` has HTTP and WebSocket fuzzers,
+  a cargo-fuzz target for the Rust router and proxy, and Hypothesis property
+  tests for the Python parsers. Nightly CI runs them. See CONTRIBUTING.md.
 
 ## 1.0.0rc1
 
