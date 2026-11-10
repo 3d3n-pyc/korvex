@@ -161,6 +161,17 @@ def url_for(request: Connection, target: Target, params: dict[str, Any]) -> str:
     return f"{scheme}://{netloc}{path_for(app, target, params, host_given=True)}"
 
 
+def mount_url(request: Connection, name: str, prefix: str, params: dict[str, Any]) -> str:
+    """The full URL of a named mount (`app.mount(..., name=)`): the request's scheme and host, then the path."""
+    from korvex._app import _mount_url
+
+    path = _mount_url(name, prefix, params)
+    header = request.headers.get("host") or ""
+    if not _HOST.fullmatch(header):
+        raise ValueError(f"url_for({name!r}): the request's Host header {header!r} isn't a host name")
+    return f"{'https' if request.scheme in ('https', 'wss') else 'http'}://{header}{path}"
+
+
 def _text(target: Target, key: str, value: Any) -> str:
     """A parameter's value as text, the way the route reads it back."""
     if isinstance(value, str):

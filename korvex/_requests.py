@@ -158,7 +158,10 @@ class Connection:
             raise RuntimeError("this request doesn't come from an App: url_for() needs one to find the route")
         from korvex import _urls as urls
 
-        url = urls.url_for(self, urls.lookup(self.app._url_index(), name), params)
+        if name in self.app._mount_names:
+            url = urls.mount_url(self, name, self.app._mount_names[name], params)
+        else:
+            url = urls.url_for(self, urls.lookup(self.app._url_index(), name), params)
         if not self.root_path:
             return url
         at = url.index("/", url.index("://") + 3)

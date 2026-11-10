@@ -27,9 +27,10 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from urllib.parse import unquote
 
 from korvex import _core
-from korvex._app import _call, _finish, _raw_headers
+from korvex._app import MountMatch, _call, _finish, _raw_headers
+from korvex._mount import Receive, ResponderSend, child_scope
 from korvex._requests import Request
-from korvex._response import EventStream, StreamingResponse
+from korvex._response import EventStream, Response, StreamingResponse
 from korvex.middleware import current_request_id
 
 # Python 3.12+: a handler that doesn't wait completes at once, skipping the
@@ -438,7 +439,14 @@ async def _serve_http(
     `background` so shutdown can wait for them."""
     decoded = unquote(path) if "%" in path else path
     request = Request._from_server(method, decoded, query_string, headers, client, scheme, body, app, root_path)
-    response = await app._respond(request, error)
+    mount = None
+    response: Response = None  # type: ignore[assignment]
+    try:
+        response = await app._respond(request, error)
+    except MountMatch as matched:
+        mount = matched
+    if mount is not None:  # outside the except: errors of the sub-app don't show MountMatch
+        return await _serve_mount(app, mount, request, path, root_path, client, responder, writable)
     head = method == "HEAD"
     try:
         raw_headers = _raw_headers(response, head)
@@ -469,6 +477,37 @@ async def _serve_http(
         if request._tasks is not None:  # sent or not, the client never waits for them
             _run_background(request._tasks, background)
     return response.status
+
+
+async def _serve_mount(
+    app: App,
+    mount: MountMatch,
+    request: Request,
+    path: str,
+    root_path: str,
+    client: tuple[str, int] | None,
+    responder: Any,
+    writable: Callable[[int], Awaitable[None]] | None,
+) -> int:
+    """Hands a request that matched `app.mount()` to the mounted ASGI app and
+    returns the status it answered with. An app that fails or never answers
+    gets a logged 500, or a cut stream if its response had begun."""
+    receive = Receive(request._body if request._body is not None else b"")
+    send = ResponderSend(responder, receive, writable)
+    raw = path.encode("latin-1", "replace")  # still percent-encoded, as the client sent it
+    scope = child_scope(request, mount.prefix, raw, None, app._mount_state(mount.prefix))
+    try:
+        await mount.app(scope, receive, send)
+    except Exception:
+        logger.exception("error in mounted app %s", mount.prefix)
+    finally:
+        receive.close()
+        send.finish()
+    if send.unanswered:
+        logger.error("mounted app %s returned without answering %s %s", mount.prefix, request.method, path)
+        responder.respond(500, [(b"content-type", b"text/plain; charset=utf-8")], b"Internal Server Error")
+        return 500
+    return send.status or 500  # a stream the app cut off after its head
 
 
 def _run_background(tasks: Any, background: set[asyncio.Task] | None) -> None:
@@ -502,6 +541,7 @@ async def _serve_websocket(
     scope = {
         "type": "websocket",
         "path": root_path + unquote(path),  # ASGI: includes root_path; the app strips it once
+        "raw_path": (root_path + path).encode("latin-1", "replace"),  # still percent-encoded
         "root_path": root_path,
         "query_string": query_string,
         "headers": headers,

@@ -257,6 +257,57 @@ async def sse_bad(request):
     return Response.sse(events(), ping=0)
 
 
+async def raw_sub_app(scope, receive, send):
+    """A raw ASGI app mounted at /raw: its behaviour depends on the path."""
+    if scope["type"] == "websocket":
+        await receive()
+        await send({"type": "websocket.accept"})
+        while (message := await receive())["type"] == "websocket.receive":
+            await send({"type": "websocket.send", "text": "mounted: " + message["text"]})
+        return
+    path = scope["path"][len(scope["root_path"]) :]
+    if path == "/stream":
+        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/plain")]})
+        for i in range(5):
+            await send({"type": "http.response.body", "body": f"{i};".encode(), "more_body": True})
+            await asyncio.sleep(0.01)
+        await send({"type": "http.response.body", "body": b"end"})
+    elif path.startswith("/echo"):
+        message = await receive()
+        info = f"{scope['method']} {scope['path']} {scope['root_path']} {scope['raw_path'].decode()} "
+        body = info.encode() + message["body"]
+        await send({"type": "http.response.start", "status": 201, "headers": [(b"x-sub", b"1")]})
+        await send({"type": "http.response.body", "body": body})
+    elif path == "/disconnect":
+        await receive()
+        waiting = asyncio.ensure_future(receive())  # resolves at http.disconnect
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        while not waiting.done():  # a send to a client that left is what reveals it
+            await send({"type": "http.response.body", "body": b"x" * 1024, "more_body": True})
+            await asyncio.sleep(0.02)
+        Path(os.environ["DISCONNECT_FILE"]).write_text("disconnected")
+    elif path == "/boom":
+        raise RuntimeError("sub-app failed")
+    elif path == "/silent":
+        return
+    else:
+        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/plain")]})
+        await send({"type": "http.response.body", "body": b"hello from the mount"})
+
+
+app.mount("/raw", raw_sub_app)
+
+inner = App()
+
+
+@inner.get("/hi")
+def inner_hi(request):
+    return Response.text("inner " + request.root_path)
+
+
+app.mount("/inner", inner)
+
+
 if __name__ == "__main__":
     import korvex._serve
 

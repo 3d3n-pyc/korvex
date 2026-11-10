@@ -91,3 +91,19 @@ def test_root_path_with_trailing_slash():
     status, _, body = get(app, "/api/", root="/api/")
     assert (status, body) == (200, b"/|/api|http://example.com/api/items/3|/api/items/3")
     assert get(app, "/api/items/7", root="/api/")[2] == b"7"
+
+
+def test_request_url_for_a_mount_includes_root_path():
+    app = App()
+
+    async def sub(scope, receive, send):  # never called: only its link is built
+        raise AssertionError
+
+    app.mount("/admin", sub, name="admin")
+
+    @app.get("/link")
+    def link(request) -> Response:
+        return Response.text(request.url_for("admin", path="users"))
+
+    _, _, body = get(app, "/api/link")
+    assert body == b"http://example.com/api/admin/users"
