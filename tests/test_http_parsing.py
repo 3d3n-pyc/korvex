@@ -149,3 +149,26 @@ def test_http_1_0_without_host_is_answered_then_closed(port):
     response = raw(port, b"GET /users/1 HTTP/1.0\r\n\r\n", wait=5)
     assert statuses(response) == [200]
     assert time.monotonic() - started < 3
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"--B\r\n\r\n\r\n--B--",  # a part without headers
+        b'--B\r\nContent-Disposition: form-data; name="a"\r\nbad header\r\n\r\nv\r\n--B--',
+    ],
+)
+def test_malformed_multipart_part_headers_give_400(port, body):
+    """Fuzz regressions: a bad part header line used to answer 500."""
+    head = b"POST /form HTTP/1.1\r\n" + HOST + b'Content-Type: multipart/form-data; boundary="B"\r\n'
+    request = head + b"Content-Length: %d\r\n\r\n" % len(body) + body
+    assert statuses(raw(port, request))[:1] == [400]
+
+
+@pytest.mark.parametrize("line", [b"POSE /echo", b"PST /", b"GE%c0%afT /"])
+def test_unknown_method_is_501_and_server_keeps_working(port, line):
+    """An unknown method token is 501 (RFC 9110), never a 500."""
+    response = raw(port, line + b" HTTP/1.1\r\n" + HOST + b"\r\n")
+    assert statuses(response) == [501]
+    ok = raw(port, b"GET /users/1 HTTP/1.1\r\n" + HOST + b"\r\n")
+    assert statuses(ok) == [200]

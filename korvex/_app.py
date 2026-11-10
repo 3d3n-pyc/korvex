@@ -835,7 +835,8 @@ def _raw_headers(response: Response, head: bool) -> list[tuple[bytes, bytes]]:
 
 def _match(router: Router, request: Request) -> Any:
     """`router.match()` for the request: `None` if no route has the path; a
-    405 if routes have it, but not for this method. HEAD is GET without the
+    405 if routes have it, but not for this method; 501 for a method the router
+    does not know. HEAD is GET without the
     body."""
     try:
         return router.match(request.path, method=request.method)
@@ -843,6 +844,10 @@ def _match(router: Router, request: Request) -> Any:
         if request.method == "HEAD" and "GET" in exc.allowed:
             return router.match(request.path, method="GET")
         raise HTTPException(405, headers=[("Allow", ", ".join(exc.allowed))]) from None
+    except ValueError as exc:
+        if "unknown HTTP method" in str(exc):
+            raise HTTPException(501) from None
+        raise
 
 
 async def _finish(response: StreamingResponse, path: str) -> None:

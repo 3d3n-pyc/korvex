@@ -362,9 +362,12 @@ def _parse_multipart(body: bytes, boundary: str) -> FormData:
             break
         head, _, data = part.removeprefix(b"\r\n").partition(b"\r\n\r\n")
         headers = Message()
-        for line in head.decode("utf-8", "replace").split("\r\n"):
-            name, _, value = line.partition(":")
-            headers[name.strip()] = value.strip()
+        try:
+            for line in head.decode("utf-8", "replace").split("\r\n"):
+                name, _, value = line.partition(":")
+                headers[name.strip()] = value.strip()
+        except ValueError:  # an empty name, or a line break inside a value
+            raise HTTPException(400, "invalid multipart part headers") from None
         field = headers.get_param("name", header="content-disposition")
         if not isinstance(field, str):
             continue

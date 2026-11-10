@@ -112,6 +112,11 @@ async def note(request, key):
     return Response.text(f"{key}: {len(await request.body())}")
 
 
+@app.post("/form")
+async def form(request):
+    return Response.text(str(len(await request.form())))
+
+
 @app.post("/upload", max_body=5_000_000)
 async def upload(request):
     return Response.text(str(len(await request.body())))
