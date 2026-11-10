@@ -5,8 +5,7 @@ import sys
 import time
 
 import pytest
-
-from tests.test_server import WebSocketClient, fetch, free_port, start
+from test_server import WebSocketClient, fetch, free_port, start
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the built-in server needs Linux or macOS")
 
