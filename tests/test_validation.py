@@ -2,7 +2,7 @@
 models alike: every test runs once with each."""
 
 import json
-from typing import Optional
+from typing import List, Optional  # noqa: UP035
 from uuid import UUID
 
 import pytest
@@ -241,3 +241,38 @@ def test_an_unsupported_annotation_is_refused_even_with_a_default():
         return Response.json(page)
 
     assert call(app, "GET", "/b")[2] == 1
+
+
+class Tree(msgspec.Struct):
+    children: List["Tree"] = []  # noqa: UP006 (3.9 cannot resolve list["X"])
+
+
+def test_deeply_nested_struct_is_422():
+    app = App()
+
+    @app.post("/tree")
+    def tree(node: Tree):
+        return Response.json({"ok": True})
+
+    @app.get("/ok")
+    def ok():
+        return Response.json({"ok": True})
+
+    body = b'{"children":[' * 20000 + b"]}" * 20000
+    r = request(app, "POST", "/tree", body=body, headers={"content-type": "application/json"})
+    assert r.status == 422
+    assert r.json()["detail"][0]["msg"] == "nested too deeply"
+    assert request(app, "GET", "/ok").status == 200
+
+
+def test_unsupported_model_fails_at_declaration(monkeypatch):
+    def refuse(tp):
+        raise TypeError(f"Type {tp!r} is not supported")
+
+    monkeypatch.setattr(msgspec.json, "Decoder", refuse)
+    app = App()
+    with pytest.raises(TypeError, match=r"parameter 'node'.*Tree.*msgspec cannot handle"):
+
+        @app.post("/bad")
+        def bad(node: Tree):
+            return Response.json({})
