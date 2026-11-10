@@ -4,16 +4,20 @@
 registers one on the app:
 
 ```python
-from korvex.middleware import compress, cors, rate_limit, request_id, security_headers
+from korvex.middleware import compress, cors, csrf, rate_limit, request_id, security_headers, sessions
 
 compress(app)  # first: it compresses what the others produced
 cors(app, allow_origins=["https://example.com"])
 request_id(app)
 rate_limit(app, requests=100, per=60)
 security_headers(app)
+csrf(app)  # refuses cross-site form posts
+sessions(app, secret_key=...)  # signed cookie sessions
 ```
 
 Behind a reverse proxy, let the proxy compress and add headers.
+Sessions, flash messages and CSRF protection are in the
+[Sessions and CSRF guide](sessions.md).
 
 ## CORS: `cors(app, allow_origins=...)`
 

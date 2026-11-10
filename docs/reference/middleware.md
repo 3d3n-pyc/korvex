@@ -1,6 +1,6 @@
 # korvex.middleware
 
-Ready-made hooks. See [Ready-made middleware](../middleware.md).
+Ready-made hooks. See [Ready-made middleware](../middleware.md) and [Sessions and CSRF](../sessions.md).
 
 ::: korvex.middleware
     options:
@@ -17,3 +17,9 @@ Ready-made hooks. See [Ready-made middleware](../middleware.md).
         - RedisStore
         - compress
         - security_headers
+        - sessions
+        - Session
+        - current_session
+        - flash
+        - get_flashed_messages
+        - csrf
