@@ -202,6 +202,21 @@ def stop_and_collect(process):
     return process.returncode, output
 
 
+def read_until_started(process, count, timeout=30):
+    """Read the server's output until `count` workers printed STARTED, it
+    ends, or `timeout` seconds pass."""
+    lines = []
+
+    def read():
+        while "".join(lines).count("STARTED") < count and (line := process.stdout.readline()):
+            lines.append(line)
+
+    reader = threading.Thread(target=read, daemon=True)  # readline can't time out by itself
+    reader.start()
+    reader.join(timeout)
+    return "".join(lines)
+
+
 def test_workers_each_start_and_serve():
     port = free_port()
     process = start(port, WORKERS="3")
@@ -212,7 +227,9 @@ def test_workers_each_start_and_serve():
     deadline = time.monotonic() + 10
     while len(pids) < 2 and time.monotonic() < deadline:
         pids.add(fetch(f"{base}/pid")[2])
-    code, output = stop_and_collect(process)
+    seen = read_until_started(process, 3)  # a slow machine may start the last worker late
+    code, rest = stop_and_collect(process)
+    output = seen + rest
     assert code == 0
     assert output.count("STARTED") == 3 and output.count("STOPPED") == 3
     assert len(pids) >= 2, "requests should be spread over the workers"
