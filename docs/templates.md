@@ -127,6 +127,9 @@ Templates are code, written by you. Names and attributes that start with an
 underscore are refused, but this is not a sandbox. Do not render templates
 written by your users.
 
+`format` and `format_map` are refused too: they can reach attributes from inside
+the string; use a filter instead.
+
 ## Reload
 
 ```python

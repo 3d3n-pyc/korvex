@@ -67,6 +67,7 @@ benches/      comparisons with other frameworks:
   servers.py       servers on the same CPU cores, built-in one included
   soak.py          memory and errors under steady mixed load (nightly; `uv run python benches/soak.py --duration 60` locally, Linux, needs oha)
   plot.py          draws the charts in docs/
+fuzz/         fuzzers for the request parsers and the Rust router and proxy (see Fuzzing)
 ```
 
 Modules starting with `_` are internal and can change in any version. The
@@ -114,6 +115,26 @@ Python code must run on 3.9: write `X | Y` only in annotations (with
 
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/)
 (`feat:`, `fix:`, `docs:`, ...).
+
+## Fuzzing
+
+The HTTP and WebSocket fuzzers hit the built-in server through `fuzz/app.py`
+and fail on a 5xx, a worker restart, unbounded memory, or a valid request
+left unanswered. Failing cases go to `target/fuzz/crashes/`.
+
+```sh
+uv run python fuzz/fuzz_http.py --duration 60 [--seed N]
+uv run python fuzz/fuzz_ws.py --duration 60 [--seed N]
+uv run python fuzz/harness.py --replay FILE
+cd fuzz && cargo +nightly fuzz run router   # or proxy; needs cargo-fuzz
+```
+
+The Hypothesis tests in `tests/test_parser_properties.py` run in the normal
+suite; `HYPOTHESIS_PROFILE=fuzz` runs 5000 examples each.
+
+A found crash becomes a regression test: Rust, a unit test in the module;
+raw request, a case in `tests/test_http_parsing.py`; Python parser input,
+an `@example` in `test_parser_properties.py`.
 
 ## Releasing
 

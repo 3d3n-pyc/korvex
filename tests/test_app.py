@@ -1001,3 +1001,15 @@ def test_a_request_parameter_named_otherwise_is_refused_with_a_hint():
 
         @app.websocket("/ws")
         async def live(socket): ...
+
+
+def test_unknown_method_is_501_not_500():
+    app = App()
+
+    @app.get("/users")
+    def list_users(request):
+        return Response.text("ok")
+
+    status, _, body = response_from(run_app(app, make_scope("FOO", "/users")))
+
+    assert (status, json.loads(body)) == (501, {"detail": "Not Implemented"})

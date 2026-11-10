@@ -1,0 +1,141 @@
+name: Fuzz
+
+# Nightly fuzzing: coverage-guided Rust targets (cargo-fuzz), black-box HTTP
+# and WebSocket fuzzers against the built server, and the long Hypothesis
+# profile. Crashes are uploaded as artifacts when a job fails.
+
+on:
+  schedule:
+    - cron: "47 2 * * *"
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Minutes per target (at most 15)"
+        type: number
+        default: 5
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      MINUTES: ${{ inputs.minutes || 5 }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the budget
+        run: |
+          case "$MINUTES" in
+            ''|*[!0-9]*) echo "minutes must be a whole number" >&2; exit 1 ;;
+          esac
+          [ "$MINUTES" -le 15 ] || { echo "at most 15 minutes per target" >&2; exit 1; }
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-11-01
+
+      - name: Cache cargo-fuzz
+        id: cargo-fuzz
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-fuzz
+          key: cargo-fuzz-0.13.2-nightly-2026-11-01
+
+      - name: Install cargo-fuzz
+        if: steps.cargo-fuzz.outputs.cache-hit != 'true'
+        run: cargo install cargo-fuzz --locked --version 0.13.2
+
+      - name: Restore the proxy corpus
+        uses: actions/cache@v4
+        with:
+          path: fuzz/corpus/proxy
+          key: fuzz-corpus-proxy-${{ github.run_id }}
+          restore-keys: fuzz-corpus-proxy-
+
+      - name: Restore the router corpus
+        uses: actions/cache@v4
+        with:
+          path: fuzz/corpus/router
+          key: fuzz-corpus-router-${{ github.run_id }}
+          restore-keys: fuzz-corpus-router-
+
+      - name: Fuzz proxy
+        if: always()
+        run: cargo fuzz run proxy -- -max_total_time=$((MINUTES * 60))
+
+      - name: Fuzz router
+        if: always()
+        run: cargo fuzz run router -- -max_total_time=$((MINUTES * 60))
+
+      - name: Upload crashes
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-rust-artifacts
+          path: fuzz/artifacts
+
+  blackbox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      MINUTES: ${{ inputs.minutes || 5 }}
+      SEED: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Build and install Korvex
+        run: |
+          uvx maturin build --release -o "$RUNNER_TEMP/wheels"
+          uv venv --python 3.13 "$RUNNER_TEMP/venv"
+          uv pip install --python "$RUNNER_TEMP/venv/bin/python" "$RUNNER_TEMP"/wheels/*.whl msgspec
+
+      - name: Fuzz HTTP
+        run: |
+          case "$MINUTES" in
+            ''|*[!0-9]*) echo "minutes must be a whole number" >&2; exit 1 ;;
+          esac
+          [ "$MINUTES" -le 15 ] || { echo "at most 15 minutes per target" >&2; exit 1; }
+          "$RUNNER_TEMP/venv/bin/python" fuzz/fuzz_http.py --duration $((MINUTES * 60)) --seed "$SEED"
+
+      - name: Fuzz WebSocket
+        if: always()
+        run: |
+          case "$MINUTES" in
+            ''|*[!0-9]*) echo "minutes must be a whole number" >&2; exit 1 ;;
+          esac
+          [ "$MINUTES" -le 15 ] || { echo "at most 15 minutes per target" >&2; exit 1; }
+          "$RUNNER_TEMP/venv/bin/python" fuzz/fuzz_ws.py --duration $((MINUTES * 60)) --seed "$SEED"
+
+      - name: Upload crashes
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-blackbox-crashes
+          path: target/fuzz/crashes
+
+  properties:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HYPOTHESIS_PROFILE: fuzz
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Run the property tests
+        run: uv run --python 3.13 pytest tests/test_parser_properties.py

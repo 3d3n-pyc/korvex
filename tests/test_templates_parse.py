@@ -173,6 +173,18 @@ def test_underscore_names_refused(src: str) -> None:
     assert "underscore" in error("{{ " + src + " }}").message
 
 
+@pytest.mark.parametrize("src", ['"{0.__globals__}".format(f)', "s.format(x)", "s.format_map(d)", "'a'.format()"])
+def test_format_attributes_refused(src: str) -> None:
+    err = error("{{ " + src + " }}")
+    assert "'format" in err.message
+    assert err.line == 1
+    assert err.name == "t.html"
+
+
+def test_normal_method_call_still_works() -> None:
+    assert ast.unparse(parse("{{ s.upper() }}")[0].expr) == "s.upper()"
+
+
 def test_underscore_in_set_and_for() -> None:
     error("{% set _x = 1 %}")
     error("{% for _x in y %}{% endfor %}")

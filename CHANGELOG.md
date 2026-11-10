@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.0.0rc2
+
+Fixes found by fuzzing and an external report; no API change.
+
+- **Security: templates refuse `format` and `format_map`.** A format string
+  such as `"{0.__globals__}".format(obj)` could read attributes starting with
+  `_` at runtime, past the underscore rule. The attributes are now refused at
+  compile time. This needs control of a template's source; reported externally.
+  Migration: an object's own `.format()` method can't be called from a
+  template; register a filter instead.
+- **Fixed: malformed multipart part headers return 400, not 500.** A part
+  with an empty field name, a header line without a colon, or bare LF line
+  endings caused a 500, on Python 3.14 only (older versions ignored the
+  part). Found by fuzzing.
+- **Fixed: an unknown method returns 501, not 500.** A request such as
+  `POSE / HTTP/1.1` made the router raise, on every server, with a
+  traceback in the log. RFC 9110 asks for 501 Not Implemented. Found by
+  fuzzing.
+- **New: fuzzing for contributors.** `fuzz/` has HTTP and WebSocket fuzzers,
+  a cargo-fuzz target for the Rust router and proxy, and Hypothesis property
+  tests for the Python parsers. Nightly CI runs them. See CONTRIBUTING.md.
+
 ## 1.0.0rc1
 
 The API is frozen. From 1.0, no breaking change without a 2.0. The breaking

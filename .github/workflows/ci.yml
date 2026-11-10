@@ -114,7 +114,7 @@ jobs:
         run: |
           uv python install 3.14t
           uv venv --python 3.14t .venv-ft
-          VIRTUAL_ENV=.venv-ft uv pip install -e . pytest msgspec pydantic openapi-spec-validator redis
+          VIRTUAL_ENV=.venv-ft uv pip install -e . pytest hypothesis msgspec pydantic openapi-spec-validator redis
 
       - name: Run Python tests
         run: .venv-ft/bin/python -m pytest -W error::RuntimeWarning

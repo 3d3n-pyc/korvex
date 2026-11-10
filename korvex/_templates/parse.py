@@ -158,9 +158,11 @@ class _Checker:
             self.fail(f"name {node.id!r} is not allowed: it starts with an underscore")
 
     def _rule_Attribute(self, node: ast.Attribute) -> None:
-        """Refuse attributes starting with an underscore."""
+        """Refuse attributes starting with an underscore, and `format` and `format_map`."""
         if node.attr.startswith("_"):
             self.fail(f"attribute {node.attr!r} is not allowed: it starts with an underscore")
+        if node.attr in ("format", "format_map"):
+            self.fail(f"attribute {node.attr!r} is not allowed: a format string can reach attributes")
 
     def _rule_Constant(self, node: ast.Constant) -> None:
         """Allow only strings, numbers, booleans and None."""
