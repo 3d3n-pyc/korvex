@@ -1,5 +1,16 @@
 # Deploying a Korvex app
 
+On this page:
+
+- [Production checklist](#production-checklist)
+- [Default limits](#default-limits)
+- [1. Built-in server behind a reverse proxy](#1-built-in-server-behind-a-reverse-proxy)
+- [2. uvicorn behind a reverse proxy](#2-uvicorn-behind-a-reverse-proxy)
+- [3. Docker](#3-docker)
+- [4. AWS Lambda](#4-aws-lambda)
+- [5. Vercel](#5-vercel)
+- [Running in production](#running-in-production): keep-alive timeouts, Kubernetes, logging, health route, blocking code, file descriptors
+
 An `App` runs on Korvex's built-in server (Linux and macOS) or on any
 ASGI server, including serverless platforms. The files are in
 [`examples/deploy/`](https://github.com/3d3n-pyc/korvex/tree/main/examples/deploy), around a small
@@ -20,6 +31,59 @@ If the proxy serves the app under a path prefix (`example.com/api/`), give
 Korvex that prefix so links come out right: `--root-path /api` for uvicorn
 or the built-in server (`app.run(root_path="/api")`). See the
 [server guide](server.md).
+
+## Production checklist
+
+Before you open the app to real traffic:
+
+- Run it behind a [reverse proxy](glossary.md#reverse-proxy) that serves
+  HTTPS, and tell Korvex which proxies to trust with
+  `--forwarded-allow-ips`: [section 1](#1-built-in-server-behind-a-reverse-proxy).
+- Set `--workers` to about 3 per 4 CPU cores (the default is 1):
+  [section 1](#1-built-in-server-behind-a-reverse-proxy).
+- Read secrets, such as the sessions `secret_key`, from the environment,
+  never from the code: [Sessions](sessions.md).
+- Keep the sessions cookie `secure=True` (the default): it is sent over
+  HTTPS only, so a plain `http://` setup needs the proxy's HTTPS first:
+  [Sessions](sessions.md#what-a-session-is).
+- Call `csrf(app)` if the app has HTML forms that use cookies:
+  [CSRF](sessions.md#csrf-csrfapp).
+- Call `security_headers(app)`:
+  [Security headers](middleware.md#security-headers-security_headersapp).
+- Configure logging, and turn on `--access-log` if you want one line per
+  request: [Logging](#logging).
+- Add a health route for the proxy or orchestrator:
+  [A health route](#a-health-route).
+- On Kubernetes, add a `preStop` sleep and a long enough grace period:
+  [Kubernetes and containers](#kubernetes-and-containers).
+- Keep blocking code out of plain `def` handlers, which run on the event
+  loop: [Blocking code](#blocking-code).
+- Make the proxy's idle timeout shorter than Korvex's:
+  [Keep-alive timeouts](#keep-alive-timeouts).
+- Review the [default limits](#default-limits) (body size, timeouts,
+  connections) and raise or lower them for your app.
+- Raise the file descriptor limit if you expect many clients:
+  [File descriptors](#file-descriptors).
+
+## Default limits
+
+The built-in server's limits, with what a client sees when it goes over.
+Set them with the CLI flag, or the keyword of `app.run()`:
+
+| Limit | Default | The client sees |
+|---|---|---|
+| Request body: `--max-body`, `max_body=` (a route can set its own) | 1 MiB (1,048,576 bytes) | `413`. A WebSocket message over it closes the connection. |
+| Read time: `--read-timeout`, `read_timeout=` | 30 seconds | A body that takes longer gets a `408`. Headers that take longer, or an idle keep-alive connection, are closed with no response. |
+| Request headers (not an option) | More than 100 headers, or about 400 KB of them | `431`, and the connection closes. |
+| Stop time: `--graceful-timeout`, `graceful_timeout=` | 30 seconds | After a SIGTERM or Ctrl+C, requests still running when it ends are cut off. |
+| WebSocket ping: `--ws-ping-interval`, `ws_ping_interval=` | 20 seconds (`0`: off) | A client that doesn't answer by the next ping is closed. |
+| Connections: `--max-connections`, `max_connections=` | `0` (no limit), per worker and thread | New clients wait in the listen backlog until a connection closes; they aren't refused. |
+| Worker life: `--max-requests`, `max_requests=` | `0` (never restart) | Nothing: the worker stops gracefully after about that many requests, and a new one replaces it. |
+
+The header limits come from the HTTP library the server uses, not from a
+Korvex option. A `413` or `408` is still answered by the app, so your
+exception handlers and the access log see it. All options are in the
+[server guide](server.md#options).
 
 ## 1. Built-in server behind a reverse proxy
 
@@ -216,7 +280,7 @@ above don't apply. Checked on a real deployment:
 
 ## Running in production
 
-Four things that work in a quick test but break under real traffic.
+Things that work in a quick test but break under real traffic.
 
 ### Keep-alive timeouts
 
@@ -289,6 +353,49 @@ spec:
 ```
 
 The `sleep` command must exist in the image (`python:slim` has it).
+
+### Logging
+
+Korvex logs through Python's `logging`. Configure it once, at the top of
+`main.py`, and turn on the access log (one line per request, to the
+`korvex.access` logger) when you start the server:
+
+```python
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+```
+
+```sh
+korvex run main:app --workers 3 --access-log
+```
+
+Without `--access-log`, requests aren't logged. If logging is already
+configured when it starts, Korvex doesn't add its own handler for the
+access log, so your format applies. In a container, log to stdout and let
+the platform collect it.
+
+### Blocking code
+
+A plain `def` handler runs on the [event loop](glossary.md#event-loop), not
+in a thread. A blocking call in it (a synchronous database driver,
+`requests`, `time.sleep`) holds up every other request of that
+[worker](glossary.md#worker) until it returns. Use async libraries, or move
+the blocking part to a thread:
+
+```python
+import asyncio
+
+@app.get("/report")
+async def report():
+    data = await asyncio.to_thread(build_report)  # build_report blocks
+    return Response.json(data)
+```
+
+More workers help, but they don't fix a handler that blocks for seconds.
 
 ### A health route
 

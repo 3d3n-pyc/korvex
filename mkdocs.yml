@@ -61,12 +61,14 @@ plugins:
       sections:
         Start:
           - index.md: What Korvex is, and a first app
+          - tutorial.md: Your first API, step by step, for beginners
+          - glossary.md: Plain-words definitions of the terms used in the guide
         Guide:
           - routes.md: Paths, parameters, groups, hosts, url_for, static files
+          - validation.md: Typed parameters, models, headers, cookies, forms, 422 errors
           - requests-and-responses.md: What a handler gets and returns
           - templates.md: HTML templates, filters, escaping, hashed static URLs
           - sessions.md: Signed-cookie sessions, flash messages, CSRF protection
-          - validation.md: Typed parameters, models, headers, cookies, forms, 422 errors
           - dependencies.md: Depends, yield dependencies, overrides
           - errors-and-hooks.md: HTTPException, Abort, exception handlers, before/after hooks, startup/shutdown, app.local
           - websockets.md: WebSocket routes
@@ -84,20 +86,23 @@ plugins:
 
 nav:
   - Home: index.md
+  - Tutorial: tutorial.md
   - Guide:
       - Routes: routes.md
+      - Validation: validation.md
       - Requests and responses: requests-and-responses.md
       - Templates: templates.md
       - Sessions and CSRF: sessions.md
-      - Validation: validation.md
       - Dependencies: dependencies.md
       - Errors and hooks: errors-and-hooks.md
+      - Ready-made middleware: middleware.md
       - WebSockets: websockets.md
       - OpenAPI and security: openapi.md
-      - Ready-made middleware: middleware.md
       - Testing: testing.md
       - The built-in server: server.md
       - Deployment: deployment.md
+      - Performance: performance.md
+  - Glossary: glossary.md
   - Reference:
       - The App: reference/app.md
       - Requests: reference/requests.md
@@ -109,8 +114,7 @@ nav:
       - korvex.security: reference/security.md
       - korvex.middleware: reference/middleware.md
       - korvex.router: reference/router.md
+  - AI: ai.md
   - More:
-      - Performance: performance.md
       - The standalone router: router.md
-      - For AI assistants: ai.md
       - Changelog: https://github.com/3d3n-pyc/korvex/blob/main/CHANGELOG.md

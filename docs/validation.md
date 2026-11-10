@@ -1,11 +1,18 @@
 # Validation
 
+Use this when you want Korvex to read, check and convert the input of a
+[handler](glossary.md#handler) from its annotations.
+
 Annotations say where a parameter comes from, and what it must be.
-Models can be [msgspec](https://jcristharif.com/msgspec/) structs or
+[Models](glossary.md#model) can be [msgspec](https://jcristharif.com/msgspec/) structs or
 [pydantic](https://docs.pydantic.dev/) models; Korvex needs neither.
 
 ```python
 import msgspec
+
+from korvex import App
+
+app = App()
 
 
 class NewUser(msgspec.Struct):
@@ -27,9 +34,9 @@ def create_user(body: NewUser, notify: bool = False) -> User:
 
 | Parameter | Comes from |
 |---|---|
-| a model, or a list of models (`body: NewUser`) | the JSON body |
-| named like a path parameter (`id`) | the path |
-| `str`, `int`, `float`, `bool`, `UUID`, `date`, `datetime`, or an `Optional` or `list` of them | the query string |
+| a model, or a list of models (`body: NewUser`) | the JSON [body](glossary.md#request-body) |
+| named like a [path parameter](glossary.md#path-parameter) (`id`) | the path |
+| `str`, `int`, `float`, `bool`, `UUID`, `date`, `datetime`, or an `Optional` or `list` of them | the [query string](glossary.md#query-string) |
 | `Header()`, `Cookie()`, `Form()`, `Query(alias=...)` | there |
 | `Depends(func)` | what `func` returns: see [Dependencies](dependencies.md) |
 | named `request`, or annotated `Request` | the request itself |
@@ -43,7 +50,9 @@ def create_user(body: NewUser, notify: bool = False) -> User:
 ## Headers, cookies and forms
 
 ```python
-from korvex import Cookie, Form, Header, Query, UploadedFile
+from korvex import App, Cookie, Form, Header, Query, UploadedFile
+
+app = App()
 
 
 @app.post("/photos")
@@ -63,7 +72,8 @@ async def upload(
 - A whole model can come from a form, field by field:
   `signup: Signup = Form()`. A checkbox's `on` is true, and text converts
   to numbers and dates as the model says.
-- All four also work in `Annotated[...]`: `theme: Annotated[str, Cookie()] = "light"`.
+- All four also work in `Annotated[...]` (from `typing`):
+  `theme: Annotated[str, Cookie()] = "light"`.
 
 ## What the handler returns
 
@@ -74,7 +84,7 @@ async def upload(
 
 ## Errors
 
-Invalid input gets a 422 listing the problems:
+Invalid input fails [validation](glossary.md#validation) and gets a 422 listing the problems:
 
 ```json
 {"detail": [{"loc": ["body", "age"], "msg": "Expected `int`, got `str`", "type": "validation"}]}
@@ -86,7 +96,9 @@ first. To answer differently, handle the 422; the exception is a
 `RequestValidationError`, with the list in `errors`:
 
 ```python
-from korvex import Response, RequestValidationError
+from korvex import App, RequestValidationError, Response
+
+app = App()
 
 
 @app.exception_handler(422)
@@ -95,3 +107,5 @@ def invalid(request, exc: RequestValidationError):
 ```
 
 Annotations are read once, when the route is declared.
+
+Next: [Requests and responses](requests-and-responses.md).

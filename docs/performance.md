@@ -1,5 +1,16 @@
 # Performance
 
+On this page:
+
+- [Servers](#servers): the built-in server against uvicorn, Granian, Robyn and FastrAPI
+- [Under load](#under-load): frameworks on one CPU core
+- [Router alone](#router-alone)
+- [Validation](#validation) and [Dependencies](#dependencies)
+- [Threads on free-threaded Python](#threads-on-free-threaded-python)
+- [With a database](#with-a-database)
+- [Memory under steady load](#memory-under-steady-load)
+- [Templates](#templates)
+
 All numbers come from the scripts in [`benches/`](https://github.com/3d3n-pyc/korvex/tree/main/benches), on one
 machine. Results depend on the machine: measure your own workload.
 
