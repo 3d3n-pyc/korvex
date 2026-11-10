@@ -6,10 +6,12 @@ Guide: https://3d3n-pyc.github.io/korvex/testing/
 from __future__ import annotations
 
 import asyncio
+import codecs
 import contextlib
 import json as jsonlib
 import logging
 import mimetypes
+import re
 import threading
 import uuid
 import weakref
@@ -22,6 +24,7 @@ from urllib.parse import quote, unquote, urlencode, urljoin, urlsplit
 
 from korvex._requests import WebSocketDisconnect
 from korvex._response import Headers
+from korvex._sse import ServerSentEvent, parse
 
 __all__ = ["AsyncTestClient", "AsyncTestWebSocket", "TestClient", "TestResponse", "TestWebSocket"]
 
@@ -75,6 +78,22 @@ class TestResponse:
         return f"TestResponse({self.status}, {len(self.body)} bytes)"
 
 
+class _EventBuffer:
+    """Collects text chunks and returns the events completed so far."""
+
+    def __init__(self) -> None:
+        self._text = ""
+
+    def feed(self, text: str) -> list[ServerSentEvent]:
+        """Add a chunk; return the events that ended with a blank line."""
+        text = self._text + text
+        held = "\r" if text.endswith("\r") else ""  # may be half of a \r\n
+        text = re.sub(r"\r\n?", "\n", text[: len(text) - len(held)])
+        *complete, self._text = text.split("\n\n")
+        self._text += held
+        return [event for part in complete for event in parse(part)]
+
+
 class AsyncTestStream:
     """A streamed response: `status` and `headers` at once, then `aiter_bytes()`, `aiter_text()` or `aread()`."""
 
@@ -96,6 +115,14 @@ class AsyncTestStream:
     async def aiter_text(self) -> AsyncIterator[str]:
         async for chunk in self.aiter_bytes():
             yield chunk.decode(_charset(self.headers))
+
+    async def aiter_events(self) -> AsyncIterator[ServerSentEvent]:
+        """The Server-Sent Events of the body as they arrive; comments are skipped."""
+        buffer = _EventBuffer()
+        decoder = codecs.getincrementaldecoder(_charset(self.headers))()
+        async for chunk in self.aiter_bytes():
+            for event in buffer.feed(decoder.decode(chunk)):
+                yield event
 
     async def aread(self) -> bytes:
         """The rest of the body, once the app has sent it all."""
@@ -125,6 +152,15 @@ class TestStream:
     def iter_text(self) -> Iterator[str]:
         for chunk in self.iter_bytes():
             yield chunk.decode(_charset(self.headers))
+
+    def iter_events(self) -> Iterator[ServerSentEvent]:
+        """The Server-Sent Events of the body as they arrive; comments are skipped."""
+        events = self._stream.aiter_events()
+        while True:
+            try:
+                yield self._run(events.__anext__())
+            except StopAsyncIteration:
+                return
 
     def read(self) -> bytes:
         return self._run(self._stream.aread())

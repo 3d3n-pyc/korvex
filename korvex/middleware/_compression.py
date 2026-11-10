@@ -157,6 +157,8 @@ def compress(
         if "no-transform" in (response.headers.get("cache-control") or "").lower():
             return
         content_type = (response.headers.get("content-type") or "").split(";")[0].strip().lower()
+        if content_type == "text/event-stream":
+            return  # events must arrive as they are written
         if not (content_type.startswith(prefixes) or content_type.endswith(suffixes)):
             return
         streamed = isinstance(response, StreamingResponse)
