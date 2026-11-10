@@ -60,6 +60,7 @@ module-name = "korvex._core"
 dev = [
     "brotli>=1.2.1",
     "coverage>=7.10",
+    "hypothesis>=6.140",
     "maturin>=1.14,<2.0",
     "msgspec>=0.20.0",
     "openapi-spec-validator>=0.7.2",

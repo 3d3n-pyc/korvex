@@ -1,0 +1,32 @@
+[package]
+name = "korvex-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+libfuzzer-sys = "0.4"
+hyper = "1.12.0"
+regex = "1"
+rustc-hash = "2.1"
+
+# Not part of the root crate's build, tests or sdist.
+[workspace]
+
+[[bin]]
+name = "proxy"
+path = "fuzz_targets/proxy.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "router"
+path = "fuzz_targets/router.rs"
+test = false
+doc = false
+bench = false
