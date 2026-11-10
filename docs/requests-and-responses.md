@@ -96,3 +96,72 @@ cookie lasts until the browser closes.
 once 1 MiB waits for it, the generator waits. `Response.file()` reads the
 file in chunks, without blocking the server, and sets its type and
 length.
+
+### Server-Sent Events
+
+```python
+@app.get("/feed")
+async def feed(last_event_id: int = Header(0)):
+    async def events():
+        try:
+            for n in range(last_event_id + 1, 1000):
+                yield ServerSentEvent({"n": n}, event="tick", id=str(n))
+                await asyncio.sleep(1)
+        finally:
+            ...  # runs when the client leaves
+    return Response.sse(events(), ping=15.0)
+```
+
+A `str` is sent as is, anything else as JSON. In an async generator, a
+`: ping` comment goes out after `ping` seconds of silence (15 by default,
+`ping=0` turns it off); a sync generator gets none. The response sets
+`Content-Type: text/event-stream`, `Cache-Control: no-cache` and
+`X-Accel-Buffering: no` (for nginx), and `compress()` leaves it alone.
+When the client leaves, the generator is closed and its `finally` runs.
+A browser that reconnects sends the last `id` in `Last-Event-ID`; read it
+with `Header()`. A newline in `event` or `id` raises `ValueError`.
+
+The event is encoded when you create it, so a bad value fails there:
+`bytes` data raises `TypeError`; a lone surrogate or `NaN` raises
+`ValueError`.
+
+On the built-in server, a client that left is noticed at the next write.
+Keep `ping` on (15 s by default): the generator is closed within `ping`
+seconds. With `ping=0` or a sync generator, only when the next event is
+sent. Under ASGI servers it is noticed right away.
+
+## Background tasks
+
+Ask for `BackgroundTasks` to run work after the response is sent:
+
+```python
+from korvex import BackgroundTasks
+
+
+@app.post("/signup", status=201)
+def signup(body: NewUser, tasks: BackgroundTasks) -> User:
+    user = create_user(body)
+    tasks.add(send_welcome_email, user.email, name=user.name)  # blocking smtplib
+    return user
+```
+
+A handler and its dependencies share one object. Tasks run in the order
+added, after the response, the after-hooks, a stream's end and dependency
+teardown; also if the client left.
+
+- A coroutine function is awaited; a plain function runs in a thread.
+- An error is logged on the `"korvex"` logger, the next task still runs, the
+  client never sees it. `TestClient` raises it (`raise_server_errors=False`
+  gives just the response) and waits for the tasks, so a test can check their
+  effect right away.
+- Tasks run only if the handler returned, not after an `HTTPException`
+  or a 500.
+- There is no limit on how many run at once: for heavy or many tasks, use
+  a job queue.
+- A task should not block forever: shutdown cuts it off.
+- A WebSocket route cannot ask for it: `TypeError` when declared.
+- On shutdown the built-in server waits for running tasks up to
+  `graceful_timeout`, then cuts them off with a warning.
+
+Tasks run in the worker's process: for work that must survive a restart or
+needs retries, use a real queue.

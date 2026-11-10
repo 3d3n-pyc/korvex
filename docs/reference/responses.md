@@ -7,4 +7,6 @@ What a handler returns: a `Response`, made directly or with its shortcuts
 
 ::: korvex.Headers
 
+::: korvex.ServerSentEvent
+
 ::: korvex.StreamingResponse

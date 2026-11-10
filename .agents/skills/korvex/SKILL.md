@@ -151,6 +151,13 @@ def test_tasks():
 - **Dependencies** run once per request (`Depends(f, cache=False)` to
   repeat), can `yield` for teardown, and can be replaced in tests with
   `app.dependency_overrides[f] = lambda: ...`.
+- **Work after the response** (an email, a webhook): a parameter annotated
+  `BackgroundTasks`, then `tasks.add(func, *args)`. It runs once the response
+  is sent; plain functions run in a thread. Not a job queue: no retries, and
+  lost on a restart.
+- **Server-Sent Events**: `return Response.sse(events())` from an async
+  generator yielding `ServerSentEvent(data, event=, id=)` or plain values;
+  pings every 15 s. Test with `client.stream(...)` and `response.iter_events()`.
 - **Templates** are not Jinja2Templates: no `TemplateResponse(request, ...)`.
   Use `views.response("page.html", {"post": post})`.
 

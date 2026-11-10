@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.0.0rc3
+
+Background tasks and Server-Sent Events.
+
+- **New: background tasks.** A handler or dependency parameter annotated
+  `BackgroundTasks` (from `korvex`) gets the request's tasks:
+  `tasks.add(send_email, to)`. They run after the response is sent, in
+  order; coroutine functions are awaited, plain functions run in a thread.
+  An error is logged and never reaches the client. They don't run if the
+  handler raised (an `HTTPException` or a 500). The built-in server's
+  graceful shutdown waits for them, within `graceful_timeout`, and never
+  hangs on a stuck one. Guide:
+  <https://3d3n-pyc.github.io/korvex/requests-and-responses/#background-tasks>.
+- **New: Server-Sent Events.** `Response.sse(events, ping=15.0)` streams an
+  iterable of `ServerSentEvent` (new, from `korvex`) or plain values to the
+  browser's `EventSource`, with keep-alive pings. In tests,
+  `response.iter_events()` and `aiter_events()` read the events. Guide:
+  <https://3d3n-pyc.github.io/korvex/requests-and-responses/#server-sent-events>.
+- **Fixed: a stream that fails midway is cut, not ended.** On the built-in
+  server, an error in a streamed response's generator ended the response
+  as if it were complete, so a client saw a truncated body as a success,
+  and the error wasn't on the `korvex` logger. The connection is now closed
+  without ending the body, as ASGI servers do, and the error is logged.
+
 ## 1.0.0rc2
 
 Fixes found by fuzzing and an external report; no API change.

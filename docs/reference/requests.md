@@ -7,6 +7,8 @@ and what both share, `Connection`. See [Requests and responses](../requests-and-
 
 ::: korvex.Request
 
+::: korvex.BackgroundTasks
+
 ::: korvex.WebSocket
 
 ::: korvex.WebSocketDisconnect
