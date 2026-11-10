@@ -71,7 +71,7 @@ protection (0.17), and an ASGI `root_path` with the last breaking API
 changes (1.0.0rc1). The public API is what `korvex`, `korvex.router`,
 `korvex.testing`, `korvex.security` and `korvex.middleware` export. Until
 1.0 it can change, each change listed in the changelog with how to
-update; after, it stays. Next: maybe rc5, then 1.0.0.
+update; after, it stays. Next: 1.0.0.
 
 ## Before 1.0.0
 
@@ -87,8 +87,8 @@ froze doesn't break; a feature added in an rc can still change until 1.0.0.
   existing app), like Starlette's `Mount`. Done.
 - **1.0.0rc4, conditional static files**: `ETag`, `If-Modified-Since` and
   `Range`, for caching and resumable downloads. Done.
-- **Maybe 1.0.0rc5, more kinds of models** for validation: dataclasses,
-  `TypedDict`, as Litestar takes them.
+- **1.0.0rc5, more kinds of models** for validation: dataclasses and
+  `TypedDict`, as Litestar takes them. Done.
 
 1.0.0 comes when all of these hold:
 

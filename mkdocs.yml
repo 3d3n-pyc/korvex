@@ -55,8 +55,10 @@ plugins:
         Korvex is a fast Python web framework (ASGI), with a router and an
         HTTP server written in Rust. Handlers are plain functions whose
         parameters say what they read; validation uses msgspec or pydantic.
-        Python 3.9 to 3.14, free-threaded 3.14t included. Pre-1.0: check the
-        changelog for API changes.
+        Python 3.9 to 3.14, free-threaded 3.14t included. Korvex 1.0 is in
+        release candidates: install with `pip install --pre korvex` (plain
+        `pip install korvex` gives 0.17, an older API); the API rc1 froze
+        won't break.
       full_output: llms-full.txt
       sections:
         Start:
@@ -64,9 +66,9 @@ plugins:
           - tutorial.md: Your first API, step by step, for beginners
           - glossary.md: Plain-words definitions of the terms used in the guide
         Guide:
-          - routes.md: Paths, parameters, groups, hosts, url_for, static files
-          - validation.md: Typed parameters, models, headers, cookies, forms, 422 errors
-          - requests-and-responses.md: What a handler gets and returns
+          - routes.md: Paths, parameters, groups, hosts, url_for, static files with conditional and range requests, mounting another ASGI app
+          - validation.md: Typed parameters, models (msgspec, pydantic, dataclasses, TypedDict), headers, cookies, forms, 422 errors
+          - requests-and-responses.md: What a handler gets and returns, streams, Server-Sent Events, background tasks, Response.file with range and 304
           - templates.md: HTML templates, filters, escaping, hashed static URLs
           - sessions.md: Signed-cookie sessions, flash messages, CSRF protection
           - dependencies.md: Depends, yield dependencies, overrides
@@ -74,9 +76,9 @@ plugins:
           - websockets.md: WebSocket routes
           - openapi.md: OpenAPI, Swagger UI, Bearer, API keys, OAuth2, custom schemes
           - middleware.md: CORS, request IDs, rate limiting, compression, security headers
-          - testing.md: TestClient and AsyncTestClient
-          - server.md: The built-in server, workers and threads
-          - deployment.md: nginx, Caddy, Docker, AWS Lambda, Vercel
+          - testing.md: TestClient and AsyncTestClient, pytest fixtures, streams, iter_events for Server-Sent Events
+          - server.md: The built-in server, workers and threads, root_path, connection and body limits
+          - deployment.md: Production checklist, default limits, nginx, Caddy, Docker, AWS Lambda, Vercel
         Reference:
           - reference/*.md
         Optional:

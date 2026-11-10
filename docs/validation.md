@@ -4,8 +4,9 @@ Use this when you want Korvex to read, check and convert the input of a
 [handler](glossary.md#handler) from its annotations.
 
 Annotations say where a parameter comes from, and what it must be.
-[Models](glossary.md#model) can be [msgspec](https://jcristharif.com/msgspec/) structs or
-[pydantic](https://docs.pydantic.dev/) models; Korvex needs neither.
+[Models](glossary.md#model) can be [msgspec](https://jcristharif.com/msgspec/) structs,
+[pydantic](https://docs.pydantic.dev/) models, or plain dataclasses and `TypedDict`s;
+Korvex needs none of these libraries to import, only to validate.
 
 ```python
 import msgspec
@@ -34,7 +35,7 @@ def create_user(body: NewUser, notify: bool = False) -> User:
 
 | Parameter | Comes from |
 |---|---|
-| a model, or a list of models (`body: NewUser`) | the JSON [body](glossary.md#request-body) |
+| a model (struct, pydantic model, dataclass, `TypedDict`), or a list of them (`body: NewUser`) | the JSON [body](glossary.md#request-body) |
 | named like a [path parameter](glossary.md#path-parameter) (`id`) | the path |
 | `str`, `int`, `float`, `bool`, `UUID`, `date`, `datetime`, or an `Optional` or `list` of them | the [query string](glossary.md#query-string) |
 | `Header()`, `Cookie()`, `Form()`, `Query(alias=...)` | there |
@@ -46,6 +47,44 @@ def create_user(body: NewUser, notify: bool = False) -> User:
   a mistake shows at import.
 - When a field is repeated (`?tag=a&tag=b`), a single value takes the
   first, and a `list[str]` takes them all.
+
+## Dataclasses and TypedDict
+
+A `@dataclass` or a `TypedDict` (or a list or `Optional` of them) works like a
+struct: body, return annotation and `Form()`, with the same 422. Defaults are
+filled in. It is checked by msgspec if installed, else pydantic; with neither,
+the route raises a `TypeError` telling you to `pip install msgspec`. A
+`NamedTuple` or attrs class is not supported. Before Python 3.12, pydantic wants
+`TypedDict` from `typing_extensions`.
+
+```python
+from dataclasses import dataclass
+from typing import TypedDict
+
+from korvex import App
+from korvex.testing import TestClient
+
+app = App()
+
+
+@dataclass
+class NewTask:
+    title: str
+    done: bool = False
+
+
+class Summary(TypedDict):
+    title: str
+    done: bool
+
+
+@app.post("/tasks", status=201)
+def add(task: NewTask) -> Summary:
+    return {"title": task.title, "done": task.done}
+
+
+print(TestClient(app).post("/tasks", json={"title": "milk"}).json())
+```
 
 ## Headers, cookies and forms
 

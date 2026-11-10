@@ -40,7 +40,7 @@ In Korvex: a model parameter reads the JSON body, and `await request.body()`, `.
 
 ## Model
 
-A class that describes the shape of some data (`name: str`, `age: int`). Korvex uses one to check an incoming body and to describe the API. To choose: msgspec is the fastest, pydantic is the most common. Install one (`pip install msgspec` or `pip install pydantic`). Korvex needs neither, unless you validate bodies.
+A class that describes the shape of some data (`name: str`, `age: int`). Korvex uses one to check an incoming body and to describe the API. It can be a msgspec struct, a pydantic model, a dataclass or a `TypedDict`. To choose: msgspec is the fastest, pydantic is the most common. Install one (`pip install msgspec` or `pip install pydantic`). Korvex needs neither, unless you validate bodies (a dataclass or `TypedDict` is checked by whichever is installed).
 
 In Korvex: a `msgspec.Struct` or a pydantic `BaseModel` as a parameter or a return annotation. See [Validation](validation.md).
 
