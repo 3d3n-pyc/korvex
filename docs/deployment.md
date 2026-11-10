@@ -27,7 +27,7 @@ The fastest setup (see the server comparison in the README). With the
 proxy on the same machine, use a Unix socket:
 
 ```sh
-pip install korvex
+pip install --pre korvex
 korvex run main:app --workers 3 --uds /run/korvex/korvex.sock
 ```
 
@@ -101,7 +101,7 @@ For Windows, where the built-in server isn't available, or to keep an
 ASGI server:
 
 ```sh
-pip install "korvex[serve]"
+pip install --pre "korvex[serve]"
 uvicorn main:app --host 127.0.0.1 --port 8000 --workers 4 \
     --proxy-headers --forwarded-allow-ips 127.0.0.1
 ```

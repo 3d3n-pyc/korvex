@@ -1,13 +1,17 @@
 """The names users need are exported from the top-level package."""
 
 import korvex
+from korvex._background import BackgroundTasks
 from korvex._requests import MultiDict
 from korvex._response import StreamingResponse
+from korvex._sse import ServerSentEvent
 from korvex._templates.compile import UndefinedError
 from korvex._templates.parse import TemplateSyntaxError
 
 EXPORTED = {
+    "BackgroundTasks": BackgroundTasks,
     "MultiDict": MultiDict,
+    "ServerSentEvent": ServerSentEvent,
     "StreamingResponse": StreamingResponse,
     "TemplateSyntaxError": TemplateSyntaxError,
     "UndefinedError": UndefinedError,

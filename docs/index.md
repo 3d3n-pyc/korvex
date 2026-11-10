@@ -5,7 +5,7 @@ Rust. You write plain Python functions; Korvex calls them for the right
 requests, checks their input, and documents your API.
 
 ```sh
-pip install korvex
+pip install --pre korvex
 ```
 
 ## A first app
@@ -35,8 +35,9 @@ Run `python main.py`, then open <http://127.0.0.1:8000/hello/Ada?polite=true>.
   return annotation, return the model: see [Validation](validation.md).
 - `app.docs()` adds a Swagger UI page at `/docs`.
 
-Korvex 1.0 is in release candidate: the API is frozen, and from 1.0 a
-breaking change waits for a 2.0. Every change is in the [changelog](https://github.com/3d3n-pyc/korvex/blob/main/CHANGELOG.md).
+Korvex 1.0 is in release candidates: what rc1 froze won't break; features
+added since can still change until 1.0.0. Install with
+`pip install --pre korvex`. Every change is in the [changelog](https://github.com/3d3n-pyc/korvex/blob/main/CHANGELOG.md).
 
 ## The guide
 

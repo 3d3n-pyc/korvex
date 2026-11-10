@@ -75,6 +75,8 @@ pub struct Backlog {
     bytes: AtomicU64,
     /// Python was told to wait and hasn't been woken yet.
     waiting: AtomicBool,
+    /// The stream failed: the body ends in an error, not a clean end.
+    aborted: AtomicBool,
     shared: Arc<Shared>,
 }
 
@@ -89,6 +91,7 @@ impl Backlog {
             id,
             bytes: AtomicU64::new(0),
             waiting: AtomicBool::new(false),
+            aborted: AtomicBool::new(false),
             shared,
         }
     }
@@ -494,6 +497,19 @@ impl Responder {
             .unwrap_or_else(PoisonError::into_inner)
             .take();
     }
+
+    /// Ends a streamed body that failed: the connection is closed without
+    /// the terminating chunk, so the client sees the body is incomplete.
+    fn abort_stream(&self) {
+        let taken = self
+            .stream
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some((_, backlog)) = taken {
+            backlog.aborted.store(true, Ordering::SeqCst);
+        }
+    }
 }
 
 /// A response body fed piece by piece by Python; it ends when Python drops
@@ -505,18 +521,25 @@ pub struct ChannelBody {
 
 impl Body for ChannelBody {
     type Data = Bytes;
-    type Error = Infallible;
+    type Error = std::io::Error;
 
     fn poll_frame(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+    ) -> Poll<Option<Result<Frame<Bytes>, std::io::Error>>> {
         // hyper asks for the next piece once it has written the last one.
         let polled = self.receiver.poll_recv(cx);
-        if let Poll::Ready(Some(bytes)) = &polled {
-            self.backlog.taken(bytes.len());
+        match polled {
+            Poll::Ready(Some(bytes)) => {
+                self.backlog.taken(bytes.len());
+                Poll::Ready(Some(Ok(Frame::data(bytes))))
+            }
+            Poll::Ready(None) if self.backlog.aborted.load(Ordering::SeqCst) => {
+                Poll::Ready(Some(Err(std::io::Error::other("the stream failed"))))
+            }
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
         }
-        polled.map(|chunk| chunk.map(|bytes| Ok(Frame::data(bytes))))
     }
 }
 

@@ -18,17 +18,18 @@ Rust.
   test client, ready-made middleware, and its own server, with workers and
   threads.
 
-Korvex 1.0 is in release candidate: the API is frozen, and from 1.0 a
-breaking change waits for a 2.0. Every change is in the [changelog](CHANGELOG.md).
+Korvex 1.0 is in release candidates: what rc1 froze won't break; features
+added since can still change until 1.0.0. Install with
+`pip install --pre korvex`. Every change is in the [changelog](CHANGELOG.md).
 
 ```sh
-pip install korvex
+pip install --pre korvex
 ```
 
 ## Quickstart
 
 ```python
-import msgspec                       # or pydantic: pip install korvex msgspec
+import msgspec                       # or pydantic: pip install --pre korvex msgspec
 
 from korvex import App, HTTPException
 

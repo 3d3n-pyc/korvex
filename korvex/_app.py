@@ -22,7 +22,7 @@ from urllib.parse import quote
 from korvex._core import MethodNotAllowed
 from korvex._errors import Abort, HTTPException, RequestValidationError
 from korvex._requests import Connection, Request, WebSocket, WebSocketDisconnect
-from korvex._response import Response, StreamingResponse
+from korvex._response import EventStream, Response, StreamingResponse
 from korvex._routing import (
     Group,
     Handler,
@@ -505,22 +505,34 @@ class App(_RouteDecorators):
             self._root_path = request.root_path
         response = await self._respond(request)
         head = scope["method"] == "HEAD"
-        if isinstance(response, StreamingResponse):
-            await self._send_stream(response, send, head, request.path)
-            return
-        await send({"type": "http.response.start", "status": response.status, "headers": _raw_headers(response, head)})
-        # HEAD: GET's headers, no body.
-        await send({"type": "http.response.body", "body": b"" if head else response.body})
+        try:
+            if isinstance(response, StreamingResponse):
+                await self._send_stream(response, send, head, request.path, receive)
+                return
+            await send(
+                {"type": "http.response.start", "status": response.status, "headers": _raw_headers(response, head)}
+            )
+            # HEAD: GET's headers, no body.
+            await send({"type": "http.response.body", "body": b"" if head else response.body})
+        finally:
+            if request._tasks is not None:  # sent or not, the client never waits for them
+                await request._tasks._run()
 
     @staticmethod
-    async def _send_stream(response: StreamingResponse, send: Callable, head: bool, path: str) -> None:
+    async def _send_stream(
+        response: StreamingResponse, send: Callable, head: bool, path: str, receive: Callable
+    ) -> None:
         try:
             await send(
                 {"type": "http.response.start", "status": response.status, "headers": _raw_headers(response, head)}
             )
             if not head:
-                async for chunk in response:
-                    await send({"type": "http.response.body", "body": chunk, "more_body": True})
+                if isinstance(response, EventStream):
+                    if not await _send_events(response, send, receive):
+                        return  # the client left
+                else:
+                    async for chunk in response:
+                        await send({"type": "http.response.body", "body": chunk, "more_body": True})
             await send({"type": "http.response.body", "body": b""})
         finally:
             await _finish(response, path)  # sent or not, what waited for it runs
@@ -545,6 +557,8 @@ class App(_RouteDecorators):
                         "(a model needs a return annotation; for an empty response, annotate it `-> None`)"
                     )
         except Exception as exc:
+            if request._tasks is not None:
+                request._tasks._dropped = True  # the handler raised: its tasks never run
             response = await self._handle_error(request, exc)
         for hook in reversed(self._after_request):
             try:
@@ -848,6 +862,36 @@ def _match(router: Router, request: Request) -> Any:
         if "unknown HTTP method" in str(exc):
             raise HTTPException(501) from None
         raise
+
+
+async def _pump(response: StreamingResponse, send: Callable) -> None:
+    """Sends every chunk of the response."""
+    async for chunk in response:
+        await send({"type": "http.response.body", "body": chunk, "more_body": True})
+
+
+async def _wait_disconnect(receive: Callable) -> None:
+    """Returns when the client disconnects."""
+    while (await receive())["type"] != "http.disconnect":
+        pass
+
+
+async def _send_events(response: EventStream, send: Callable, receive: Callable) -> bool:
+    """Sends an event stream while watching the client. Returns False if the
+    client left first; the source is then closed, so its `finally` runs."""
+    pump = asyncio.ensure_future(_pump(response, send))
+    watch = asyncio.ensure_future(_wait_disconnect(receive))
+    try:
+        await asyncio.wait({pump, watch}, return_when=asyncio.FIRST_COMPLETED)
+        if not pump.done():
+            return False
+        pump.result()  # raises what the source or the send raised
+        return True
+    finally:
+        for task in (pump, watch):
+            task.cancel()
+        await asyncio.gather(pump, watch, return_exceptions=True)
+        await response.aclose()
 
 
 async def _finish(response: StreamingResponse, path: str) -> None:

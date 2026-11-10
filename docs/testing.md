@@ -48,6 +48,14 @@ with client.stream("GET", "/events") as response:
     first = next(response.iter_text())  # leaving the block stops the stream
 ```
 
+To read a Server-Sent Events stream, `iter_events()` (`aiter_events()` on
+`AsyncTestClient`) yields `ServerSentEvent`s:
+
+```python
+with client.stream("GET", "/feed") as response:
+    event = next(response.iter_events())  # event.event, event.data, event.id
+```
+
 `client.websocket(path)` opens one: `send_text()`, `send_json()`...,
 `receive_text()`, `receive_json()`... A refused connection raises
 `WebSocketDisconnect`. It takes `query=`, `headers=`, `cookies=` and

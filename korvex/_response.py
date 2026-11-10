@@ -20,6 +20,11 @@ HeaderItems = Union[Mapping[str, str], Iterable[tuple[str, str]]]
 name (`[("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")]`)."""
 
 FILE_CHUNK_SIZE = 64 * 1024
+_SSE_HEADERS = (
+    ("Content-Type", "text/event-stream; charset=utf-8"),
+    ("Cache-Control", "no-cache"),
+    ("X-Accel-Buffering", "no"),
+)
 
 
 class Headers:
@@ -156,6 +161,46 @@ class Response:
         return StreamingResponse(chunks, status=status, headers=headers)
 
     @classmethod
+    def sse(
+        cls,
+        events: Union[Iterable[Any], AsyncIterable[Any]],
+        *,
+        ping: float = 15.0,
+        status: int = 200,
+        headers: HeaderItems = (),
+    ) -> StreamingResponse:
+        """A Server-Sent Events stream, for the browser's `EventSource`.
+
+        Args:
+            events: A sync or async iterable of `ServerSentEvent`, or of plain values (sent as the data of an event).
+            ping: Seconds of silence before a keep-alive comment is sent, so proxies keep the connection open. 0 turns it off. Only async iterables get pings: a sync generator is streamed as is.
+            status: The HTTP status.
+            headers: Extra headers; they win over the defaults.
+
+        ```python
+        async def clock():
+            while True:
+                yield ServerSentEvent({"time": time.time()}, event="tick")
+                await asyncio.sleep(1)
+        return Response.sse(clock())
+        ```
+
+        Guide: https://3d3n-pyc.github.io/korvex/requests-and-responses/#server-sent-events
+        """
+        from korvex import _sse
+
+        chunks: Chunks
+        if isinstance(events, AsyncIterable):
+            chunks = _sse.with_pings(events.__aiter__(), ping)
+        else:
+            chunks = (_sse.encode(item) for item in events)
+        response = EventStream(chunks, status=status, headers=headers)
+        for name, value in _SSE_HEADERS:
+            if name not in response.headers:
+                response.headers.set(name, value)
+        return response
+
+    @classmethod
     def file(
         cls,
         path: str | os.PathLike[str],
@@ -218,6 +263,20 @@ class StreamingResponse(Response):
 
     def __repr__(self) -> str:
         return f"StreamingResponse(status={self.status}, headers={self.headers!r})"
+
+
+class EventStream(StreamingResponse):
+    """A `StreamingResponse` from `Response.sse()`: the App watches the client and closes it when it leaves."""
+
+    __slots__ = ()
+
+    async def aclose(self) -> None:
+        """Close the source of the chunks so its `finally` blocks run."""
+        close = getattr(self.chunks, "aclose", None) or getattr(self.chunks, "close", None)
+        if close is not None:
+            result = close()
+            if result is not None:
+                await result
 
 
 async def _read_file(path: str | os.PathLike[str]) -> AsyncIterator[bytes]:

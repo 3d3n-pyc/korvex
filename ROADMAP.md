@@ -71,30 +71,35 @@ protection (0.17), and an ASGI `root_path` with the last breaking API
 changes (1.0.0rc1). The public API is what `korvex`, `korvex.router`,
 `korvex.testing`, `korvex.security` and `korvex.middleware` export. Until
 1.0 it can change, each change listed in the changelog with how to
-update; after, it stays. Next: 1.0.0, after feedback on the rc.
+update; after, it stays. Next: 1.0.0rc3, then rc4, maybe rc5, then 1.0.0.
 
-## 1.0
+## Before 1.0.0
 
-1.0.0rc1 freezes the API: from 1.0, no breaking change without a 2.0.
-1.0.0 follows feedback on the rc. It needs:
+Korvex stays in release candidates until the official launch, 1.0.0. The
+features planned for after 1.0 come first, in release candidates, so each
+one is tested before the launch. The rule during the rc phase: what rc1
+froze doesn't break; a feature added in an rc can still change until 1.0.0.
 
-- An API that stays stable, with deprecations announced in advance: a
-  deprecated feature warns for at least two minor versions before it goes.
-- A built-in server that's solid in production behind a reverse proxy.
-- At least a few projects running it in production.
+- **1.0.0rc3, background tasks**: work that runs after the response is sent
+  (an email, a webhook), without holding it up.
+- **1.0.0rc3, Server-Sent Events**: a helper on top of `Response.stream`.
+- **1.0.0rc4, mounting another ASGI app** under a prefix (an admin, an
+  existing app), like Starlette's `Mount`.
+- **1.0.0rc4, conditional static files**: `ETag`, `If-Modified-Since` and
+  `Range`, for caching and resumable downloads.
+- **Maybe 1.0.0rc5, more kinds of models** for validation: dataclasses,
+  `TypedDict`, as Litestar takes them.
+
+1.0.0 comes when all of these hold:
+
+- The features above have shipped.
+- A week of nightly fuzzing and soak runs has passed without a failure.
+- Korvex runs a real app that we deploy and keep running ourselves, for
+  example the taskboard example behind nginx or Caddy. This replaces "a few
+  projects running it in production", which can't happen before 1.0.
 
 ## After 1.0
 
-What other frameworks have that Korvex doesn't yet, roughly by how often
-it's needed. Each adds to the API without changing it, so each comes in a
-minor version:
-
-- **1.1, background tasks**: work that runs after the response is sent (an
-  email, a webhook), without holding it up.
-- **1.1, Server-Sent Events**: a helper on top of `Response.stream`.
-- **1.2, mounting another ASGI app** under a prefix (an admin, an existing
-  app), like Starlette's `Mount`.
-- **1.2, conditional static files**: `ETag`, `If-Modified-Since` and `Range`,
-  for caching and resumable downloads.
-- **Later, more kinds of models** for validation: dataclasses, `TypedDict`,
-  attrs, as Litestar takes them.
+From 1.0.0, no breaking change without a 2.0. Deprecations are announced in
+advance: a deprecated feature warns for at least two minor versions before
+it goes.
