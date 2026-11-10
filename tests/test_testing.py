@@ -290,7 +290,7 @@ def test_timeout_fails_a_stuck_handler():
     async def stuck(request):
         await asyncio.Event().wait()
 
-    with TestClient(app, timeout=0.05) as client:
+    with TestClient(app, timeout=1) as client:
         started = time.monotonic()
         with pytest.raises(TimeoutError, match="GET /stuck"):
             client.get("/stuck")
