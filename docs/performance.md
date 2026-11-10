@@ -218,3 +218,22 @@ WebSocket messages, 870,000 streams cut off), the workers grew +0.7% and
 +150% and the test failed.
 
 Run it with `uv run python benches/soak.py --duration 60` (Linux, needs `oha`).
+
+## Templates
+
+Rendering a template with autoescape on, precompiled and cached, against
+Jinja2 and minijinja (a Rust engine). Median time per render, in µs, on one
+machine:
+
+| Template | Korvex | Jinja2 | minijinja |
+|---|---|---|---|
+| A table of 100 rows | **88.5** | 444 | 86 |
+| A layout with `extends` and `include` | **9.7** | 59 | 11.7 |
+| An escape-heavy form | **43** | 190 | 40 |
+
+- Korvex is 4 to 6 times faster than Jinja2, and on par with minijinja.
+- The outputs are checked equal to Jinja2's before timing.
+- The time is spent in the template: the app, the server and the request
+  are not part of it.
+
+Reproduce with `uv run --group bench python benches/bench_templates.py`.

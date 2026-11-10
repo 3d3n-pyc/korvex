@@ -514,3 +514,10 @@ def test_redis_store_fails_open_or_closed(caplog):
     assert asyncio.run(ask(True)).allowed is True
     assert asyncio.run(ask(False)).allowed is False
     assert "rate limit store unreachable" in caplog.text
+
+
+@pytest.mark.parametrize("now", [123456.789, 1e6 + 0.1, 0.1, 86400.3])
+@pytest.mark.parametrize(("requests", "per"), [(2, 60), (3, 1), (3, 60), (7, 0.7)])
+def test_memory_store_burst_at_one_instant(now, requests, per):
+    store = MemoryStore(lambda: now)  # a frozen clock, like two hits in one Windows tick
+    assert [store.hit("k", requests, per).allowed for _ in range(requests + 1)] == [True] * requests + [False]

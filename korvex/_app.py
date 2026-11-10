@@ -7,14 +7,17 @@ built-in one (`App.run()`).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
+import re
 import threading
 import weakref
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Optional, Union, overload
+from urllib.parse import quote
 
 from korvex._core import MethodNotAllowed
 from korvex._errors import Abort, HTTPException, ValidationError
@@ -33,6 +36,7 @@ from korvex._routing import (
     _RouteDecorators,
 )
 from korvex._schema import Plan, Run, needs_plan, plan_for
+from korvex._templates.env import Templates
 from korvex.router import Router
 
 BeforeHook = Callable[["Connection"], Union[Optional[Response], Awaitable[Optional[Response]]]]
@@ -88,6 +92,9 @@ class LoopLocal:
             raise AttributeError(name) from None
 
 
+_HASHED = re.compile(r"((?:.*/)?[^/]+)\.([0-9a-f]{8})(\.[^./]+)?\Z")  # app.3f2a1c9b.css, LICENSE.3f2a1c9b
+
+
 class App(_RouteDecorators):
     """The application: routes, hooks, error handlers, OpenAPI, and `run()`. It is an ASGI app.
 
@@ -99,6 +106,8 @@ class App(_RouteDecorators):
         # Each route, under its handler name in the router: HTTP, WebSocket.
         self._routes: dict[str, _Route] = {}
         self._ws_routes: dict[str, _Route] = {}
+        self._statics: dict[str, tuple[str, Path]] = {}  # app.static() name -> (prefix, root)
+        self._digests: dict[Path, tuple[int, int, str]] = {}  # file -> (mtime_ns, size, hash)
         self._hosts: list[_Host] = []  # app.host() patterns, the ones without parameters first
         self.local = LoopLocal()
         """Attributes per event loop: see `LoopLocal`."""
@@ -349,20 +358,70 @@ class App(_RouteDecorators):
         if not root.is_dir():
             raise NotADirectoryError(f"not a directory: {directory}")
 
-        def serve(request: Request, path: str) -> Response:
+        def find(path: str) -> Path | None:
             try:
                 target = (root / path).resolve()
             except (OSError, ValueError):  # e.g. a null byte in the path
-                raise HTTPException(404) from None
-            if not target.is_relative_to(root) or not target.is_file():
+                return None
+            return target if target.is_relative_to(root) and target.is_file() else None
+
+        def serve(request: Request, path: str) -> Response:
+            target, digest = find(path), None
+            if target is None and (hashed := _HASHED.match(path)):
+                target, digest = find(hashed[1] + (hashed[3] or "")), hashed[2]
+            if target is None:
                 raise HTTPException(404)
-            return Response.file(target)
+            response = Response.file(target)
+            if digest is not None and digest == self._digest(target):
+                response.headers.set("Cache-Control", "public, max-age=31536000, immutable")
+            return response
 
         key = f"korvex.static:{prefix}"  # all serve() share a qualname
         pattern = f"{prefix.rstrip('/')}/*path"
         self._check_name(name, False, None, pattern)
         self._router.route(pattern, key)
         self._add_route(False, key, _Route(serve, name=name or "static", explicit=name is not None), None, pattern)
+        self._statics.setdefault(name or "static", (prefix.rstrip("/"), root))
+
+    def static_url(self, path: str, /, name: str | None = None) -> str:
+        """The URL of a static file, with a hash of its content: `/static/app.3f2a1c9b.css`.
+
+        `path`: the file, relative to the folder given to `static()`.
+        `name`: which `static()` mount, when there are several (`"static"` by default).
+        Raises LookupError for an unknown mount, FileNotFoundError for a missing file.
+        Guide: https://3d3n-pyc.github.io/korvex/templates/"""
+        mount = self._statics.get(name or "static")
+        if mount is None:
+            raise LookupError(f"no static mount named {name or 'static'!r}")
+        prefix, root = mount
+        target = (root / path).resolve()
+        if not target.is_relative_to(root) or not target.is_file():
+            raise FileNotFoundError(f"no static file {path!r}")
+        head, slash, base = path.rpartition("/")
+        digest, dot = self._digest(target), base.rfind(".")
+        hashed = f"{head}{slash}{base[:dot]}.{digest}{base[dot:]}" if dot > 0 else f"{path}.{digest}"
+        return f"{prefix}/{quote(hashed)}"
+
+    def _digest(self, target: Path) -> str:
+        """The first 8 hex digits of the SHA-256 of a file, cached until its mtime or size changes."""
+        info = target.stat()
+        stamp = (info.st_mtime_ns, info.st_size)
+        cached = self._digests.get(target)
+        if cached is None or cached[:2] != stamp:
+            cached = (*stamp, hashlib.sha256(target.read_bytes()).hexdigest()[:8])
+            self._digests[target] = cached
+        return cached[2]
+
+    def templates(self, directory: str | os.PathLike[str] = "templates", *, reload: bool = False) -> Templates:
+        """Returns the `Templates` for `directory`, with `url_for` available in every template.
+
+        `directory`: the template folder, relative to the current directory.
+        `reload`: recompile templates when their files change.
+        Guide: https://3d3n-pyc.github.io/korvex/templates/"""
+        templates = Templates(Path(directory), reload=reload)
+        templates.globals["url_for"] = self.url_for
+        templates.globals["static_url"] = self.static_url
+        return templates
 
     # The overloads let `@app.on_startup` and `@app.on_startup()` both type-check.
     @overload

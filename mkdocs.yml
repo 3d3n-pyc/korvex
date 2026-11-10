@@ -64,6 +64,7 @@ plugins:
         Guide:
           - routes.md: Paths, parameters, groups, hosts, url_for, static files
           - requests-and-responses.md: What a handler gets and returns
+          - templates.md: HTML templates, filters, escaping, hashed static URLs
           - validation.md: Typed parameters, models, headers, cookies, forms, 422 errors
           - dependencies.md: Depends, yield dependencies, overrides
           - errors-and-hooks.md: HTTPException, Abort, exception handlers, before/after hooks, startup/shutdown, app.local
@@ -85,6 +86,7 @@ nav:
   - Guide:
       - Routes: routes.md
       - Requests and responses: requests-and-responses.md
+      - Templates: templates.md
       - Validation: validation.md
       - Dependencies: dependencies.md
       - Errors and hooks: errors-and-hooks.md
@@ -98,6 +100,7 @@ nav:
       - The App: reference/app.md
       - Requests: reference/requests.md
       - Responses: reference/responses.md
+      - Templates: reference/templates.md
       - Parameters: reference/parameters.md
       - Errors: reference/errors.md
       - korvex.testing: reference/testing.md

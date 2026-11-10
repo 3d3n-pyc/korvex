@@ -41,6 +41,9 @@ class RateLimitStore(Protocol):
     def hit(self, key: Hashable, requests: int, per: float) -> Decision | Awaitable[Decision]: ...
 
 
+_TOLERANCE = 1e-6  # seconds: absorbs float rounding when requests share one clock tick
+
+
 class MemoryStore:
     """Rate limit state in this process's memory, one store per worker.
 
@@ -64,7 +67,7 @@ class MemoryStore:
         interval = per / requests
         full_back = max(self._next_free.get(key, now), now)
         allowed_at = full_back - per + interval  # a burst of `requests` fits in `per`
-        if now < allowed_at:
+        if now < allowed_at - _TOLERANCE:
             return Decision(False, 0, allowed_at - now, full_back - now)
         full_back += interval
         self._next_free[key] = full_back
@@ -93,7 +96,7 @@ local now = tonumber(time[1]) + tonumber(time[2]) / 1000000
 local full_back = tonumber(redis.call('GET', KEYS[1])) or now
 if full_back < now then full_back = now end
 local allowed_at = full_back - per + interval
-if now < allowed_at then
+if now < allowed_at - 0.000001 then
   return {0, 0, tostring(allowed_at - now), tostring(full_back - now)}
 end
 full_back = full_back + interval

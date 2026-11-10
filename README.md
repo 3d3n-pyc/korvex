@@ -14,8 +14,9 @@ Rust.
 - **Fast**: among the fastest Python frameworks on one core; its own
   server serves more than uvicorn, Granian, Robyn and FastrAPI on the
   same cores, with less memory.
-- **Complete**: dependencies, WebSockets, a test client, ready-made
-  middleware, and its own server, with workers and threads.
+- **Complete**: dependencies, WebSockets, server-side HTML templates, a
+  test client, ready-made middleware, and its own server, with workers and
+  threads.
 
 Korvex is young (alpha): the API can change before 1.0. Each change is in
 the [changelog](CHANGELOG.md) with how to update.
@@ -78,6 +79,7 @@ project to install a Korvex skill ([more](docs/ai.md)).
 - [Dependencies](docs/dependencies.md): signing in, database connections, shared checks.
 - [Errors and hooks](docs/errors-and-hooks.md): errors, code around every request, startup and shutdown.
 - [WebSockets](docs/websockets.md)
+- [Templates](docs/templates.md): server-rendered HTML, with escaping and hashed static URLs.
 - [OpenAPI and security](docs/openapi.md): statuses, tags, documented errors, Bearer and API keys.
 - [Ready-made middleware](docs/middleware.md): CORS, request IDs, rate limiting, compression.
 - [Testing](docs/testing.md)

@@ -43,7 +43,7 @@ uv run --group docs mkdocs build --strict -d target/site   # if docs or docstrin
   `_app.py`, `_requests.py`, `_response.py` and `_serve.py` is hot: no
   extra allocation, lookup or call per request without measuring it.
 - **Rust**: only `lib.rs`, `server.rs` and `websocket.rs` use PyO3;
-  `tree.rs`, `path.rs`, `method.rs` and `proxy.rs` stay plain Rust.
+  `tree.rs`, `path.rs`, `method.rs`, `proxy.rs` and `escape.rs` stay plain Rust.
 - **New behavior needs a test.** `korvex.testing.TestClient` drives the
   app; `tests/support.py` helps with raw ASGI messages.
 - **Docstrings are documentation**: the site's reference pages are built

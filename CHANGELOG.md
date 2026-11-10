@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.16.0
+
+Server-side HTML templates, and static files with hashed URLs.
+
+- **Templates**, Korvex's own engine, with Jinja-like syntax (`if`, `for`,
+  `set`, `extends`, `block`, `include`, filters). Create them with
+  `app.templates("templates")`, then `views.response("page.html", **context)`.
+  HTML is always escaped, and an undefined variable is an error that names
+  the file and line. Each template is compiled once to a Python function.
+  `reload=True` reloads them while developing. Guide:
+  <https://3d3n-pyc.github.io/korvex/templates/>. No migration needed.
+- **Hashed static URLs.** `static_url('css/app.css')` in a template, or
+  `app.static_url()`, gives `/static/css/app.3f2a1c9b.css`. The file is
+  served with a one-year immutable cache, so a changed file gets a new URL.
+- **New exports**: `Templates`, `Markup` and `TemplateError`.
+- **Fixes**: `rate_limit` could refuse a request within the allowance when
+  requests arrived at the same clock tick (seen on Windows).
+- Rendering is 4 to 6 times faster than Jinja2, on par with minijinja
+  (see [Performance](docs/performance.md#templates)).
+
 ## 0.15.1
 
 A fix for WebSocket clients in the built-in server.

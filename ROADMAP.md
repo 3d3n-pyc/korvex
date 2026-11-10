@@ -60,7 +60,8 @@ Done: the API's open questions (0.10), ready-made middleware (0.11), more
 than one core per worker (0.12), what everyone expects from a framework
 (0.13: a test client, reverse URLs, a richer OpenAPI), a review of the
 whole public API (0.14), a documentation site (0.14.2), a more robust
-built-in server (0.15) and a soak test in CI (0.15.1). The public API is
+built-in server (0.15), a soak test in CI (0.15.1), and server-side
+templates with hashed static URLs (0.16). The public API is
 what `korvex`, `korvex.router`, `korvex.testing`, `korvex.security` and
 `korvex.middleware` export. Until
 1.0 it can change, each change listed in the changelog with how to
@@ -86,7 +87,6 @@ a minor version:
 - **Server-Sent Events**: a helper on top of `Response.stream`.
 - **Mounting another ASGI app** under a prefix (an admin, an existing
   app), like Starlette's `Mount`.
-- **Templates** (Jinja2), for server-rendered pages.
 - **Conditional static files**: `ETag`, `If-Modified-Since` and `Range`,
   for caching and resumable downloads.
 - **More kinds of models** for validation: dataclasses, `TypedDict`,
