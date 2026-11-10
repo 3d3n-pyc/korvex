@@ -2,7 +2,7 @@
 
 Where Korvex is going. Versions are a rough order, not promises.
 
-## Where it stands (0.15.0)
+## Where it stands (1.0.0rc1)
 
 - **Fast.** On one CPU core, Korvex serves the most requests of the
   frameworks tested (34.4k requests/s, Falcon 30.5k, Starlette's best
@@ -20,11 +20,16 @@ Where Korvex is going. Versions are a rough order, not promises.
   reverse URLs (`url_for`); an OpenAPI document with statuses, tags,
   documented errors and security schemes, and Swagger UI; a test client
   that runs the app in-process; and a deployment guide.
+- **Pages, not just APIs.** Its own template engine (4 to 6 times faster
+  than Jinja2), static files with hashed URLs, signed cookie sessions,
+  flash messages and CSRF protection; apps served under a path prefix
+  (ASGI `root_path`).
 - **A built-in server.** Workers, threads (in parallel on free-threaded
   Python), a supervisor, graceful shutdown, size limits, timeouts,
   `max-connections`, `max-requests`, backpressure on requests and on
   WebSockets, and WebSocket pings.
-- **Young.** Alpha, one maintainer, no known production use yet.
+- **Young.** A release candidate: the API is frozen, but there is one
+  maintainer and no known production use yet.
 
 Two rules hold for everything below:
 

@@ -35,9 +35,8 @@ Run `python main.py`, then open <http://127.0.0.1:8000/hello/Ada?polite=true>.
   return annotation, return the model: see [Validation](validation.md).
 - `app.docs()` adds a Swagger UI page at `/docs`.
 
-Korvex is young (alpha): the API can change before 1.0. Each change is in
-the [changelog](https://github.com/3d3n-pyc/korvex/blob/main/CHANGELOG.md)
-with how to update.
+Korvex 1.0 is in release candidate: the API is frozen, and from 1.0 a
+breaking change waits for a 2.0. Every change is in the [changelog](https://github.com/3d3n-pyc/korvex/blob/main/CHANGELOG.md).
 
 ## The guide
 
