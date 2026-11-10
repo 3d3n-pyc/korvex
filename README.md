@@ -18,8 +18,8 @@ Rust.
   test client, ready-made middleware, and its own server, with workers and
   threads.
 
-Korvex is young (alpha): the API can change before 1.0. Each change is in
-the [changelog](CHANGELOG.md) with how to update.
+Korvex 1.0 is in release candidate: the API is frozen, and from 1.0 a
+breaking change waits for a 2.0. Every change is in the [changelog](CHANGELOG.md).
 
 ```sh
 pip install korvex
