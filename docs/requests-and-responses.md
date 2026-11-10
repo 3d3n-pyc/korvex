@@ -97,6 +97,20 @@ once 1 MiB waits for it, the generator waits. `Response.file()` reads the
 file in chunks, without blocking the server, and sets its type and
 length.
 
+```python
+@app.get("/video")
+def video(request: Request):
+    return Response.file("movie.mp4", request=request)
+```
+
+With `request=`, the file gets an `ETag`, a `Last-Modified` and
+`Accept-Ranges`, and the response follows the request: 304 if the browser
+has the current file, 206 for a `Range` (resumable downloads, video
+seeking), 416 for a range past the end. Without it, the whole file is
+sent. A `compress()` hook leaves 206 and 304 alone and makes the `ETag`
+weak when it compresses a file. [`app.static()`](routes.md#static-files)
+works this way.
+
 ### Server-Sent Events
 
 ```python

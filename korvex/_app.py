@@ -21,6 +21,7 @@ from urllib.parse import quote
 
 from korvex._core import MethodNotAllowed
 from korvex._errors import Abort, HTTPException, RequestValidationError
+from korvex._mount import Lifespan, child_scope, child_ws_scope
 from korvex._requests import Connection, Request, WebSocket, WebSocketDisconnect
 from korvex._response import EventStream, Response, StreamingResponse
 from korvex._routing import (
@@ -92,6 +93,22 @@ class LoopLocal:
             raise AttributeError(name) from None
 
 
+_MOUNT_PREFIX = re.compile(r"(?:/[^/{}*?#%\\\s\x00-\x1f\x7f]+)+")  # /admin, /api/v2: no parameter, query or space
+_MOUNT_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
+_QUERY_SAFE = "%&=+;,:@/?!$'()*~-._"  # kept as is in a redirect's query
+
+
+class MountMatch(BaseException):
+    """Raised by a mount's route: the request belongs to `app`, mounted at `prefix`.
+
+    Not an `Exception`, so error handlers and after hooks never see it; the
+    code that answered with `App._respond()` hands the request to the mounted app."""
+
+    def __init__(self, app: Callable, prefix: str) -> None:
+        self.app = app
+        self.prefix = prefix
+
+
 _HASHED = re.compile(r"((?:.*/)?[^/]+)\.([0-9a-f]{8})(\.[^./]+)?\Z")  # app.3f2a1c9b.css, LICENSE.3f2a1c9b
 
 
@@ -132,6 +149,8 @@ class App(_RouteDecorators):
         self._explicit_names: dict[str, tuple[bool, str | None, str]] = {}
         self._root_path = ""  # the root_path last seen in a request (an app is served under one)
         self._url_cache: tuple[tuple, Any] | None = None
+        self._mounts: dict[str, str | None] = {}  # app.mount() prefix -> its name
+        self._mount_names: dict[str, str] = {}  # name -> prefix
 
     def route(
         self,
@@ -237,6 +256,8 @@ class App(_RouteDecorators):
         else: add a query string yourself. Values are percent-encoded; a host route gives the
         path only. An app is served under one `root_path`: it prefixes the path.
         Guide: https://3d3n-pyc.github.io/korvex/routes/#links-to-a-route"""
+        if name in self._mount_names:
+            return self._root_path + _mount_url(name, self._mount_names[name], params)
         from korvex import _urls as urls
 
         return self._root_path + urls.path_for(self, urls.lookup(self._url_index(), name), params)
@@ -379,10 +400,9 @@ class App(_RouteDecorators):
                 target, digest = find(hashed[1] + (hashed[3] or "")), hashed[2]
             if target is None:
                 raise HTTPException(404)
-            response = Response.file(target)
-            if digest is not None and digest == self._digest(target):
-                response.headers.set("Cache-Control", "public, max-age=31536000, immutable")
-            return response
+            immutable = digest is not None and digest == self._digest(target)
+            cache = "public, max-age=31536000, immutable" if immutable else "no-cache"
+            return Response.file(target, headers={"Cache-Control": cache}, request=request)
 
         key = f"korvex.static:{prefix}"  # all serve() share a qualname
         pattern = f"{prefix.rstrip('/')}/*path"
@@ -390,6 +410,71 @@ class App(_RouteDecorators):
         self._router.route(pattern, key)
         self._add_route(False, key, _Route(serve, name=name or "static", explicit=name is not None), None, pattern)
         self._statics.setdefault(name or "static", (prefix.rstrip("/"), root))
+
+    def mount(self, prefix: str, asgi_app: Callable, *, name: str | None = None) -> None:
+        """Serves another ASGI app (a Starlette app, a Korvex `App`...) under `prefix`.
+
+        The app sees paths without `prefix` (its `root_path` has it). A route of this
+        app that matches wins. This app's before hooks run first (they protect the mount);
+        its after hooks and exception handlers don't run for the mount. The mounted app's
+        lifespan runs with this app's startup and shutdown. The bare `prefix` redirects (308)
+        to `prefix/`. `name`: `url_for(name)` gives `prefix/`, `url_for(name, path="a/b")` gives
+        `prefix/a/b`. Raises ValueError for an invalid or already mounted `prefix`.
+        Guide: https://3d3n-pyc.github.io/korvex/routes/#mounting-another-app"""
+        prefix = _mount_prefix(prefix)
+        if prefix in self._mounts:
+            raise ValueError(f"{prefix!r} is already mounted")
+        if not callable(asgi_app):
+            raise TypeError("mount() takes an ASGI app: a callable (scope, receive, send)")
+        pattern = f"{prefix}/*path"
+        self._check_name(name, False, None, pattern)
+
+        def serve(request: Request, path: str) -> Response:
+            if not _in_mount(request.path, prefix):
+                raise HTTPException(404)
+            raise MountMatch(asgi_app, prefix)
+
+        def redirect(request: Request) -> Response:
+            if request.path != prefix:  # `prefix/` (the router ignores the slash) is the mount's root
+                return serve(request, "")
+            query = request._query_string.decode("latin-1")
+            suffix = f"?{quote(query, safe=_QUERY_SAFE)}" if query else ""
+            return Response.redirect(f"{request.root_path}{prefix}/{suffix}", status=308)
+
+        async def serve_ws(websocket: WebSocket, path: str) -> None:
+            raise MountMatch(asgi_app, prefix)  # never called: _websocket() hands it over
+
+        serve_ws.mounted = (asgi_app, prefix)  # type: ignore[attr-defined]
+        key, bare = f"korvex.mount:{prefix}", f"korvex.mount-redirect:{prefix}"
+        for method in _MOUNT_METHODS:
+            self._router.route(pattern, key, method=method)
+            self._router.route(prefix, bare, method=method)
+        self._ws_router.route(pattern, key)
+        self._routes[key], self._routes[bare] = _Route(serve), _Route(redirect)
+        self._ws_routes[key] = _Route(serve_ws, self._plan(serve_ws, pattern, websocket=True))
+        self._mounts[prefix] = name
+        if name is not None:
+            self._mount_names[name] = prefix
+            self._explicit_names[name] = (False, None, pattern)
+        self._mount_lifespan(asgi_app, prefix)
+
+    def _mount_lifespan(self, asgi_app: Callable, prefix: str) -> None:
+        """Runs the mounted app's lifespan with this app's startup and shutdown."""
+        key = f"_mount_lifespan:{prefix}"
+
+        async def startup() -> None:
+            lifespan = Lifespan(asgi_app)  # made in the loop: queues belong to it
+            await lifespan.startup()
+            setattr(self.local, key, lifespan)
+
+        async def shutdown() -> None:
+            lifespan = getattr(self.local, key, None)
+            if lifespan is not None:
+                delattr(self.local, key)
+                await lifespan.shutdown()
+
+        self._on_startup.append(startup)
+        self._on_shutdown.append(shutdown)
 
     def static_url(self, path: str, /, *, name: str | None = None) -> str:
         """The URL of a static file, with a hash of its content: `/static/app.3f2a1c9b.css`.
@@ -503,7 +588,15 @@ class App(_RouteDecorators):
         request = Request(scope, receive, {}, self)
         if request.root_path != self._root_path:
             self._root_path = request.root_path
-        response = await self._respond(request)
+        mount = None
+        response: Response = None  # type: ignore[assignment]
+        try:
+            response = await self._respond(request)
+        except MountMatch as matched:
+            mount = matched
+        if mount is not None:  # outside the except: errors of the sub-app don't show MountMatch
+            await self._call_mount(mount, request, scope, receive, send)
+            return
         head = scope["method"] == "HEAD"
         try:
             if isinstance(response, StreamingResponse):
@@ -517,6 +610,21 @@ class App(_RouteDecorators):
         finally:
             if request._tasks is not None:  # sent or not, the client never waits for them
                 await request._tasks._run()
+
+    def _mount_state(self, prefix: str) -> Optional[dict]:
+        """The lifespan state of the app mounted at `prefix`, in this event loop."""
+        lifespan = getattr(self.local, f"_mount_lifespan:{prefix}", None)
+        return lifespan.state if lifespan is not None else None
+
+    async def _call_mount(
+        self, mount: MountMatch, request: Request, scope: dict, receive: Callable, send: Callable
+    ) -> None:
+        """Calls the mounted app with its own scope; a body a hook read is replayed."""
+        state = self._mount_state(mount.prefix)
+        child = child_scope(request, mount.prefix, _raw_path(scope, request), scope.get("server"), state)
+        if request._body is not None:
+            receive = _replay(request._body, receive)
+        await mount.app(child, receive, send)
 
     @staticmethod
     async def _send_stream(
@@ -657,6 +765,16 @@ class App(_RouteDecorators):
         route = self._ws_routes.get(found[0]) if found is not None else None
         if found is None or route is None:
             await websocket.close()
+            return
+        mounted = getattr(route.func, "mounted", None)
+        if mounted is not None:
+            if not _in_mount(websocket.path, mounted[1]):
+                await websocket.close()
+                return
+            child = child_ws_scope(
+                websocket, mounted[1], _raw_path(scope, websocket), scope.get("server"), self._mount_state(mounted[1])
+            )
+            await mounted[0](child, receive, send)
             return
         path_params = found[1]
         if host_params:
@@ -826,6 +944,57 @@ class App(_RouteDecorators):
 
     def __repr__(self) -> str:
         return f"App({len(self._routes)} routes, {len(self._ws_routes)} WebSocket routes)"
+
+
+def _in_mount(path: str, prefix: str) -> bool:
+    """True if `path` (as the hooks see it) is `prefix` or below it."""
+    return path == prefix or path.startswith(prefix + "/")
+
+
+def _mount_prefix(prefix: str) -> str:
+    """A valid mount prefix without its trailing slash; ValueError otherwise."""
+    cleaned = prefix.rstrip("/") if isinstance(prefix, str) else ""
+    if not _MOUNT_PREFIX.fullmatch(cleaned) or any(p in (".", "..") for p in cleaned.split("/")):
+        raise ValueError(
+            f"invalid mount prefix {prefix!r}: it starts with '/', is not '/' itself, "
+            "and has no {}, *, ?, #, % or empty, '.' or '..' part"
+        )
+    return cleaned
+
+
+def _mount_url(name: str, prefix: str, params: dict[str, Any]) -> str:
+    """`url_for()` of a named mount: `prefix/` plus the optional `path`."""
+    extra = sorted(set(params) - {"path"})
+    if extra:
+        raise ValueError(f"url_for({name!r}): unexpected {', '.join(extra)}; a mount only takes path")
+    path = params.get("path", "")
+    if not isinstance(path, str):
+        raise TypeError(f"url_for({name!r}): path must be a str")
+    parts = path.split("/") if path else []
+    if any(part in ("", ".", "..") for part in parts):
+        raise ValueError(f"url_for({name!r}): path={path!r} has an empty, '.' or '..' part")
+    return prefix + "/" + "/".join(quote(part, safe="") for part in parts)
+
+
+def _raw_path(scope: dict, connection: Connection) -> bytes | None:
+    """The scope's `raw_path` without `root_path` (the form `child_scope` takes), if it has one."""
+    raw = scope.get("raw_path")
+    root = connection.root_path.encode()
+    return raw[len(root) :] if raw and root and raw.startswith(root) else raw
+
+
+def _replay(body: bytes, receive: Callable) -> Callable:
+    """A `receive` that gives `body` again (a hook read it), then the real one."""
+    replayed = False
+
+    async def replay() -> dict:
+        nonlocal replayed
+        if replayed:
+            return await receive()
+        replayed = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    return replay
 
 
 def _server_error() -> Response:

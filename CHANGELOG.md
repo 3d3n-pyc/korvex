@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.0.0rc4
+
+Mounting another ASGI app, and conditional static files.
+
+- **New: mounting another ASGI app.** `app.mount("/admin", admin_app,
+  name="admin")` serves any ASGI app (a Korvex `App`, Starlette, FastAPI,
+  Django) under a prefix. It sees `root_path` set to the prefix; `/admin`
+  redirects (308) to `/admin/`; a route of the parent wins; the mounted
+  app's lifespan and WebSockets work; `url_for("admin", path="users")`
+  links to it. The parent's before hooks run (`csrf`, `rate_limit` and
+  `sessions` protect the mount), but its after hooks and exception handlers
+  don't, so `cors`, `security_headers`, `compress` and the request ID header
+  don't apply to the mounted app. Guide:
+  <https://3d3n-pyc.github.io/korvex/routes/#mounting-another-app>.
+- **New: conditional files.** `app.static()` sends `ETag` and
+  `Last-Modified`, answers 304 for an unchanged file, and answers one
+  `Range` with a 206 (416 past the end), for resumable downloads and video
+  seeking. `Response.file(path, request=request)` does the same in a
+  handler. `compress()` leaves 206 and 304 alone and makes the `ETag` weak
+  when it compresses. Guide:
+  <https://3d3n-pyc.github.io/korvex/routes/#static-files>.
+- **Changed: non-hashed static files are sent with `Cache-Control:
+  no-cache`.** The browser revalidates each time, and an unchanged file
+  costs a 304. Hashed URLs (`static_url()`) stay `immutable`. Migration: for
+  long caching, link files with `static_url()`; or set your own
+  `Cache-Control` in an after hook.
+
 ## 1.0.0rc3
 
 Background tasks and Server-Sent Events.

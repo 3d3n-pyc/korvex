@@ -152,7 +152,10 @@ def compress(
     def compress_response(request: Request, response: Response) -> None:
         from korvex._response import StreamingResponse
 
-        if response.status in (204, 304) or response.status < 200 or "Content-Encoding" in response.headers:
+        if response.status == 304:
+            _vary_on_encoding(request, response)  # the 200 it stands for varies
+            return
+        if response.status in (204, 206) or response.status < 200 or "Content-Encoding" in response.headers:
             return
         if "no-transform" in (response.headers.get("cache-control") or "").lower():
             return
@@ -165,17 +168,27 @@ def compress(
         if not streamed and len(response.body) < minimum_size:
             return
         encoder = pick(request)
-        # The answer depends on Accept-Encoding even when it's not compressed.
-        if "accept-encoding" not in (", ".join(response.headers.get_all("vary"))).lower():
-            response.headers.add("Vary", "Accept-Encoding")
+        _vary_on_encoding(request, response, always=True)  # it depends on Accept-Encoding even when plain
         if encoder is None:
             return
         response.headers.set("Content-Encoding", encoder.name)
         response.headers.remove("Content-Length")  # the length changes
+        response.headers.remove("Accept-Ranges")  # a range would cut the plain bytes
+        tag = response.headers.get("etag")
+        if tag is not None and not tag.startswith("W/"):
+            response.headers.set("ETag", "W/" + tag)  # the bytes differ from the file's
         if isinstance(response, StreamingResponse):
             response.chunks = _compressed(StreamingResponse(response.chunks), encoder)
         else:
             response.body = encoder.whole(response.body)
+
+
+def _vary_on_encoding(request: Request, response: Response, always: bool = False) -> None:
+    """Adds `Vary: Accept-Encoding` unless it's there; for a 304, only when the request sent one."""
+    if not always and request.headers.get("accept-encoding") is None:
+        return
+    if "accept-encoding" not in (", ".join(response.headers.get_all("vary"))).lower():
+        response.headers.add("Vary", "Accept-Encoding")
 
 
 async def _compressed(source: AsyncIterable[bytes], encoder: _Encoder) -> AsyncIterator[bytes]:

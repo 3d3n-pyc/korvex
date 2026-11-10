@@ -108,7 +108,7 @@ target-version = "py39"
 exclude = ["*.md"]  # code in the docs keeps its aligned comments
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "TID251"]
 ignore = [
     "E501",   # the formatter wraps code; a long string or comment can stay
     "UP007",  # X | Y: Korvex reads handlers' annotations at runtime, and on
@@ -122,6 +122,11 @@ extend-immutable-calls = [
     "korvex._params.Cookie", "korvex._params.Depends", "korvex._params.Form", "korvex._params.Header", "korvex._params.Query",
     "fastapi.Depends",  # in the benchmarks
 ]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# The release jobs run the tests against the installed wheel, where tests/
+# isn't a package: import helpers as `from support import ...`.
+"tests".msg = "import test helpers by module name (from support import ...)"
 
 [tool.ruff.lint.isort]
 known-first-party = ["korvex", "taskboard"]

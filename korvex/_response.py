@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import mimetypes
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping
 from http.cookies import SimpleCookie
-from typing import Any, Literal, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Literal, Optional, Union, cast
 from urllib.parse import quote
+
+from korvex import _conditional
+
+if TYPE_CHECKING:
+    from korvex._requests import Request
 
 # `Union` rather than `|`: this line runs at import time, and `|` between
 # types needs Python 3.10+.
@@ -209,16 +215,22 @@ class Response:
         content_type: Optional[str] = None,
         status: int = 200,
         headers: HeaderItems = (),
+        request: Optional[Request] = None,
     ) -> StreamingResponse:
-        """Sends a file in chunks, type guessed from its name; `filename` makes it a download."""
-        size = os.stat(path).st_size  # raises FileNotFoundError now, not mid-response
-        response = StreamingResponse(_read_file(path), status=status, headers=headers)
+        """Sends a file in chunks, type guessed from its name; `filename` makes it a download.
+
+        `request`: pass it to answer conditional and range requests: 304, 206.
+        Guide: https://3d3n-pyc.github.io/korvex/routes/#static-files"""
+        info = os.stat(path)  # raises FileNotFoundError now, not mid-response
+        response = StreamingResponse(_read_file(path, expected=info.st_size), status=status, headers=headers)
         guessed = content_type or mimetypes.guess_type(str(path))[0] or "application/octet-stream"
         if "Content-Type" not in response.headers:
             response.headers.set("Content-Type", guessed)
-        response.headers.set("Content-Length", str(size))
+        response.headers.set("Content-Length", str(info.st_size))
         if filename is not None:
             response.headers.set("Content-Disposition", _attachment(filename))
+        if request is not None:
+            _conditional_file(response, path, request, info)
         return response
 
     @classmethod
@@ -279,11 +291,62 @@ class EventStream(StreamingResponse):
                 await result
 
 
-async def _read_file(path: str | os.PathLike[str]) -> AsyncIterator[bytes]:
-    """Reads a file in chunks, each in a thread so the event loop keeps going."""
+async def _read_file(
+    path: str | os.PathLike[str], start: int = 0, length: Optional[int] = None, expected: Optional[int] = None
+) -> AsyncIterator[bytes]:
+    """Reads a file in chunks, each in a thread so the event loop keeps going.
+    With `length`, reads only that many bytes from `start`. With `expected`,
+    logs a warning if the file ends before that many bytes were sent."""
+    sent = 0
     with open(path, "rb") as file:
-        while chunk := await asyncio.to_thread(file.read, FILE_CHUNK_SIZE):
+        if start:
+            file.seek(start)
+        left = length
+        while left is None or left > 0:
+            chunk = await asyncio.to_thread(file.read, FILE_CHUNK_SIZE if left is None else min(FILE_CHUNK_SIZE, left))
+            if not chunk:
+                break
+            sent += len(chunk)
+            if left is not None:
+                left -= len(chunk)
             yield chunk
+    if expected is not None and sent < expected:
+        logging.getLogger("korvex").warning(
+            "%s was truncated while sent: expected %d bytes, sent %d", path, expected, sent
+        )
+
+
+def _conditional_file(
+    response: StreamingResponse, path: str | os.PathLike[str], request: Request, info: os.stat_result
+) -> None:
+    """Turns a file response into a 304, 206 or 416 when the request asks for it."""
+    tag, modified = _conditional.etag(info.st_mtime_ns, info.st_size), _conditional.last_modified(info.st_mtime)
+    response.headers.set("ETag", tag)
+    response.headers.set("Last-Modified", modified)
+    response.headers.set("Accept-Ranges", "bytes")
+    if response.status != 200:
+        return
+    if _conditional.not_modified(request.method, request.headers, tag, info.st_mtime):
+        response.status = 304
+        response.chunks = ()
+        for name in ("Content-Type", "Content-Length", "Content-Disposition", "Accept-Ranges"):
+            response.headers.remove(name)
+        return
+    span = _conditional.byte_range(request.method, request.headers, tag, info.st_mtime, info.st_size)
+    if span is None:
+        return
+    response.chunks = ()
+    if span == _conditional.UNSATISFIABLE:
+        response.status = 416
+        response.headers.remove("Content-Type")
+        response.headers.set("Content-Length", "0")
+        response.headers.set("Content-Range", f"bytes */{info.st_size}")
+        return
+    first, last = cast("tuple[int, int]", span)
+    response.status = 206
+    response.chunks = _read_file(path, first, last - first + 1, last - first + 1)
+    response.headers.set("Content-Length", str(last - first + 1))
+    response.headers.set("Content-Range", f"bytes {first}-{last}/{info.st_size}")
 
 
 def _attachment(filename: str) -> str:

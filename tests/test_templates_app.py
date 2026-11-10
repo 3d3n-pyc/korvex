@@ -98,7 +98,7 @@ def test_static_url_is_hashed_and_served_immutable(tmp_path):
         hashed = client.get(url)
         assert (hashed.status, hashed.text) == (200, "body{}")
         assert hashed.headers["Cache-Control"] == IMMUTABLE
-        assert "Cache-Control" not in client.get("/static/app.css").headers
+        assert client.get("/static/app.css").headers["Cache-Control"] == "no-cache"
 
 
 def test_stale_hash_is_served_without_immutable(tmp_path):
@@ -106,7 +106,7 @@ def test_stale_hash_is_served_without_immutable(tmp_path):
     with TestClient(app) as client:
         response = client.get("/static/app.00000000.css")
     assert response.status == 200
-    assert "Cache-Control" not in response.headers
+    assert response.headers["Cache-Control"] == "no-cache"
 
 
 def test_edited_file_gets_a_new_url(tmp_path):

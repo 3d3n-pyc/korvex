@@ -124,6 +124,70 @@ app.url_for("static", path="css/app.css")
 A path that leaves the directory gets a 404. With several directories,
 give each a `name=`.
 
+Files are served as conditional requests:
+
+- Every file gets an `ETag` and a `Last-Modified`. A request that sends
+  `If-None-Match` or `If-Modified-Since` for an unchanged file gets a 304,
+  with no body.
+- `Range: bytes=...` (one range) gets a 206 with that part of the file,
+  for resumable downloads and for seeking in a video. A range past the end
+  of the file gets a 416. `If-Range` is honored; several ranges at once
+  get the whole file.
+- A URL without a hash is sent with `Cache-Control: no-cache`: the browser
+  asks each time, and an unchanged file costs a cheap 304. A hashed URL
+  (`app.static_url("css/app.css")`) stays `public, max-age=31536000,
+  immutable`.
+
+In your own handler, `Response.file(path, request=request)` does the same:
+see [Streams and files](requests-and-responses.md#streams-and-files).
+
+## Mounting another app
+
+```python
+from korvex import App
+
+admin_app = App()  # or a Starlette or FastAPI app, or Django's ASGI app
+app = App()
+app.mount("/admin", admin_app, name="admin")
+
+app.url_for("admin")  # "/admin/"
+app.url_for("admin", path="users")  # "/admin/users"
+request.url_for("admin", path="users")  # "https://example.com/admin/users"
+```
+
+`mount(prefix, asgi_app)` hands every request under `prefix` to any ASGI
+app: a Korvex `App`, a Starlette or FastAPI app, Django's ASGI app, or a
+plain `async def (scope, receive, send)`.
+
+- The app gets the request with `root_path` set to the prefix (plus the
+  server's own `root_path`, if any). `path` still holds the whole path:
+  ASGI says an app strips its `root_path` itself, as a Korvex `App` does,
+  so `/admin/users` is `/users` for `admin_app`.
+- `/admin` answers 308 to `/admin/`, keeping the query string. The prefix
+  starts with `/`, is not `/` itself and holds no `{}` or `*`.
+- A route of the parent app wins: with `@app.get("/admin/health")`, that
+  route answers and the rest of `/admin/...` goes to the mount.
+- The mounted app's lifespan runs with the parent's startup and shutdown,
+  and the state it sets reaches its requests. If its startup fails, the
+  parent's does.
+- On the built-in server, a mounted app that waits for the client to leave
+  (`http.disconnect`) learns it when its response ends; for long polling,
+  stream the response.
+- WebSockets under the prefix go to the mounted app too.
+- The mount is not in the parent's [OpenAPI](openapi.md) document.
+- `name=` is for `url_for()`: with `path=`, a value that is empty, `.` or
+  `..` in a part raises an error. Other parameters are refused.
+
+!!! warning
+    The parent's before hooks run before the mounted app, so
+    `csrf()`, `rate_limit()` and `sessions()` protect it
+    (see [Middleware](middleware.md)).
+    Its after hooks and exception handlers do not run: `cors()`,
+    `security_headers()`, `compress()` and the request ID header don't
+    apply to the mounted app. Configure them in the mounted app. Only the
+    built-in server's own maximum body size applies, not a route's
+    `max_body=`.
+
 ## HEAD, 404 and 405
 
 - A `HEAD` request is answered by the `GET` route, without the body.
