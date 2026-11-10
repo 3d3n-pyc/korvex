@@ -1,5 +1,7 @@
 # Routes
 
+Use this when you declare which URLs your app answers, and with which handler.
+
 ```python
 from korvex import App
 
@@ -17,11 +19,20 @@ def create_user():
 ```
 
 `@app.get`, `post`, `put`, `patch`, `delete`, `head` and `options` declare a
-route for one method. A function can be sync or async.
+[route](glossary.md#route) for one method. A function can be sync or async.
+
+!!! note
+    A plain `def` [handler](glossary.md#handler) runs on the
+    [event loop](glossary.md#event-loop), so a blocking call in it (a
+    synchronous database driver, `requests`, `time.sleep`) holds up every
+    other request of the [worker](glossary.md#worker). Prefer `async def`
+    with async libraries, or `await asyncio.to_thread(...)` for the
+    blocking part.
 
 ## Path parameters
 
-A `{name}` segment captures part of the path, and the handler gets it by
+A `{name}` segment is a [path parameter](glossary.md#path-parameter): it
+captures part of the path, and the handler gets it by
 name:
 
 | Segment       | Matches                                | Gives      |
@@ -43,6 +54,9 @@ An annotation converts a value further: `def on_day(day: date)` for
 ### Your own constraints
 
 ```python
+from korvex import App
+
+app = App()
 app.constraint("slug", r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
 
@@ -60,6 +74,14 @@ A group shares a prefix, and [dependencies](dependencies.md), between
 routes:
 
 ```python
+from korvex import App, Depends
+
+app = App()
+
+
+def signed_in(): ...  # your check; raise HTTPException(401) to refuse
+
+
 api = app.group("/api", dependencies=[Depends(signed_in)])
 
 
@@ -78,6 +100,9 @@ A group also takes `tags=`, `deprecated=`, `responses=` and
 A host group answers only for one host name:
 
 ```python
+from korvex import App
+
+app = App()
 api = app.host("api.example.com")
 tenants = app.host("{tenant}.example.com")
 
@@ -95,12 +120,21 @@ def home(tenant: str): ...
 ## Links to a route
 
 ```python
+from korvex import App, Request, Response
+
+app = App()
+
+
 @app.get("/users/{id:int}")
 def get_user(id: int): ...
 
 
+@app.get("/profile")
+def profile(request: Request):
+    return Response.text(request.url_for("get_user", id=42))  # https://example.com/users/42
+
+
 app.url_for("get_user", id=42)  # "/users/42"
-request.url_for("get_user", id=42)  # "https://example.com/users/42"
 ```
 
 - A route is known by its function's name, or `name=` on its decorator:
@@ -117,6 +151,9 @@ request.url_for("get_user", id=42)  # "https://example.com/users/42"
 ## Static files
 
 ```python
+from korvex import App
+
+app = App()
 app.static("/static", "public")  # /static/css/app.css: public/css/app.css
 app.url_for("static", path="css/app.css")
 ```
@@ -126,10 +163,10 @@ give each a `name=`.
 
 Files are served as conditional requests:
 
-- Every file gets an `ETag` and a `Last-Modified`. A request that sends
+- Every file gets an [`ETag`](glossary.md#etag) and a `Last-Modified`. A request that sends
   `If-None-Match` or `If-Modified-Since` for an unchanged file gets a 304,
   with no body.
-- `Range: bytes=...` (one range) gets a 206 with that part of the file,
+- [`Range: bytes=...`](glossary.md#range-request) (one range) gets a 206 with that part of the file,
   for resumable downloads and for seeking in a video. A range past the end
   of the file gets a 416. `If-Range` is honored; several ranges at once
   get the whole file.
@@ -144,7 +181,7 @@ see [Streams and files](requests-and-responses.md#streams-and-files).
 ## Mounting another app
 
 ```python
-from korvex import App
+from korvex import App, Request, Response
 
 admin_app = App()  # or a Starlette or FastAPI app, or Django's ASGI app
 app = App()
@@ -152,14 +189,18 @@ app.mount("/admin", admin_app, name="admin")
 
 app.url_for("admin")  # "/admin/"
 app.url_for("admin", path="users")  # "/admin/users"
-request.url_for("admin", path="users")  # "https://example.com/admin/users"
+
+
+@app.get("/link")
+def link(request: Request):
+    return Response.text(request.url_for("admin", path="users"))  # https://example.com/admin/users
 ```
 
-`mount(prefix, asgi_app)` hands every request under `prefix` to any ASGI
-app: a Korvex `App`, a Starlette or FastAPI app, Django's ASGI app, or a
+`mount(prefix, asgi_app)` hands every request under `prefix` to any
+[ASGI](glossary.md#asgi) app: a Korvex `App`, a Starlette or FastAPI app, Django's ASGI app, or a
 plain `async def (scope, receive, send)`.
 
-- The app gets the request with `root_path` set to the prefix (plus the
+- The app gets the request with [`root_path`](glossary.md#root_path) set to the prefix (plus the
   server's own `root_path`, if any). `path` still holds the whole path:
   ASGI says an app strips its `root_path` itself, as a Korvex `App` does,
   so `/admin/users` is `/users` for `admin_app`.
@@ -167,22 +208,23 @@ plain `async def (scope, receive, send)`.
   starts with `/`, is not `/` itself and holds no `{}` or `*`.
 - A route of the parent app wins: with `@app.get("/admin/health")`, that
   route answers and the rest of `/admin/...` goes to the mount.
-- The mounted app's lifespan runs with the parent's startup and shutdown,
+- The mounted app's [lifespan](glossary.md#lifespan) runs with the parent's startup and shutdown,
   and the state it sets reaches its requests. If its startup fails, the
   parent's does.
 - On the built-in server, a mounted app that waits for the client to leave
   (`http.disconnect`) learns it when its response ends; for long polling,
   stream the response.
-- WebSockets under the prefix go to the mounted app too.
+- [WebSockets](glossary.md#websocket) under the prefix go to the mounted app too.
 - The mount is not in the parent's [OpenAPI](openapi.md) document.
 - `name=` is for `url_for()`: with `path=`, a value that is empty, `.` or
   `..` in a part raises an error. Other parameters are refused.
 
 !!! warning
-    The parent's before hooks run before the mounted app, so
-    `csrf()`, `rate_limit()` and `sessions()` protect it
+    The parent's before [hooks](glossary.md#hook) run before the mounted app, so
+    [`csrf()`](glossary.md#csrf), `rate_limit()` and
+    [`sessions()`](glossary.md#session) protect it
     (see [Middleware](middleware.md)).
-    Its after hooks and exception handlers do not run: `cors()`,
+    Its after hooks and exception handlers do not run: [`cors()`](glossary.md#cors),
     `security_headers()`, `compress()` and the request ID header don't
     apply to the mounted app. Configure them in the mounted app. Only the
     built-in server's own maximum body size applies, not a route's
@@ -204,3 +246,5 @@ Every decorator also takes:
   see [OpenAPI](openapi.md).
 - `max_body=`: the largest body the [built-in server](server.md) accepts
   for this route.
+
+Next: [Validation](validation.md).

@@ -1,27 +1,31 @@
 # Ready-made middleware
 
-`korvex.middleware` has ready-made hooks. Each is a function that
-registers one on the app:
+Use this when you want common protections (CORS, rate limiting, security
+headers...) without writing them. `korvex.middleware` has ready-made
+[middleware](glossary.md#middleware): each is a function that registers a
+[hook](glossary.md#hook) on the app:
 
 ```python
+from korvex import App
 from korvex.middleware import compress, cors, csrf, rate_limit, request_id, security_headers, sessions
 
+app = App()
 compress(app)  # first: it compresses what the others produced
 cors(app, allow_origins=["https://example.com"])
 request_id(app)
 rate_limit(app, requests=100, per=60)
 security_headers(app)
 csrf(app)  # refuses cross-site form posts
-sessions(app, secret_key=...)  # signed cookie sessions
+sessions(app, secret_key="x" * 32)  # signed cookie sessions; use a real secret key
 ```
 
-Behind a reverse proxy, let the proxy compress and add headers.
+Behind a [reverse proxy](glossary.md#reverse-proxy), let the proxy compress and add headers.
 Sessions, flash messages and CSRF protection are in the
 [Sessions and CSRF guide](sessions.md).
 
 ## CORS: `cors(app, allow_origins=...)`
 
-Lets browsers call the app from pages on other sites (origins).
+Lets browsers call the app from pages on other sites (origins): [CORS](glossary.md#cors).
 
 | Option | Default | What it does |
 |---|---|---|
@@ -58,6 +62,7 @@ from korvex.middleware import RequestIdFilter
 handler = logging.StreamHandler()
 handler.addFilter(RequestIdFilter())
 handler.setFormatter(logging.Formatter("%(request_id)s %(message)s"))
+logging.getLogger("korvex").addHandler(handler)
 ```
 
 ## Rate limiting: `rate_limit(app, requests=100, per=60)`
@@ -102,8 +107,11 @@ from korvex.middleware import Decision
 
 class MyStore:
     async def hit(self, key, requests: int, per: float) -> Decision:
-        ...
+        # your code: count the hit, in Redis, a database...
         return Decision(allowed=True, remaining=99, retry_after=0, reset=0.6)
+
+
+rate_limit(app, requests=100, per=60, store=MyStore())  # app: the one above
 ```
 
 `Decision` has `allowed`, `remaining` (requests left), `retry_after`
@@ -149,3 +157,5 @@ that sets one itself keeps its own.
 Each header option takes `None` to leave the header out.
 
 All the details are in the [reference](reference/middleware.md).
+
+Next: [Testing](testing.md).

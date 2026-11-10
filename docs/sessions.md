@@ -1,23 +1,36 @@
 # Sessions and CSRF
 
-`sessions(app, ...)` keeps a small dict per browser in a signed cookie.
-`csrf(app)` refuses cross-site requests that change things. No store, no
-extra package, no tokens in your forms.
+Use this when visitors sign in, or you need to remember something between
+their requests. `sessions(app, ...)` keeps a small dict per browser in a
+signed cookie ([session](glossary.md#session)). `csrf(app)` refuses cross-site
+requests that change things ([CSRF](glossary.md#csrf)). No store, no extra
+package, no tokens in your forms.
 
 ```python
 import os
+from typing import Optional
 
 from korvex import App, Depends, Form, HTTPException, Response
 from korvex.middleware import csrf, current_session, flash, sessions
 
 app = App()
-sessions(app, secret_key=os.environ["SECRET_KEY"])
+sessions(app, secret_key=os.environ["SECRET_KEY"])  # see below to make one
 csrf(app)
+
+
+class User:  # your code
+    def __init__(self, id: int, name: str):
+        self.id, self.name = id, name
+
+
+def check_password(username: str, password: str) -> Optional[User]:
+    # your code: returns the user, or None
+    return User(1, username) if password == "pw" else None
 
 
 @app.post("/login")
 def login(username: str = Form(), password: str = Form()):
-    user = check_password(username, password)  # yours: returns the user or None
+    user = check_password(username, password)
     if user is None:
         flash("Wrong name or password", "error")
         return Response.redirect("/login", status=303)
@@ -37,7 +50,7 @@ def current_user() -> int:
 
 @app.get("/account")
 def account(user_id: int = Depends(current_user)):
-    return {"user_id": user_id}
+    return Response.json({"user_id": user_id})
 
 
 @app.post("/logout")
@@ -52,13 +65,13 @@ Make a key once and keep it out of the code:
 python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-A key must be at least 32 bytes, or `sessions()` raises `ValueError`. To
+Put the output in `SECRET_KEY`. A key must be at least 32 bytes, or `sessions()` raises `ValueError`. To
 rotate, pass a list with the new key first: it signs, and every key in the
 list is still accepted when checking. Drop the old key once its sessions
 have expired.
 
 ```python
-sessions(app, secret_key=[os.environ["NEW_KEY"], os.environ["OLD_KEY"]])
+sessions(app, secret_key=[os.environ["NEW_KEY"], os.environ["OLD_KEY"]])  # in place of the one above
 ```
 
 ## What a session is
@@ -79,6 +92,7 @@ sessions(app, secret_key=[os.environ["NEW_KEY"], os.environ["OLD_KEY"]])
 - Clearing a session that came with a cookie deletes the cookie.
 
 ```python
+session = current_session()
 cart = session.setdefault("cart", [])
 cart.append(3)
 session.modified = True
@@ -202,7 +216,7 @@ client. It also sends `Secure` cookies back to `http://testserver` and to
 ```python
 from korvex.testing import TestClient
 
-client = TestClient(app)
+client = TestClient(app)  # the app above
 client.post("/login", form={"username": "ada", "password": "pw"})
 assert client.get("/account").status == 200
 ```
@@ -213,3 +227,5 @@ To test CSRF, send the header a browser would send from another site:
 r = client.post("/logout", headers={"Sec-Fetch-Site": "cross-site"})
 assert r.status == 403
 ```
+
+Next: [Validation](validation.md).

@@ -1,15 +1,22 @@
 # Templates
 
-Korvex renders HTML pages with its own template engine. No extra package.
+Use this when your app answers with HTML pages. Korvex renders them with
+its own template engine. No extra package.
 
 ```python
+from korvex import App
+
 app = App()
-app.static("/static", "static")
+app.static("/static", "static")  # the folder static/ holds css/app.css
 views = app.templates("templates")  # a folder of .html files
 
 
+def load_post(id: int) -> dict:  # your code: read the post from your database
+    return {"id": id, "title": "Hello", "draft": False, "tags": ["a", "b", "c"]}
+
+
 @app.get("/posts/{id}")
-def show(request, id: int):
+def show(id: int):
     post = load_post(id)
     return views.response("post.html", {"post": post})
 ```
@@ -46,6 +53,7 @@ def show(request, id: int):
 {% endblock %}
 ```
 
+`templates/footer.html` is any HTML, like `<footer>Acme</footer>`.
 `views.response(name, context)` renders the template with a dict of variables
 and returns an HTML response. It takes `status=` and `headers=` too. Templates are compiled the
 first time they are used, then cached.
@@ -155,19 +163,23 @@ its content:
 - The plain URL (`/static/css/app.css`) still works, without that header.
 - With several `app.static()` mounts, pick one with
   `static_url('logo.svg', name="assets")`.
-- In a handler, call `app.static_url("css/app.css")`. It raises
+- In a [handler](glossary.md#handler), call `app.static_url("css/app.css")`. It raises
   `FileNotFoundError` for a missing file and `LookupError` for an unknown mount.
 
 ## Testing
 
 ```python
+from korvex.testing import TestClient
+
 with TestClient(app) as client:
     assert "<h1>HELLO</h1>" in client.get("/posts/1").text
 
-html = views.render("post.html", {"post": post})  # the page as a str
+html = views.render("post.html", {"post": load_post(1)})  # the page as a str
 ```
 
 ## Speed
 
 4 to 6 times faster than Jinja2 in `benches/bench_templates.py`. See
 [Performance](performance.md).
+
+Next: [Sessions and CSRF](sessions.md).

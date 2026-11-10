@@ -1,14 +1,22 @@
 # Errors and hooks
 
+Use this when you need to answer an error your way, run code on every
+request, or open and close something (a database pool) with the app.
+
 ## Errors
 
 ```python
-from korvex import HTTPException
+from korvex import App, HTTPException
 
-raise HTTPException(404, "no such task")  # {"detail": "no such task"}, a 404
+app = App()
+
+
+@app.get("/tasks/{id}")
+def task(id: int):
+    raise HTTPException(404, "no such task")  # {"detail": "no such task"}, a 404
 ```
 
-- Raise it in a handler, a dependency or a before hook. Without a
+- Raise it in a [handler](glossary.md#handler), a [dependency](glossary.md#dependency) or a before [hook](glossary.md#hook). Without a
   message, the standard one is used (`"Not Found"`). `headers=` adds
   headers: `{"WWW-Authenticate": "Bearer"}`.
 - Every error Korvex answers is JSON with a `detail`: these, routing's 404
@@ -19,12 +27,19 @@ raise HTTPException(404, "no such task")  # {"detail": "no such task"}, a 404
 `Abort` sends an exact response instead, past the exception handlers:
 
 ```python
-from korvex import Abort, Response
+from typing import Optional
+
+from korvex import Abort, Cookie, Depends, Response
 
 
 def signed_in(session: Optional[str] = Cookie(None)) -> None:
     if session is None:
         raise Abort(Response.redirect("/login"))
+
+
+@app.get("/private", dependencies=[Depends(signed_in)])
+def private():
+    return Response.text("secret")
 ```
 
 After hooks still see that response. In a WebSocket's dependency, `Abort`
@@ -41,11 +56,19 @@ def not_found(request, exc):
 @app.exception_handler(ValueError)  # an exception class, and its subclasses
 def bad_value(request, exc: ValueError):
     return Response.json({"detail": str(exc)}, status=400)
+
+
+@app.get("/boom")
+def boom():
+    raise ValueError("bad value")  # answered by bad_value: a 400
 ```
 
 ## Hooks around every request
 
 ```python
+from korvex import Response
+
+
 @app.before_request
 def block_bots(connection):
     if "bot" in (connection.headers.get("user-agent") or ""):
@@ -70,6 +93,11 @@ def add_header(request, response):
 ## Startup and shutdown
 
 ```python
+import asyncpg  # pip install asyncpg
+
+DATABASE_URL = "postgresql://localhost/mydb"  # your code
+
+
 @app.on_startup
 async def connect():
     app.local.pool = await asyncpg.create_pool(DATABASE_URL)
@@ -83,12 +111,14 @@ async def disconnect():
 - Startup hooks run before the first request; if one raises, the server
   doesn't start. Shutdown hooks run when it stops, last declared first.
 - `app.local` keeps attributes per event loop: with the built-in server's
-  threads, each loop gets its own pool, as asyncio needs. Use it instead
+  threads, each [event loop](glossary.md#event-loop) gets its own pool, as asyncio needs. Use it instead
   of module globals for what a startup hook opens, and read it from
   handlers and dependencies:
 
 ```python
-async def db():  # a dependency
+async def db():  # a dependency, used with Depends(db)
     async with app.local.pool.acquire() as connection:
         yield connection
 ```
+
+Next: [WebSockets](websockets.md).

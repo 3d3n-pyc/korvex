@@ -1,20 +1,37 @@
 # Requests and responses
 
+Use this when a [handler](glossary.md#handler) needs the request's details, or must build a specific response.
+
 ## What a handler gets
 
 A handler's parameters say what it needs. Most handlers never touch the
 request itself:
 
 ```python
+import msgspec
+
+from korvex import App
+
+app = App()
+
+
+class Task(msgspec.Struct):
+    id: int
+    title: str
+
+
 @app.get("/tasks/{id:int}")
-def get_task(id: int, verbose: bool = False) -> Task: ...  # path, then query string
+def get_task(id: int, verbose: bool = False) -> Task:  # path, then query string
+    return Task(id=id, title="write docs")
 ```
 
 When it does need it, it asks for it: a parameter named `request`, or
 annotated `Request`.
 
 ```python
-from korvex import Request
+from korvex import App, Request, Response
+
+app = App()
 
 
 @app.post("/echo")
@@ -33,6 +50,7 @@ async def echo(request: Request):
 | `query` | the query string: `query.get("page")`, `query.get_all("tag")` |
 | `cookies` | a dict |
 | `path_params` | a dict |
+| `root_path` | the prefix the app is [mounted](routes.md#mounting-another-app) or served under, `""` if none |
 | `client` | `(host, port)` of the client (the real one behind a trusted proxy), or `None` |
 | `app` | the `App` |
 
@@ -45,7 +63,7 @@ And three methods to read the body:
   `filename`, `content_type` and `data`. A body that isn't a form gets a
   415; text that can't be decoded, a 400.
 
-A `WebSocket` has the same attributes but no body: both are a
+A [`WebSocket`](glossary.md#websocket) has the same attributes but no body: both are a
 `Connection`.
 
 ## Responses
@@ -53,12 +71,18 @@ A `WebSocket` has the same attributes but no body: both are a
 ```python
 from korvex import Response
 
+
+def chunks():  # your generator
+    yield "part one, "
+    yield b"part two"
+
+
 Response("raw bytes or text", status=200, headers={"X-Total": "3"})
 Response.text("hello")
 Response.json({"id": 1})
 Response.redirect("/login", status=303)
 Response.stream(chunks)  # a generator, sync or async, of bytes or str
-Response.file("report.pdf", filename="report.pdf")  # read in chunks; `filename` makes it a download
+Response.file("report.pdf", filename="report.pdf")  # your file; read in chunks; `filename` makes it a download
 ```
 
 A handler can also return a model (`-> Task`, sent as JSON) or `None`: see
@@ -82,6 +106,9 @@ in any case, and a name can repeat (several `Set-Cookie`).
 ### Cookies
 
 ```python
+from korvex import Response
+
+token = "abc123"  # your value
 response = Response.redirect("/")
 response.set_cookie("session", token, max_age=3600, httponly=True, secure=True)
 response.delete_cookie("theme")
@@ -98,22 +125,36 @@ file in chunks, without blocking the server, and sets its type and
 length.
 
 ```python
+from korvex import App, Request, Response
+
+app = App()
+
+
 @app.get("/video")
 def video(request: Request):
     return Response.file("movie.mp4", request=request)
 ```
 
-With `request=`, the file gets an `ETag`, a `Last-Modified` and
+With `request=`, the file gets an [`ETag`](glossary.md#etag), a `Last-Modified` and
 `Accept-Ranges`, and the response follows the request: 304 if the browser
-has the current file, 206 for a `Range` (resumable downloads, video
+has the current file, 206 for a [`Range`](glossary.md#range-request) (resumable downloads, video
 seeking), 416 for a range past the end. Without it, the whole file is
-sent. A `compress()` hook leaves 206 and 304 alone and makes the `ETag`
+sent. A `compress()` [hook](glossary.md#hook) leaves 206 and 304 alone and makes the `ETag`
 weak when it compresses a file. [`app.static()`](routes.md#static-files)
 works this way.
 
 ### Server-Sent Events
 
+[Server-Sent Events](glossary.md#server-sent-events) push a stream of events to a browser.
+
 ```python
+import asyncio
+
+from korvex import App, Header, Response, ServerSentEvent
+
+app = App()
+
+
 @app.get("/feed")
 async def feed(last_event_id: int = Header(0)):
     async def events():
@@ -146,16 +187,37 @@ sent. Under ASGI servers it is noticed right away.
 
 ## Background tasks
 
-Ask for `BackgroundTasks` to run work after the response is sent:
+Ask for `BackgroundTasks` to run [background tasks](glossary.md#background-task):
+work that goes on after the response is sent.
 
 ```python
-from korvex import BackgroundTasks
+import msgspec
+
+from korvex import App, BackgroundTasks
+
+app = App()
+
+
+class NewUser(msgspec.Struct):
+    email: str
+    name: str
+
+
+class User(msgspec.Struct):
+    email: str
+    name: str
+
+
+def create_user(body: NewUser) -> User: ...  # your code
+
+
+def send_welcome_email(email: str, name: str): ...  # your code, blocking smtplib
 
 
 @app.post("/signup", status=201)
 def signup(body: NewUser, tasks: BackgroundTasks) -> User:
     user = create_user(body)
-    tasks.add(send_welcome_email, user.email, name=user.name)  # blocking smtplib
+    tasks.add(send_welcome_email, user.email, name=user.name)
     return user
 ```
 
@@ -179,3 +241,5 @@ teardown; also if the client left.
 
 Tasks run in the worker's process: for work that must survive a restart or
 needs retries, use a real queue.
+
+Next: [Dependencies](dependencies.md).

@@ -2,8 +2,37 @@
 
 `korvex.testing` runs the app in your tests, without a server:
 
+Use this when you want to check your app with automated tests (pytest, for
+example). Here is a tiny app and its test:
+
 ```python
+from korvex import App, Form, HTTPException, Response, WebSocket
+from korvex.middleware import current_session, sessions
 from korvex.testing import TestClient
+
+app = App()
+sessions(app, secret_key="x" * 32)  # a throwaway key, for the example
+
+
+@app.post("/login")
+def login(password: str = Form()):
+    if password != "s3cret":
+        raise HTTPException(401, "wrong password")
+    current_session()["user"] = "ada"
+    return Response.redirect("/", status=303)
+
+
+@app.get("/api/tasks")
+def tasks(done: bool = False):
+    if "user" not in current_session():
+        raise HTTPException(401, "log in first")
+    return Response.json([])
+
+
+@app.websocket("/live")
+async def live(ws: WebSocket):
+    await ws.accept()
+    await ws.send_json({"event": "presence"})
 
 
 def test_tasks():
@@ -14,6 +43,30 @@ def test_tasks():
 
         with client.websocket("/live") as ws:
             assert ws.receive_json()["event"] == "presence"
+```
+
+## With pytest
+
+Put the client in a fixture, in `conftest.py`. The `with` block runs the
+app's startup and shutdown hooks around each test:
+
+```python
+import pytest
+
+from korvex.testing import TestClient
+
+from myapp import app  # your code: where your App lives
+
+
+@pytest.fixture
+def client():
+    with TestClient(app) as client:
+        yield client
+```
+
+```python
+def test_tasks_need_login(client):
+    assert client.get("/api/tasks").status == 401
 ```
 
 ## Requests
@@ -44,6 +97,7 @@ def test_tasks():
 ## Streams and WebSockets
 
 ```python
+# `client` is a TestClient, and /events an endpoint of yours
 with client.stream("GET", "/events") as response:
     first = next(response.iter_text())  # leaving the block stops the stream
 ```
@@ -52,6 +106,7 @@ To read a Server-Sent Events stream, `iter_events()` (`aiter_events()` on
 `AsyncTestClient`) yields `ServerSentEvent`s:
 
 ```python
+# /feed is an endpoint of yours that sends events
 with client.stream("GET", "/feed") as response:
     event = next(response.iter_events())  # event.event, event.data, event.id
 ```
@@ -65,6 +120,26 @@ app accepted with.
 ## Replacing a dependency
 
 ```python
+from korvex import App, Depends, Response
+from korvex.testing import TestClient
+
+app = App()
+
+
+class User:  # your code
+    def __init__(self, id: int, name: str):
+        self.id, self.name = id, name
+
+
+def current_user() -> User:  # your code: reads the session, a token...
+    raise NotImplementedError
+
+
+@app.get("/me")
+def me(user: User = Depends(current_user)):
+    return Response.json({"name": user.name})
+
+
 app.dependency_overrides[current_user] = lambda: User(id=1, name="test")
 ```
 
@@ -74,8 +149,15 @@ app.dependency_overrides[current_user] = lambda: User(id=1, name="test")
 or anyio):
 
 ```python
-async with AsyncTestClient(app) as client:
-    response = await client.get("/")
-    async with client.websocket("/live") as ws:
-        await ws.send_text("hi")
+from korvex.testing import AsyncTestClient
+
+
+async def test_live():  # app: the one above
+    async with AsyncTestClient(app) as client:
+        response = await client.get("/api/tasks")
+        assert response.status == 401
+        async with client.websocket("/live") as ws:
+            assert (await ws.receive_json())["event"] == "presence"
 ```
+
+Next: [The built-in server](server.md).
