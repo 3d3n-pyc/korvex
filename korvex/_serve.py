@@ -30,7 +30,7 @@ from korvex import _core
 from korvex._app import MountMatch, _call, _finish, _raw_headers
 from korvex._mount import Receive, ResponderSend, child_scope
 from korvex._requests import Request
-from korvex._response import EventStream, Response, StreamingResponse
+from korvex._response import EventStream, StreamingResponse
 from korvex.middleware import current_request_id
 
 # Python 3.12+: a handler that doesn't wait completes at once, skipping the
@@ -229,7 +229,7 @@ async def serve(
         config.max_connections,
     )
     background = _Background()  # background tasks still running
-    handle = functools.partial(_serve_http, app, root_path=config.root_path, background=background)
+    handle = functools.partial(_serve_http, app, config.root_path, background)
     if config.access_log:
         handle = _logged(handle)
     counter = counter or _request_counter(config.max_requests, stopping.set)
@@ -416,6 +416,8 @@ def _counted(serve_one: Callable[..., Awaitable[int]], counter: Callable[[], Non
 
 async def _serve_http(
     app: App,
+    root_path: str,
+    background: set[asyncio.Task] | None,
     method: str,
     path: str,
     query_string: bytes,
@@ -426,8 +428,6 @@ async def _serve_http(
     responder: Any,
     error: int = 0,
     writable: Callable[[int], Awaitable[None]] | None = None,
-    root_path: str = "",
-    background: set[asyncio.Task] | None = None,
 ) -> int:
     """Runs one request from the built-in server through the same dispatch
     as under ASGI, hands the response to Rust, and returns its status.
@@ -439,14 +439,13 @@ async def _serve_http(
     `background` so shutdown can wait for them."""
     decoded = unquote(path) if "%" in path else path
     request = Request._from_server(method, decoded, query_string, headers, client, scheme, body, app, root_path)
-    mount = None
-    response: Response = None  # type: ignore[assignment]
+    response: Any  # a Response, or the MountMatch of a mounted app
     try:
         response = await app._respond(request, error)
     except MountMatch as matched:
-        mount = matched
-    if mount is not None:  # outside the except: errors of the sub-app don't show MountMatch
-        return await _serve_mount(app, mount, request, path, root_path, client, responder, writable)
+        response = matched
+    if type(response) is MountMatch:  # outside the except: errors of the sub-app don't show it
+        return await _serve_mount(app, response, request, path, root_path, client, responder, writable)
     head = method == "HEAD"
     try:
         raw_headers = _raw_headers(response, head)

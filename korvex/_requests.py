@@ -78,7 +78,6 @@ class Connection:
     __slots__ = (
         "method",
         "path",
-        "root_path",
         "headers",
         "_query_string",
         "_query",
@@ -90,6 +89,7 @@ class Connection:
         "_cookies",
         "_body",
         "_form",
+        "root_path",
         "_tasks",
     )
 
@@ -102,15 +102,14 @@ class Connection:
     ) -> None:
         self.method: str = scope.get("method", "GET")
         """The HTTP method; `GET` for a WebSocket's handshake."""
-        path, root = scope["path"], scope.get("root_path", "")
+        path = scope["path"]
+        root = scope.get("root_path")
+        self.root_path: str = ""
+        """The prefix the app is served under (ASGI `root_path`); `""` if none."""
         if root:
-            root = root.rstrip("/")  # uvicorn accepts `--root-path /api/`
-        if root and (path == root or path.startswith(root + "/")):
-            path = path[len(root) :] or "/"  # ASGI: `path` includes `root_path`; older servers strip it
+            path = self._strip_root(path, root, app)
         self.path: str = path
         """The path the app routes on, without `root_path`."""
-        self.root_path: str = root
-        """The prefix the app is served under (ASGI `root_path`); `""` if none."""
         client = scope.get("client")
         self.client: tuple[str, int] | None = tuple(client) if client else None  # type: ignore[assignment]
         """`(host, port)` of the client, behind a trusted proxy too; `None` if unknown."""
@@ -128,6 +127,17 @@ class Connection:
         self._body: bytes | None = None  # a Request's, read once
         self._form: FormData | None = None
         self._tasks: Any = None  # a BackgroundTasks, created on first use
+
+    def _strip_root(self, path: str, root: str, app: App | None) -> str:
+        """Remembers the scope's `root_path` (the app too, for its links) and returns `path` without it."""
+        root = root.rstrip("/")  # uvicorn accepts `--root-path /api/`
+        if root:
+            self.root_path = root
+            if app is not None:
+                app._root_path = root
+            if path == root or path.startswith(root + "/"):
+                path = path[len(root) :] or "/"  # ASGI: `path` includes `root_path`; older servers strip it
+        return path
 
     @property
     def query(self) -> MultiDict[str]:

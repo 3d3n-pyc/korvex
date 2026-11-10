@@ -549,7 +549,7 @@ class App(_RouteDecorators):
         It gets the request (`path_params` empty) and returns a `Response` to answer, or `None`.
         For a WebSocket handshake, answering or raising `HTTPException` or `Abort` refuses it.
         Guide: https://3d3n-pyc.github.io/korvex/errors-and-hooks/#hooks-around-every-request"""
-        return _add_hook(self._before_request, func)  # type: ignore[arg-type]
+        return _add_hook(self._before_request, func)
 
     @overload
     def after_request(self, func: AfterHook) -> AfterHook: ...
@@ -560,7 +560,7 @@ class App(_RouteDecorators):
 
         It returns the response to send, or `None` to keep it.
         Guide: https://3d3n-pyc.github.io/korvex/errors-and-hooks/#hooks-around-every-request"""
-        return _add_hook(self._after_request, func)  # type: ignore[arg-type]
+        return _add_hook(self._after_request, func)
 
     def exception_handler(self, key: int | type[Exception]) -> Callable[[ExceptionHandler], ExceptionHandler]:
         """Decorator: answers errors with the function's `Response`.
@@ -586,16 +586,13 @@ class App(_RouteDecorators):
             raise NotImplementedError(f"unsupported ASGI scope type: {scope['type']!r}")
 
         request = Request(scope, receive, {}, self)
-        if request.root_path != self._root_path:
-            self._root_path = request.root_path
-        mount = None
-        response: Response = None  # type: ignore[assignment]
+        response: Any  # a Response, or the MountMatch of a mounted app
         try:
             response = await self._respond(request)
         except MountMatch as matched:
-            mount = matched
-        if mount is not None:  # outside the except: errors of the sub-app don't show MountMatch
-            await self._call_mount(mount, request, scope, receive, send)
+            response = matched
+        if type(response) is MountMatch:  # outside the except: errors of the sub-app don't show it
+            await self._call_mount(response, request, scope, receive, send)
             return
         head = scope["method"] == "HEAD"
         try:
@@ -747,8 +744,6 @@ class App(_RouteDecorators):
         HTTPException. Leaves nothing open."""
         found, host_params = None, None
         websocket = WebSocket(scope, receive, send, {}, self)
-        if websocket.root_path != self._root_path:
-            self._root_path = websocket.root_path
         host = self._host_for(_host_labels(Request(scope, receive, {}))) if self._hosts else None
         if host is not None:
             found = host[0].ws_router.match(websocket.path)
