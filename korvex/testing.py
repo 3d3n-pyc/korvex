@@ -39,6 +39,17 @@ _MAX_REDIRECTS = 20
 T = TypeVar("T")
 
 
+_TRUSTED_HOSTS = frozenset({"testserver", "localhost", "127.0.0.1", "[::1]"})
+
+
+def _hostname(netloc: str) -> str:
+    """Return the lowercase host of a `host[:port]` string, brackets kept for IPv6."""
+    host = netloc.rpartition("@")[2].lower()
+    if host.startswith("["):
+        return host[: host.find("]") + 1]
+    return host.partition(":")[0]
+
+
 class TestResponse:
     """A response: `status`, `headers`, `body`, `text`, `json()` and the final `url`."""
 
@@ -150,7 +161,7 @@ class AsyncTestClient:
         self.base_url = base_url.rstrip("/")
         self.headers = Headers(_pairs(headers))
         self.cookies: dict[str, str] = dict(cookies or {})
-        self._secure: set[str] = set()  # cookies sent over https/wss only
+        self._secure: set[str] = set()  # cookies sent over https/wss or a local host only
         self.raise_server_errors = raise_server_errors
         self.timeout = timeout
         self._lifespan: _Lifespan | None = None
@@ -321,7 +332,8 @@ class AsyncTestClient:
         all_headers = [("host", netloc)] if "host" not in names else []
         all_headers += [("user-agent", "testclient")] if "user-agent" not in names else []
         all_headers += given
-        jar = {name: value for name, value in self.cookies.items() if secure or name not in self._secure}
+        send_secure = secure or _hostname(netloc) in _TRUSTED_HOSTS
+        jar = {name: value for name, value in self.cookies.items() if send_secure or name not in self._secure}
         jar.update(cookies or {})
         if jar and "cookie" not in names:
             all_headers.append(("cookie", "; ".join(f"{name}={value}" for name, value in jar.items())))
