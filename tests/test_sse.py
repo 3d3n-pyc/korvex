@@ -3,12 +3,12 @@
 import asyncio
 
 import pytest
+from support import make_scope
 
 from korvex import App, Response
 from korvex._sse import PING, ServerSentEvent
 from korvex.middleware import compress
 from korvex.testing import TestClient
-from tests.support import make_scope
 
 
 def _app(source):
@@ -74,7 +74,7 @@ def test_compression_leaves_event_streams_alone():
 
 
 def test_disconnect_closes_the_generator():
-    stopped = asyncio.Event()
+    stopped = []
 
     async def events():
         try:
@@ -82,9 +82,10 @@ def test_disconnect_closes_the_generator():
                 await asyncio.sleep(10)
                 yield "never"
         finally:
-            stopped.set()
+            stopped[0].set()
 
     async def scenario():
+        stopped.append(asyncio.Event())  # created in the loop: Python 3.9 binds an Event to one
         app = _app(events)
         left = asyncio.Event()
         sent = []
@@ -99,7 +100,7 @@ def test_disconnect_closes_the_generator():
         task = asyncio.ensure_future(app(make_scope(path="/s"), receive, send))
         await asyncio.sleep(0.2)
         left.set()
-        await asyncio.wait_for(stopped.wait(), 1)
+        await asyncio.wait_for(stopped[0].wait(), 1)
         await asyncio.wait_for(task, 1)
 
     asyncio.run(scenario())
