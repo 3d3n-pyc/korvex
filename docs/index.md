@@ -44,7 +44,7 @@ added since can still change until 1.0.0. Install with
 Read in order the first time; each page stands alone after.
 
 1. [Routes](routes.md): paths, parameters, groups, hosts, links between routes, static files.
-2. [Requests and responses](requests-and-responses.md): what a handler gets and returns.
+2. [Requests and responses](requests-and-responses.md): what a handler gets and returns, streams, Server-Sent Events, background tasks.
 3. [Validation](validation.md): typed parameters, models, headers, cookies and forms.
 4. [Dependencies](dependencies.md): code shared by routes, like signing in.
 5. [Errors and hooks](errors-and-hooks.md): errors, code that runs around every request, startup and shutdown.
