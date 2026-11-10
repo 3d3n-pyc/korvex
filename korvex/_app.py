@@ -20,7 +20,7 @@ from typing import Any, Optional, Union, overload
 from urllib.parse import quote
 
 from korvex._core import MethodNotAllowed
-from korvex._errors import Abort, HTTPException, ValidationError
+from korvex._errors import Abort, HTTPException, RequestValidationError
 from korvex._requests import Connection, Request, WebSocket, WebSocketDisconnect
 from korvex._response import Response, StreamingResponse
 from korvex._routing import (
@@ -130,6 +130,7 @@ class App(_RouteDecorators):
         self._after_request: list[AfterHook] = []
         # Where each name given with name= points: (websocket, host, path).
         self._explicit_names: dict[str, tuple[bool, str | None, str]] = {}
+        self._root_path = ""  # the root_path last seen in a request (an app is served under one)
         self._url_cache: tuple[tuple, Any] | None = None
 
     def route(
@@ -234,11 +235,11 @@ class App(_RouteDecorators):
         or has a `/` outside a `*wildcard`, or when another route answers the path first
         (TypeError for an unsupported type). Every path parameter must be given, and nothing
         else: add a query string yourself. Values are percent-encoded; a host route gives the
-        path only.
+        path only. An app is served under one `root_path`: it prefixes the path.
         Guide: https://3d3n-pyc.github.io/korvex/routes/#links-to-a-route"""
         from korvex import _urls as urls
 
-        return urls.path_for(self, urls.lookup(self._url_index(), name), params)
+        return self._root_path + urls.path_for(self, urls.lookup(self._url_index(), name), params)
 
     def _url_index(self) -> Any:
         """The route names, rebuilt when routes change."""
@@ -390,12 +391,13 @@ class App(_RouteDecorators):
         self._add_route(False, key, _Route(serve, name=name or "static", explicit=name is not None), None, pattern)
         self._statics.setdefault(name or "static", (prefix.rstrip("/"), root))
 
-    def static_url(self, path: str, /, name: str | None = None) -> str:
+    def static_url(self, path: str, /, *, name: str | None = None) -> str:
         """The URL of a static file, with a hash of its content: `/static/app.3f2a1c9b.css`.
 
         `path`: the file, relative to the folder given to `static()`.
         `name`: which `static()` mount, when there are several (`"static"` by default).
         Raises LookupError for an unknown mount, FileNotFoundError for a missing file.
+        An app is served under one `root_path`: it prefixes the URL.
         Guide: https://3d3n-pyc.github.io/korvex/templates/"""
         mount = self._statics.get(name or "static")
         if mount is None:
@@ -407,7 +409,7 @@ class App(_RouteDecorators):
         head, slash, base = path.rpartition("/")
         digest, dot = self._digest(target), base.rfind(".")
         hashed = f"{head}{slash}{base[:dot]}.{digest}{base[dot:]}" if dot > 0 else f"{path}.{digest}"
-        return f"{prefix}/{quote(hashed)}"
+        return f"{self._root_path}{prefix}/{quote(hashed)}"
 
     def _digest(self, target: Path) -> str:
         """The first 8 hex digits of the SHA-256 of a file, cached until its mtime or size changes."""
@@ -498,10 +500,13 @@ class App(_RouteDecorators):
         if scope["type"] != "http":
             raise NotImplementedError(f"unsupported ASGI scope type: {scope['type']!r}")
 
-        response = await self._respond(Request(scope, receive, {}, self))
+        request = Request(scope, receive, {}, self)
+        if request.root_path != self._root_path:
+            self._root_path = request.root_path
+        response = await self._respond(request)
         head = scope["method"] == "HEAD"
         if isinstance(response, StreamingResponse):
-            await self._send_stream(response, send, head, scope["path"])
+            await self._send_stream(response, send, head, request.path)
             return
         await send({"type": "http.response.start", "status": response.status, "headers": _raw_headers(response, head)})
         # HEAD: GET's headers, no body.
@@ -619,16 +624,19 @@ class App(_RouteDecorators):
         an unknown path, a before hook answering, or a dependency raising
         HTTPException. Leaves nothing open."""
         found, host_params = None, None
+        websocket = WebSocket(scope, receive, send, {}, self)
+        if websocket.root_path != self._root_path:
+            self._root_path = websocket.root_path
         host = self._host_for(_host_labels(Request(scope, receive, {}))) if self._hosts else None
         if host is not None:
-            found = host[0].ws_router.match(scope["path"])
+            found = host[0].ws_router.match(websocket.path)
             host_params = host[1] if found is not None else None
         if found is None:
-            found = self._ws_router.match(scope["path"])
+            found = self._ws_router.match(websocket.path)
         values = found[1] if found else {}
         if found is not None and host_params:
             values = {**host_params, **found[1]}
-        websocket = WebSocket(scope, receive, send, values, self)
+        websocket.path_params = values
         if self._before_request and not await self._websocket_hooks_allow(websocket):
             await websocket.close()  # before accept: the client gets a 403
             return
@@ -713,7 +721,7 @@ class App(_RouteDecorators):
             except Exception:
                 logger.exception("exception handler failed for %s %s", request.method, request.path)
                 return _server_error()
-        if isinstance(exc, ValidationError):
+        if isinstance(exc, RequestValidationError):
             return Response.json({"detail": exc.errors}, status=422, headers=exc.headers)
         if isinstance(exc, HTTPException):
             return Response.json({"detail": exc.detail}, status=exc.status, headers=exc.headers)
@@ -757,6 +765,7 @@ class App(_RouteDecorators):
         threads: int = 1,
         max_connections: int = 0,
         max_requests: int = 0,
+        root_path: str = "",
     ) -> None:
         """Serves the app with the built-in server until Ctrl+C or SIGTERM (Linux and macOS only).
 
@@ -772,10 +781,12 @@ class App(_RouteDecorators):
         - `ws_ping_interval`: seconds between WebSocket pings; `0` turns them off.
         - `max_connections`: open connections per worker and thread; `0`: no limit.
         - `max_requests`: a worker restarts after about that many requests; `0`: never.
+        - `root_path`: the prefix a proxy serves the app under (`"/api"`), for links.
 
         Guide: https://3d3n-pyc.github.io/korvex/server/"""
         from korvex import _serve as serve
 
+        self._root_path = root_path  # for links made outside a request, like in templates
         serve.run(
             self,
             host,
@@ -795,6 +806,7 @@ class App(_RouteDecorators):
                 threads,
                 max_connections,
                 max_requests,
+                root_path,
             ),
         )
 

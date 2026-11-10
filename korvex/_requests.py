@@ -77,6 +77,7 @@ class Connection:
     __slots__ = (
         "method",
         "path",
+        "root_path",
         "headers",
         "_query_string",
         "_query",
@@ -99,7 +100,15 @@ class Connection:
     ) -> None:
         self.method: str = scope.get("method", "GET")
         """The HTTP method; `GET` for a WebSocket's handshake."""
-        self.path: str = scope["path"]
+        path, root = scope["path"], scope.get("root_path", "")
+        if root:
+            root = root.rstrip("/")  # uvicorn accepts `--root-path /api/`
+        if root and (path == root or path.startswith(root + "/")):
+            path = path[len(root) :] or "/"  # ASGI: `path` includes `root_path`; older servers strip it
+        self.path: str = path
+        """The path the app routes on, without `root_path`."""
+        self.root_path: str = root
+        """The prefix the app is served under (ASGI `root_path`); `""` if none."""
         client = scope.get("client")
         self.client: tuple[str, int] | None = tuple(client) if client else None  # type: ignore[assignment]
         """`(host, port)` of the client, behind a trusted proxy too; `None` if unknown."""
@@ -146,7 +155,11 @@ class Connection:
             raise RuntimeError("this request doesn't come from an App: url_for() needs one to find the route")
         from korvex import _urls as urls
 
-        return urls.url_for(self, urls.lookup(self.app._url_index(), name), params)
+        url = urls.url_for(self, urls.lookup(self.app._url_index(), name), params)
+        if not self.root_path:
+            return url
+        at = url.index("/", url.index("://") + 3)
+        return f"{url[:at]}{self.root_path}{url[at:]}"
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.method} {self.path!r})"
@@ -171,12 +184,14 @@ class Request(Connection):
         scheme: str,
         body: bytes,
         app: App,
+        root_path: str = "",
     ) -> Request:
         """A request from the built-in server, read in full. Sets the fields
         of `Connection.__init__` directly, skipping the ASGI scope (hot path)."""
         request = cls.__new__(cls)
         request.method = method
         request.path = path
+        request.root_path = root_path
         request.client = client
         request.scheme = scheme
         request.headers = Headers._trusted([(k.decode("latin-1"), v.decode("latin-1")) for k, v in headers])
@@ -264,7 +279,7 @@ class WebSocket(Connection):
         self.subprotocols: list[str] = list(scope.get("subprotocols", []))
         """Subprotocols the client asked for, to pick one in `accept()`."""
 
-    async def accept(self, subprotocol: str | None = None, headers: HeaderItems = ()) -> None:
+    async def accept(self, subprotocol: str | None = None, *, headers: HeaderItems = ()) -> None:
         """Accepts the connection, optionally with one of `subprotocols`."""
         await self._wait_connect()
         await self._send(

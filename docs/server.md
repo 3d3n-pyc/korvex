@@ -35,6 +35,7 @@ app.run("0.0.0.0", 8000, workers=3, graceful_timeout=10, forwarded_allow_ips=["1
 | `--read-timeout S` | `30` | Seconds a client gets to send the headers, then the body (a 408 after). |
 | `--forwarded-allow-ips` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-For` and `-Proto` (or `Forwarded`) give the real client and scheme. `*` trusts any. |
 | `--forwarded-host` | off | Also take the host they forward. Only if your proxy sets that header itself: nginx passes a client's `X-Forwarded-Host` on as it is. |
+| `--root-path PREFIX` | none | The prefix a proxy strips before forwarding (nginx `location /api/ { proxy_pass http://app/; }`), such as `/api`. Empty, or starting with `/` and not ending with one. The proxy strips the prefix, so the server routes the path it receives as is, never stripping again. It only sets `request.root_path` and puts the prefix back in links (`url_for`). |
 | `--access-log` | off | Log each request. |
 | `--ws-ping-interval S` | `20` | Seconds between pings on open WebSockets; a client silent until the next ping is closed. `0` turns them off. |
 

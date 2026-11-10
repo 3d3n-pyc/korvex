@@ -184,8 +184,9 @@ A bad entry raises `ValueError` when `csrf()` is called.
 Behind a reverse proxy, `Origin` is compared with the `Host` header as the
 app receives it. If the proxy replaces `Host` (with `127.0.0.1:8000`, for
 example), every form post is refused. Keep the public `Host` (nginx:
-`proxy_set_header Host $host;`; Caddy does by default), or list the public
-origin in `trusted_origins`.
+`proxy_set_header Host $host;`; Caddy does by default), let the built-in
+server take the proxy's `X-Forwarded-Host` (`--forwarded-host`), or list
+the public origin in `trusted_origins`.
 
 `csrf()` and `cors()` are separate. A cross-origin front-end allowed by
 `cors()` must also be listed in `csrf(trusted_origins=...)`. Without a
