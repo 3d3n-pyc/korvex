@@ -40,7 +40,7 @@ jobs:
       - name: Test wheel
         run: |
           python3 -m venv test-env
-          test-env/bin/pip install --quiet dist/*.whl pytest msgspec pydantic
+          test-env/bin/pip install --quiet dist/*.whl pytest hypothesis msgspec pydantic
           test-env/bin/pytest tests/ -v
       - uses: actions/upload-artifact@v7
         with:
@@ -70,7 +70,7 @@ jobs:
       - name: Test wheel
         run: |
           python3 -m venv test-env
-          test-env/bin/pip install --quiet dist/*.whl pytest msgspec pydantic
+          test-env/bin/pip install --quiet dist/*.whl pytest hypothesis msgspec pydantic
           test-env/bin/pytest tests/ -v
       - uses: actions/upload-artifact@v7
         with:
@@ -94,7 +94,7 @@ jobs:
         shell: bash
         run: |
           python -m venv test-env
-          test-env/Scripts/pip install --quiet dist/*.whl pytest msgspec pydantic
+          test-env/Scripts/pip install --quiet dist/*.whl pytest hypothesis msgspec pydantic
           test-env/Scripts/pytest tests/ -v
       - uses: actions/upload-artifact@v7
         with:
@@ -120,7 +120,7 @@ jobs:
       - name: Test sdist
         run: |
           python3 -m venv test-env
-          test-env/bin/pip install --quiet dist/*.tar.gz pytest msgspec pydantic
+          test-env/bin/pip install --quiet dist/*.tar.gz pytest hypothesis msgspec pydantic
           test-env/bin/pytest tests/ -v
       - uses: actions/upload-artifact@v7
         with:
@@ -163,7 +163,7 @@ jobs:
         run: |
           "${{ steps.python.outputs.python-path }}" -m venv test-env
           bin=test-env/bin; [ -d test-env/Scripts ] && bin=test-env/Scripts
-          $bin/python -m pip install --quiet dist/*.whl pytest msgspec pydantic
+          $bin/python -m pip install --quiet dist/*.whl pytest hypothesis msgspec pydantic
           $bin/python -c "import sys; assert not sys._is_gil_enabled(), 'the GIL is on'"
           $bin/pytest tests/ -v -W error::RuntimeWarning
       - uses: actions/upload-artifact@v7
