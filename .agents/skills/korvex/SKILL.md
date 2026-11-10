@@ -158,6 +158,12 @@ def test_tasks():
 - **Server-Sent Events**: `return Response.sse(events())` from an async
   generator yielding `ServerSentEvent(data, event=, id=)` or plain values;
   pings every 15 s. Test with `client.stream(...)` and `response.iter_events()`.
+- **Mounting another ASGI app**: `app.mount("/admin", admin_app, name="admin")`.
+  The parent's before hooks (`csrf`, `rate_limit`, `sessions`) run, but its
+  after hooks and exception handlers don't (`cors`, `security_headers`,
+  `compress`): configure those in the mounted app.
+- **Conditional files**: `Response.file(path, request=request)` answers 304
+  and `Range` (206); `app.static()` does it already.
 - **Templates** are not Jinja2Templates: no `TemplateResponse(request, ...)`.
   Use `views.response("page.html", {"post": post})`.
 
