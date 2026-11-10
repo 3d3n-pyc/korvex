@@ -90,6 +90,7 @@ class Connection:
         "_cookies",
         "_body",
         "_form",
+        "_tasks",
     )
 
     def __init__(
@@ -126,6 +127,7 @@ class Connection:
         self._cookies: dict[str, str] | None = None
         self._body: bytes | None = None  # a Request's, read once
         self._form: FormData | None = None
+        self._tasks: Any = None  # a BackgroundTasks, created on first use
 
     @property
     def query(self) -> MultiDict[str]:
@@ -204,6 +206,7 @@ class Request(Connection):
         request._cookies = None
         request._body = body  # body() returns it without receiving
         request._form = None
+        request._tasks = None
         return request
 
     async def body(self) -> bytes:

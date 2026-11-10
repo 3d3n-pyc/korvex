@@ -22,13 +22,14 @@ import threading
 import time
 import traceback
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, NamedTuple
 from urllib.parse import unquote
 
 from korvex import _core
 from korvex._app import _call, _finish, _raw_headers
 from korvex._requests import Request
-from korvex._response import StreamingResponse
+from korvex._response import EventStream, StreamingResponse
 from korvex.middleware import current_request_id
 
 # Python 3.12+: a handler that doesn't wait completes at once, skipping the
@@ -141,6 +142,8 @@ def serve_process(app: App, fd: int, graceful_timeout: float, config: Config) ->
     failures: list[BaseException] = []
 
     def stop_all(signum: int | None = None, frame: object = None) -> None:
+        if signum is not None and stopping.is_set():
+            _exit_now(1)  # a second signal: no more waiting
         stopping.set()
         with lock:
             for loop, stop in loops:
@@ -162,13 +165,17 @@ def serve_process(app: App, fd: int, graceful_timeout: float, config: Config) ->
     counter = _request_counter(config.max_requests, stop_all)
     fds = [fd] + [os.dup(fd) for _ in range(config.threads - 1)]
     previous = {sig: signal.signal(sig, stop_all) for sig in (signal.SIGINT, signal.SIGTERM)}
-    threads = [threading.Thread(target=run_loop, args=(f,), name=f"korvex-loop-{n}") for n, f in enumerate(fds)]
+    threads = [
+        threading.Thread(target=run_loop, args=(f,), name=f"korvex-loop-{n}", daemon=True) for n, f in enumerate(fds)
+    ]
     try:
         for thread in threads:
             thread.start()
-        while any(thread.is_alive() for thread in threads):
+        while any(thread.is_alive() and thread.ident not in _abandoned for thread in threads):
             for thread in threads:
                 thread.join(0.1)  # in short steps, so signal handlers get to run
+        if _abandoned:  # a loop left stuck work behind: it would block the exit
+            _exit_now(0)
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
@@ -195,9 +202,11 @@ async def serve(
     # gracefully, shutdown hooks included, instead of killing the server.
     loop = asyncio.get_running_loop()
     stopping = asyncio.Event()
+    threads_pool = _TaskThreads()  # sync background tasks: shutdown never joins its threads
+    loop.set_default_executor(threads_pool)
     if joined is None:
         for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, stopping.set)
+            loop.add_signal_handler(sig, _stop_or_exit, stopping)
     else:
         joined(loop, stopping)
     try:
@@ -218,7 +227,8 @@ async def serve(
         list(config.constraints),
         config.max_connections,
     )
-    handle = functools.partial(_serve_http, app, root_path=config.root_path)
+    background = _Background()  # background tasks still running
+    handle = functools.partial(_serve_http, app, root_path=config.root_path, background=background)
     if config.access_log:
         handle = _logged(handle)
     counter = counter or _request_counter(config.max_requests, stopping.set)
@@ -273,8 +283,11 @@ async def serve(
         await stopping.wait()
         # Keep answering while open connections finish their current request.
         server.stop(graceful_timeout)
+        deadline = loop.time() + graceful_timeout
         while not server.finished():
             await asyncio.sleep(0.01)
+        background.closed = True  # a stream ending from now on starts no task
+        stuck = await _finish_background(background, max(0.0, deadline - loop.time()))
     finally:
         loop.remove_reader(server.fileno())
         server.close()
@@ -283,6 +296,93 @@ async def serve(
                 loop.remove_signal_handler(sig)
         for hook in reversed(app._on_shutdown):
             await _call(hook)
+    if stuck or threads_pool.busy:
+        # asyncio.run would wait for these forever, and so would the exit.
+        if joined is None:
+            _exit_now(0)
+        _abandoned.add(threading.get_ident())
+        await asyncio.Event().wait()  # this thread is left to the exit of the process
+
+
+_abandoned: set[int | None] = set()  # threads of loops that left stuck work behind
+
+
+def _exit_now(code: int) -> None:
+    """Ends the process at once, after flushing the logs: used when work
+    that ignores cancellation, or a thread that never returns, would hold
+    the shutdown up, and at a second SIGINT or SIGTERM."""
+    logging.shutdown()
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(Exception):  # a broken pipe must not stop the exit
+            stream.flush()
+    os._exit(code)
+
+
+def _stop_or_exit(stopping: asyncio.Event) -> None:
+    """Signal handler of a single-loop worker: the first signal starts the
+    graceful shutdown, a second one exits at once."""
+    if stopping.is_set():
+        _exit_now(1)
+    stopping.set()
+
+
+class _TaskThreads(ThreadPoolExecutor):
+    """The default thread pool of a worker. It counts the calls still
+    running, and its shutdown does not wait for them."""
+
+    def __init__(self) -> None:
+        super().__init__(thread_name_prefix="korvex-task")
+        self._running = 0
+        self._count = threading.Lock()
+
+    @property
+    def busy(self) -> int:
+        """How many calls are still running in the pool's threads."""
+        return self._running
+
+    def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+        """Like the standard `submit`, and counts the call until it ends."""
+        with self._count:
+            self._running += 1
+        try:
+            future = super().submit(fn, *args, **kwargs)
+        except BaseException:
+            self._finished(None)
+            raise
+        future.add_done_callback(self._finished)
+        return future
+
+    def _finished(self, _future: Any) -> None:
+        """Counts a call out."""
+        with self._count:
+            self._running -= 1
+
+    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+        """Stops the pool without joining its threads."""
+        super().shutdown(wait=False, cancel_futures=True)
+
+
+class _Background(set):
+    """The background tasks of a worker still running. `closed` is set when
+    the shutdown stopped waiting: no new task starts after that."""
+
+    closed = False
+
+
+async def _finish_background(background: set[asyncio.Task], timeout: float) -> int:
+    """Waits up to `timeout` seconds for the background tasks, then cancels
+    what is left, waits at most 1 s more, and logs how many were cut off.
+    Returns how many ignored the cancellation."""
+    if not background:
+        return 0
+    _, left = await asyncio.wait(background, timeout=timeout)
+    if not left:
+        return 0
+    logger.warning("shutdown cut off %d background task run(s) still running", len(left))
+    for task in left:
+        task.cancel()
+    _, stuck = await asyncio.wait(left, timeout=CANCEL_GRACE)
+    return len(stuck)
 
 
 def _request_counter(max_requests: int, stop: Callable[[], None]) -> Callable[[], None] | None:
@@ -326,37 +426,61 @@ async def _serve_http(
     error: int = 0,
     writable: Callable[[int], Awaitable[None]] | None = None,
     root_path: str = "",
+    background: set[asyncio.Task] | None = None,
 ) -> int:
     """Runs one request from the built-in server through the same dispatch
     as under ASGI, hands the response to Rust, and returns its status.
     `error` is a status the server already decided on (413, 408, 400): the
     request goes through the before hooks, then gets that error's response,
     as if the route had raised `HTTPException`. A streamed response waits
-    on `writable(responder.id)` while its client is behind."""
+    on `writable(responder.id)` while its client is behind. Background
+    tasks run in their own task once the response is out, tracked in
+    `background` so shutdown can wait for them."""
     decoded = unquote(path) if "%" in path else path
     request = Request._from_server(method, decoded, query_string, headers, client, scheme, body, app, root_path)
     response = await app._respond(request, error)
     head = method == "HEAD"
-    raw_headers = _raw_headers(response, head)
-    if head:
-        responder.respond(response.status, raw_headers, b"")
-    elif isinstance(response, StreamingResponse):
-        responder.start_stream(response.status, raw_headers)
-        try:
-            async for chunk in response:
-                sent = responder.send_chunk(chunk)
-                if sent == 0:
-                    break  # the client is gone
-                if sent == 2 and writable is not None:
-                    await writable(responder.id)  # the client is behind: let it catch up
-        finally:
-            responder.end_stream()
+    try:
+        raw_headers = _raw_headers(response, head)
+        if head:
+            responder.respond(response.status, raw_headers, b"")
+        elif isinstance(response, StreamingResponse):
+            responder.start_stream(response.status, raw_headers)
+            try:
+                async for chunk in response:
+                    sent = responder.send_chunk(chunk)
+                    if sent == 0:
+                        break  # the client is gone
+                    if sent == 2 and writable is not None:
+                        await writable(responder.id)  # the client is behind: let it catch up
+            except Exception:
+                responder.abort_stream()  # no terminating chunk: the client sees a cut body
+                logger.exception("error while streaming %s %s", method, path)
+            finally:
+                responder.end_stream()
+                if isinstance(response, EventStream):
+                    await response.aclose()  # the client left or the source failed: run its finally
+                await _finish(response, path)
+        else:
+            responder.respond(response.status, raw_headers, response.body)
+        if head and isinstance(response, StreamingResponse):
             await _finish(response, path)
-    else:
-        responder.respond(response.status, raw_headers, response.body)
-    if head and isinstance(response, StreamingResponse):
-        await _finish(response, path)
+    finally:
+        if request._tasks is not None:  # sent or not, the client never waits for them
+            _run_background(request._tasks, background)
     return response.status
+
+
+def _run_background(tasks: Any, background: set[asyncio.Task] | None) -> None:
+    """Starts the request's background tasks in a task of their own, tracked
+    in `background` so a shutdown can wait for them."""
+    if getattr(background, "closed", False):  # past the shutdown deadline
+        logger.warning("shutdown dropped %d background task(s) that had not started", len(tasks._items))
+        return
+    task = asyncio.ensure_future(tasks._run())
+    if background is not None:
+        background.add(task)
+        task.add_done_callback(background.discard)
 
 
 async def _serve_websocket(
@@ -452,6 +576,7 @@ def _logged(serve_one: Callable[..., Awaitable[int]]) -> Callable[..., Awaitable
 BACKOFF_START = 0.1  # first restart delay, in seconds; doubles while workers keep crashing
 BACKOFF_MAX = 30.0
 BACKOFF_RESET = 30.0  # a worker that lived this long clears the backoff
+CANCEL_GRACE = 1.0  # after graceful_timeout, for cancelled tasks to end
 KILL_GRACE = 5.0  # after graceful_timeout, before SIGKILL
 
 

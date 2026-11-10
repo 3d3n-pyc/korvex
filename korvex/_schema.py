@@ -27,6 +27,7 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, NamedTuple, Union
 
+from korvex._background import BackgroundTasks
 from korvex._errors import RequestValidationError
 from korvex._params import REQUIRED, Dependency, Source
 from korvex._requests import Connection, MultiDict, Request, UploadedFile, WebSocket
@@ -305,6 +306,7 @@ class Plan:
         self.form = [p for p in params if p.source == "form"]
         self.form_models = [(p, Model(p.type)) for p in params if p.source == "form_model"]
         self.request = [p.name for p in params if p.source == "request"]
+        self.tasks = [p.name for p in params if p.source == "tasks"]
         self.request_name = self.request[0] if len(self.request) == 1 else None  # the usual case
         self.binds = any(p.source != "request" for p in params)  # something to read from the request
         self.body = next((p for p in params if p.source == "body"), None)
@@ -330,7 +332,7 @@ class Plan:
         def can_fail(p: Param) -> bool:
             if p.source == "path":
                 return p.inner not in (str, given.get(p.key))
-            return p.source != "request"
+            return p.source not in ("request", "tasks")
 
         return any(map(can_fail, self.params)) or any(dep.plan.validates for dep in self.dependencies)
 
@@ -409,6 +411,11 @@ class Plan:
         if self.request:
             for name in self.request:
                 kwargs[name] = request
+        if self.tasks:
+            if request._tasks is None:
+                request._tasks = BackgroundTasks()
+            for name in self.tasks:
+                kwargs[name] = request._tasks
         if errors:
             raise RequestValidationError(_unique(errors))
         return kwargs
@@ -656,6 +663,12 @@ def plan_for(
                 raise TypeError(f"{where}: parameter {name!r}: a WebSocket has no form")
             key = marker.alias or (name.replace("_", "-") if marker.kind == "header" else name)
             params.append(_param(name, marker.kind, tp, required, default, key))
+        elif inspect.isclass(inner) and issubclass(inner, BackgroundTasks):
+            if websocket:
+                raise TypeError(
+                    f"{where}: parameter {name!r} asks for BackgroundTasks in a WebSocket route; use HTTP routes"
+                )
+            params.append(_param(name, "tasks", tp, True, key=name))
         elif inspect.isclass(inner) and issubclass(inner, Connection):
             if issubclass(inner, WebSocket) and not websocket:
                 raise TypeError(f"{where}: parameter {name!r} asks for a WebSocket in an HTTP route")

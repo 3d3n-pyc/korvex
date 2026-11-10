@@ -8,7 +8,8 @@ import os
 import sys
 from pathlib import Path
 
-from korvex import App, HTTPException, Response
+from korvex import App, Depends, HTTPException, Response, ServerSentEvent
+from korvex._background import BackgroundTasks
 from korvex.middleware import rate_limit, request_id
 
 app = App()
@@ -201,6 +202,59 @@ def fail(request):
 @app.get("/teapot")
 def teapot(request):
     raise HTTPException(418)
+
+
+async def slow_marker(path: str, seconds: float) -> None:
+    await asyncio.sleep(seconds)
+    Path(path).write_text("done")
+
+
+@app.get("/background")
+async def background(request, tasks: BackgroundTasks):
+    tasks.add(slow_marker, os.environ["BG_MARKER"], float(os.environ.get("BG_SECONDS", "1")))
+    return Response.json({"queued": True})
+
+
+def note_event(text: str) -> None:
+    """Appends a line to the SSE_MARKER file, to observe what ran."""
+    with open(os.environ["SSE_MARKER"], "a") as marker:
+        marker.write(text + "\n")
+
+
+def sse_dependency():
+    yield "dep"
+    note_event("dependency closed")
+
+
+async def sse_note_task() -> None:
+    note_event("background ran")
+
+
+@app.get("/sse")
+async def sse(request, tasks: BackgroundTasks, _dep: str = Depends(sse_dependency)):
+    async def events():
+        try:
+            yield ServerSentEvent("hello", id="1")
+            await asyncio.sleep(3600)  # idle: nothing more to say
+        finally:
+            note_event("generator closed")
+
+    tasks.add(sse_note_task)
+    return Response.sse(events(), ping=0.2)
+
+
+@app.get("/sse-sync")
+def sse_sync(request):
+    return Response.sse(ServerSentEvent(n) for n in range(3))
+
+
+@app.get("/sse-bad")
+async def sse_bad(request):
+    async def events():
+        yield ServerSentEvent("ok")
+        yield ServerSentEvent("x", id="a\nb")
+
+    return Response.sse(events(), ping=0)
 
 
 if __name__ == "__main__":
