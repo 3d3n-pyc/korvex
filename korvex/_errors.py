@@ -27,7 +27,7 @@ class HTTPException(Exception):
         super().__init__(status, self.detail)
 
 
-class ValidationError(HTTPException):
+class RequestValidationError(HTTPException):
     """Raised when a request doesn't match a handler's annotations: a 422 with `errors`.
 
     Guide: https://3d3n-pyc.github.io/korvex/validation/#errors

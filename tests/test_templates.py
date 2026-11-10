@@ -25,7 +25,7 @@ def bump(path: Path, text: str) -> None:
 
 def test_render_context(tmp_path):
     t = make(tmp_path, {"a.html": "Hi {{ name }}"})
-    assert t.render("a.html", name="Ada") == "Hi Ada"
+    assert t.render("a.html", {"name": "Ada"}) == "Hi Ada"
 
 
 def test_cache_compiles_once(tmp_path, monkeypatch):
@@ -69,16 +69,31 @@ def test_globals_and_filter(tmp_path):
     t = make(tmp_path, {"a.html": "{{ site }} {{ v|shout }}"})
     t.globals["site"] = "S"
     t.filters["shout"] = lambda s: str(s).upper() + "!"
-    assert t.render("a.html", v="hey") == "S HEY!"
+    assert t.render("a.html", {"v": "hey"}) == "S HEY!"
 
 
 def test_name_as_context_variable(tmp_path):
     t = make(tmp_path, {"a.html": "{{ name }}"})
-    assert t.render("a.html", name="n") == "n"
+    assert t.render("a.html", {"name": "n"}) == "n"
 
 
 def test_threads(tmp_path):
     t = make(tmp_path, {"a.html": "{{ n }}"})
     with ThreadPoolExecutor(8) as pool:
-        out = list(pool.map(lambda n: t.render("a.html", n=n), range(100)))
+        out = list(pool.map(lambda n: t.render("a.html", {"n": n}), range(100)))
     assert out == [str(n) for n in range(100)]
+
+
+def test_context_may_use_status_and_headers_names(tmp_path):
+    t = make(tmp_path, {"a.html": "{{ status }}-{{ headers }}"})
+    assert t.render("a.html", {"status": "s", "headers": "h"}) == "s-h"
+    response = t.response("a.html", {"status": "s", "headers": "h"}, status=201, headers={"X-A": "1"})
+    assert response.status == 201
+    assert response.headers["X-A"] == "1"
+
+
+def test_context_must_be_a_mapping(tmp_path):
+    t = make(tmp_path, {"a.html": "x"})
+    assert t.render("a.html", None) == "x"
+    with pytest.raises(TypeError, match="must be a dict"):
+        t.render("a.html", ["a"])  # type: ignore[arg-type]

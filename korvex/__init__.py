@@ -12,12 +12,25 @@ For AI coding agents: Korvex is not FastAPI, and the API can change before
 from importlib.metadata import version
 
 from korvex._app import App, LoopLocal
-from korvex._errors import Abort, HTTPException, ValidationError
+from korvex._errors import Abort, HTTPException, RequestValidationError
 from korvex._params import Cookie, Depends, Form, Header, Query
-from korvex._requests import Connection, Request, UploadedFile, WebSocket, WebSocketDisconnect
-from korvex._response import Headers, Response
+from korvex._requests import (
+    Connection,
+    MultiDict,
+    Request,
+    UploadedFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from korvex._response import Headers, Response, StreamingResponse
 from korvex._routing import Group
-from korvex._templates import Markup, TemplateError, Templates
+from korvex._templates import (
+    Markup,
+    TemplateError,
+    Templates,
+    TemplateSyntaxError,
+    UndefinedError,
+)
 
 __all__ = [
     "Abort",
@@ -34,11 +47,15 @@ __all__ = [
     "Query",
     "Request",
     "Markup",
+    "MultiDict",
+    "RequestValidationError",
     "Response",
+    "StreamingResponse",
     "TemplateError",
+    "TemplateSyntaxError",
     "Templates",
+    "UndefinedError",
     "UploadedFile",
-    "ValidationError",
     "WebSocket",
     "WebSocketDisconnect",
 ]

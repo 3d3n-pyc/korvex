@@ -14,7 +14,7 @@ SECRET = "k" * 40
 
 def make_app(**options):
     app = App()
-    sessions(app, SECRET, **options)
+    sessions(app, secret_key=SECRET, **options)
 
     @app.post("/login")
     def login():
@@ -128,7 +128,7 @@ def test_valid_forged_cookie_is_read():
 def test_key_rotation():
     old = forged(b'{"user":"old"}', secret="o" * 40)
     rotated = App()
-    sessions(rotated, ["n" * 40, "o" * 40])
+    sessions(rotated, secret_key=["n" * 40, "o" * 40])
 
     @rotated.get("/me")
     def me():
@@ -194,14 +194,14 @@ def test_runtime_error_without_sessions():
 
 def test_twice_is_an_error():
     app = App()
-    sessions(app, SECRET)
+    sessions(app, secret_key=SECRET)
     with pytest.raises(RuntimeError):
-        sessions(app, SECRET)
+        sessions(app, secret_key=SECRET)
 
 
 def test_short_secret():
     with pytest.raises(ValueError):
-        sessions(App(), "short")
+        sessions(App(), secret_key="short")
 
 
 def test_websocket_reads_session():
@@ -222,7 +222,7 @@ def test_prefixed_cookie_is_deleted_with_same_attributes():
 
 def test_ior_marks_modified():
     app = App()
-    sessions(app, SECRET, secure=False)
+    sessions(app, secret_key=SECRET, secure=False)
 
     @app.post("/ior")
     def ior():
@@ -236,7 +236,7 @@ def test_ior_marks_modified():
 
 def test_cookie_limit_counts_the_name():
     app = App()
-    sessions(app, SECRET, secure=False, cookie="c" * 200)
+    sessions(app, secret_key=SECRET, secure=False, cookie="c" * 200)
 
     @app.get("/fill/{n}")
     def fill(n: int):
@@ -257,7 +257,7 @@ def test_csrf_before_sessions_still_reads_session():
 
     app = App()
     csrf(app)
-    sessions(app, SECRET, secure=False)
+    sessions(app, secret_key=SECRET, secure=False)
 
     @app.exception_handler(403)
     def forbidden(request, exc):
@@ -276,7 +276,7 @@ def test_refused_request_does_not_reuse_previous_state():
     import asyncio
 
     app = App()
-    sessions(app, SECRET, secure=False)
+    sessions(app, secret_key=SECRET, secure=False)
 
     @app.before_request
     def refuse(request):

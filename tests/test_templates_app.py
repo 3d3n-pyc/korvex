@@ -22,7 +22,7 @@ def test_page_is_escaped_html(tmp_path):
 
     @app.get("/")
     def index(request):
-        return templates.response("hi.html", who="<b>Ada</b>")
+        return templates.response("hi.html", {"who": "<b>Ada</b>"})
 
     with TestClient(app) as client:
         response = client.get("/")
@@ -169,7 +169,7 @@ def test_flashed_messages_show_once(tmp_path):
 
     page = "{% for category, message in get_flashed_messages() %}{{ category }}:{{ message }};{% endfor %}"
     app, templates = make_app(tmp_path, {"page.html": page})
-    sessions(app, "k" * 32, secure=False)
+    sessions(app, secret_key="k" * 32, secure=False)
 
     @app.post("/go")
     def go(request):

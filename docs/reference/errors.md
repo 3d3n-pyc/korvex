@@ -5,6 +5,6 @@ Raise them to answer with an error, or with an exact response. See
 
 ::: korvex.HTTPException
 
-::: korvex.ValidationError
+::: korvex.RequestValidationError
 
 ::: korvex.Abort

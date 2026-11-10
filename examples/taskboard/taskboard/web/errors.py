@@ -6,7 +6,7 @@ to know about HTTP."""
 
 from collections.abc import Iterable
 
-from korvex import App, HTTPException, Request, Response, ValidationError
+from korvex import App, HTTPException, Request, RequestValidationError, Response
 from korvex.middleware import current_request_id
 from taskboard.domain import InvalidInput, NotFound
 
@@ -22,9 +22,9 @@ def install(app: App) -> None:
         problem = {"loc": ["body", exc.field], "msg": str(exc), "type": "value_error"}
         return Response.json({"detail": [problem], "request_id": current_request_id()}, status=422)
 
-    @app.exception_handler(HTTPException)  # ValidationError (422) included: it's an HTTPException
+    @app.exception_handler(HTTPException)  # RequestValidationError (422) included: it's an HTTPException
     def http_error(request: Request, exc: HTTPException) -> Response:
-        if isinstance(exc, ValidationError) and _is_api(request):
+        if isinstance(exc, RequestValidationError) and _is_api(request):
             return Response.json({"detail": exc.errors, "request_id": current_request_id()}, status=422)
         return _error(request, exc.status, exc.detail, exc.headers)
 

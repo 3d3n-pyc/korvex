@@ -187,7 +187,7 @@ def limited_app(clock, **options):
     def health(request):
         return Response.text("healthy")
 
-    rate_limit(app, **{"requests": 3, "per": 60, "store": MemoryStore(clock), **options})
+    rate_limit(app, **{"requests": 3, "per": 60, "store": MemoryStore(clock=clock), **options})
     return app
 
 
@@ -240,7 +240,7 @@ def test_preflight_requests_answered_by_cors_first_arent_counted():
 
 def test_memory_store_forgets_keys_whose_allowance_is_back():
     clock = Clock()
-    store = MemoryStore(clock)
+    store = MemoryStore(clock=clock)
     for n in range(999):
         store.hit(n, 10, 1)
     clock.now = 5  # every allowance is back
@@ -519,5 +519,5 @@ def test_redis_store_fails_open_or_closed(caplog):
 @pytest.mark.parametrize("now", [123456.789, 1e6 + 0.1, 0.1, 86400.3])
 @pytest.mark.parametrize(("requests", "per"), [(2, 60), (3, 1), (3, 60), (7, 0.7)])
 def test_memory_store_burst_at_one_instant(now, requests, per):
-    store = MemoryStore(lambda: now)  # a frozen clock, like two hits in one Windows tick
+    store = MemoryStore(clock=lambda: now)  # a frozen clock, like two hits in one Windows tick
     assert [store.hit("k", requests, per).allowed for _ in range(requests + 1)] == [True] * requests + [False]
