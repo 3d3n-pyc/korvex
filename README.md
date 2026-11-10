@@ -75,7 +75,7 @@ the API reference. Using an AI coding agent? Run `korvex agents` in your
 project to install a Korvex skill ([more](docs/ai.md)).
 
 - [Routes](docs/routes.md): path parameters, groups, hosts, links, static files.
-- [Requests and responses](docs/requests-and-responses.md): what a handler gets and returns.
+- [Requests and responses](docs/requests-and-responses.md): what a handler gets and returns, streams, Server-Sent Events, background tasks.
 - [Validation](docs/validation.md): typed parameters, JSON bodies, headers, cookies, forms.
 - [Dependencies](docs/dependencies.md): signing in, database connections, shared checks.
 - [Errors and hooks](docs/errors-and-hooks.md): errors, code around every request, startup and shutdown.
