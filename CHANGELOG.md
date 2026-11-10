@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Security: templates refuse `format` and `format_map`.** A format string
+  such as `"{0.__globals__}".format(obj)` could read attributes starting with
+  `_` at runtime, past the underscore rule. The attributes are now refused at
+  compile time. This needs control of a template's source; reported externally.
+  Migration: an object's own `.format()` method can't be called from a
+  template; register a filter instead.
+
 ## 1.0.0rc1
 
 The API is frozen. From 1.0, no breaking change without a 2.0. The breaking
