@@ -89,7 +89,7 @@ class Connection:
         "_cookies",
         "_body",
         "_form",
-        "root_path",
+        "_root_path",
         "_tasks",
     )
 
@@ -102,13 +102,7 @@ class Connection:
     ) -> None:
         self.method: str = scope.get("method", "GET")
         """The HTTP method; `GET` for a WebSocket's handshake."""
-        path = scope["path"]
-        root = scope.get("root_path")
-        self.root_path: str = ""
-        """The prefix the app is served under (ASGI `root_path`); `""` if none."""
-        if root:
-            path = self._strip_root(path, root, app)
-        self.path: str = path
+        self.path: str = scope["path"]
         """The path the app routes on, without `root_path`."""
         client = scope.get("client")
         self.client: tuple[str, int] | None = tuple(client) if client else None  # type: ignore[assignment]
@@ -127,17 +121,27 @@ class Connection:
         self._body: bytes | None = None  # a Request's, read once
         self._form: FormData | None = None
         self._tasks: Any = None  # a BackgroundTasks, created on first use
+        if scope.get("root_path"):
+            self._strip_root(scope["root_path"], app)
 
-    def _strip_root(self, path: str, root: str, app: App | None) -> str:
-        """Remembers the scope's `root_path` (the app too, for its links) and returns `path` without it."""
+    @property
+    def root_path(self) -> str:
+        """The prefix the app is served under (ASGI `root_path`); `""` if none."""
+        try:
+            return self._root_path
+        except AttributeError:  # not set: the common case costs nothing per request
+            return ""
+
+    def _strip_root(self, root: str, app: App | None) -> None:
+        """Remembers the scope's `root_path` (the app too, for its links) and takes it off `self.path`."""
         root = root.rstrip("/")  # uvicorn accepts `--root-path /api/`
         if root:
-            self.root_path = root
+            self._root_path = root
             if app is not None:
                 app._root_path = root
+            path = self.path
             if path == root or path.startswith(root + "/"):
-                path = path[len(root) :] or "/"  # ASGI: `path` includes `root_path`; older servers strip it
-        return path
+                self.path = path[len(root) :] or "/"  # ASGI: `path` includes `root_path`; older servers strip it
 
     @property
     def query(self) -> MultiDict[str]:
@@ -207,7 +211,7 @@ class Request(Connection):
         request = cls.__new__(cls)
         request.method = method
         request.path = path
-        request.root_path = root_path
+        request._root_path = root_path
         request.client = client
         request.scheme = scheme
         request.headers = Headers._trusted([(k.decode("latin-1"), v.decode("latin-1")) for k, v in headers])

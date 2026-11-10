@@ -586,15 +586,29 @@ class App(_RouteDecorators):
             raise NotImplementedError(f"unsupported ASGI scope type: {scope['type']!r}")
 
         request = Request(scope, receive, {}, self)
-        response: Any  # a Response, or the MountMatch of a mounted app
         try:
             response = await self._respond(request)
         except MountMatch as matched:
-            response = matched
-        if type(response) is MountMatch:  # outside the except: errors of the sub-app don't show it
-            await self._call_mount(response, request, scope, receive, send)
+            mount = matched
+        else:  # outside the except: errors of a mounted app don't show the MountMatch
+            head = scope["method"] == "HEAD"
+            if request._tasks is not None:  # rare: background tasks run once the response is out
+                await self._send_with_tasks(request, response, send, head, receive)
+            elif isinstance(response, StreamingResponse):
+                await self._send_stream(response, send, head, request.path, receive)
+            else:
+                await send(
+                    {"type": "http.response.start", "status": response.status, "headers": _raw_headers(response, head)}
+                )
+                # HEAD: GET's headers, no body.
+                await send({"type": "http.response.body", "body": b"" if head else response.body})
             return
-        head = scope["method"] == "HEAD"
+        await self._call_mount(mount, request, scope, receive, send)
+
+    async def _send_with_tasks(
+        self, request: Request, response: Response, send: Callable, head: bool, receive: Callable
+    ) -> None:
+        """Sends the response, then runs the request's background tasks, sent or not."""
         try:
             if isinstance(response, StreamingResponse):
                 await self._send_stream(response, send, head, request.path, receive)
@@ -602,11 +616,9 @@ class App(_RouteDecorators):
             await send(
                 {"type": "http.response.start", "status": response.status, "headers": _raw_headers(response, head)}
             )
-            # HEAD: GET's headers, no body.
             await send({"type": "http.response.body", "body": b"" if head else response.body})
         finally:
-            if request._tasks is not None:  # sent or not, the client never waits for them
-                await request._tasks._run()
+            await request._tasks._run()
 
     def _mount_state(self, prefix: str) -> Optional[dict]:
         """The lifespan state of the app mounted at `prefix`, in this event loop."""
