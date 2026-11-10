@@ -61,11 +61,12 @@ than one core per worker (0.12), what everyone expects from a framework
 (0.13: a test client, reverse URLs, a richer OpenAPI), a review of the
 whole public API (0.14), a documentation site (0.14.2), a more robust
 built-in server (0.15), a soak test in CI (0.15.1), and server-side
-templates with hashed static URLs (0.16). The public API is
+templates with hashed static URLs (0.16), and sessions with CSRF
+protection (0.17). The public API is
 what `korvex`, `korvex.router`, `korvex.testing`, `korvex.security` and
 `korvex.middleware` export. Until
 1.0 it can change, each change listed in the changelog with how to
-update; after, it stays.
+update; after, it stays. Next: 1.0.0rc1.
 
 ## 1.0
 
@@ -82,8 +83,6 @@ a minor version:
 
 - **Background tasks**: work that runs after the response is sent (an
   email, a webhook), without holding it up.
-- **Sessions and CSRF protection**, ready-made, as Starlette and Litestar
-  have them.
 - **Server-Sent Events**: a helper on top of `Response.stream`.
 - **Mounting another ASGI app** under a prefix (an admin, an existing
   app), like Starlette's `Mount`.

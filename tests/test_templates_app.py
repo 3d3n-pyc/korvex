@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from korvex import App, Templates
+from korvex import App, Response, Templates
 from korvex.testing import TestClient
 
 
@@ -162,3 +162,25 @@ def test_static_url_round_trips_for_any_name(tmp_path, path):
         response = client.get(app.static_url(path))
         assert (response.status, response.text) == (200, "data")
         assert response.headers["Cache-Control"] == IMMUTABLE
+
+
+def test_flashed_messages_show_once(tmp_path):
+    from korvex.middleware import flash, sessions
+
+    page = "{% for category, message in get_flashed_messages() %}{{ category }}:{{ message }};{% endfor %}"
+    app, templates = make_app(tmp_path, {"page.html": page})
+    sessions(app, "k" * 32, secure=False)
+
+    @app.post("/go")
+    def go(request):
+        flash("saved", "ok")
+        return Response.redirect("/", status=303)
+
+    @app.get("/")
+    def index(request):
+        return templates.response("page.html")
+
+    with TestClient(app) as client:
+        client.post("/go")
+        assert client.get("/").text == "ok:saved;"
+        assert client.get("/").text == ""

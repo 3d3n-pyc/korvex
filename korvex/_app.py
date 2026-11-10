@@ -95,6 +95,13 @@ class LoopLocal:
 _HASHED = re.compile(r"((?:.*/)?[^/]+)\.([0-9a-f]{8})(\.[^./]+)?\Z")  # app.3f2a1c9b.css, LICENSE.3f2a1c9b
 
 
+def _flashed_messages() -> list[tuple[str, str]]:
+    """Template global: the flashed `(category, message)` pairs (needs `sessions()`)."""
+    from korvex.middleware._sessions import get_flashed_messages
+
+    return get_flashed_messages()
+
+
 class App(_RouteDecorators):
     """The application: routes, hooks, error handlers, OpenAPI, and `run()`. It is an ASGI app.
 
@@ -413,7 +420,7 @@ class App(_RouteDecorators):
         return cached[2]
 
     def templates(self, directory: str | os.PathLike[str] = "templates", *, reload: bool = False) -> Templates:
-        """Returns the `Templates` for `directory`, with `url_for` available in every template.
+        """Returns the `Templates` for `directory`, with `url_for`, `static_url` and `get_flashed_messages` available in every template.
 
         `directory`: the template folder, relative to the current directory.
         `reload`: recompile templates when their files change.
@@ -421,6 +428,7 @@ class App(_RouteDecorators):
         templates = Templates(Path(directory), reload=reload)
         templates.globals["url_for"] = self.url_for
         templates.globals["static_url"] = self.static_url
+        templates.globals["get_flashed_messages"] = _flashed_messages
         return templates
 
     # The overloads let `@app.on_startup` and `@app.on_startup()` both type-check.

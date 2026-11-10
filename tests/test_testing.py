@@ -178,7 +178,8 @@ def test_cookies_kept_deleted_and_secure_only_over_https():
         response = client.post("/login")
         assert response.status == 303 and response.headers["location"] == "/hello"
         assert client.cookies == {"session": "abc", "secret": "s"}
-        assert client.get("/echo").json()["cookies"] == {"session": "abc"}  # not the Secure one over http
+        assert client.get("/echo").json()["cookies"] == {"session": "abc", "secret": "s"}  # testserver is trusted
+        assert client.get("http://example.com/echo").json()["cookies"] == {"session": "abc"}  # not over other http
         assert client.get("https://testserver/echo").json()["cookies"] == {"session": "abc", "secret": "s"}
         client.post("/logout")
         assert client.cookies == {"secret": "s"}
@@ -433,3 +434,17 @@ def test_pytest_doesnt_collect_the_client_classes():
     from korvex import testing
 
     assert all(getattr(testing, name).__test__ is False for name in testing.__all__)
+
+
+def test_scope_server_port_follows_scheme_not_cookie_trust():
+    seen = []
+
+    async def asgi(scope, receive, send):
+        seen.append((scope["scheme"], scope["server"]))
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    with TestClient(asgi) as client:
+        client.get("http://testserver/")
+        client.get("https://testserver/")
+    assert seen == [("http", ("testserver", 80)), ("https", ("testserver", 443))]

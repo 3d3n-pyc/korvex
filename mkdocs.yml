@@ -65,6 +65,7 @@ plugins:
           - routes.md: Paths, parameters, groups, hosts, url_for, static files
           - requests-and-responses.md: What a handler gets and returns
           - templates.md: HTML templates, filters, escaping, hashed static URLs
+          - sessions.md: Signed-cookie sessions, flash messages, CSRF protection
           - validation.md: Typed parameters, models, headers, cookies, forms, 422 errors
           - dependencies.md: Depends, yield dependencies, overrides
           - errors-and-hooks.md: HTTPException, Abort, exception handlers, before/after hooks, startup/shutdown, app.local
@@ -87,6 +88,7 @@ nav:
       - Routes: routes.md
       - Requests and responses: requests-and-responses.md
       - Templates: templates.md
+      - Sessions and CSRF: sessions.md
       - Validation: validation.md
       - Dependencies: dependencies.md
       - Errors and hooks: errors-and-hooks.md

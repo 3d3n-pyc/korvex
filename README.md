@@ -82,6 +82,7 @@ project to install a Korvex skill ([more](docs/ai.md)).
 - [Templates](docs/templates.md): server-rendered HTML, with escaping and hashed static URLs.
 - [OpenAPI and security](docs/openapi.md): statuses, tags, documented errors, Bearer and API keys.
 - [Ready-made middleware](docs/middleware.md): CORS, request IDs, rate limiting, compression.
+- [Sessions and CSRF](docs/sessions.md): signed cookie sessions, flash messages, protection against cross-site forms.
 - [Testing](docs/testing.md)
 - [The built-in server](docs/server.md) and [deployment](docs/deployment.md): nginx, Caddy, Docker, AWS Lambda.
 

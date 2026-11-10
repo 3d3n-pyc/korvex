@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.17.0
+
+Signed cookie sessions, flash messages and CSRF protection, ready-made.
+
+- **Sessions.** `sessions(app, secret_key=...)` keeps a small dict per
+  visitor in a signed cookie, and `current_session()` returns it. The
+  signature is HMAC-SHA256: the data is signed, not encrypted, so keep
+  secrets out of it. Pass a list of keys to rotate them. The cookie is
+  sent again only when the session changes, and holds up to 4 KB. Guide:
+  <https://3d3n-pyc.github.io/korvex/sessions/>.
+- **Flash messages.** `flash(message, category="info")` and
+  `get_flashed_messages()`, also in templates.
+- **CSRF protection.** `csrf(app, trusted_origins=(), exempt=())` refuses
+  cross-origin unsafe requests and WebSocket handshakes with a 403. It
+  reads the `Sec-Fetch-Site` and `Origin` headers, so it needs no token.
+- **New exports** in `korvex.middleware`: `sessions`, `current_session`,
+  `flash`, `get_flashed_messages` and `csrf`.
+- **Changed: test clients send Secure cookies over http to local hosts.**
+  `TestClient` and `AsyncTestClient` now send them back over http to
+  `testserver`, `localhost`, `127.0.0.1` and `[::1]`, as browsers do for
+  localhost. They used to send them over https only. Migration: a test
+  that relied on Secure cookies not being sent over `http://testserver`
+  must use another host.
+
 ## 0.16.0
 
 Server-side HTML templates, and static files with hashed URLs.

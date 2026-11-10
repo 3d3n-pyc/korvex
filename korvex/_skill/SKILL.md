@@ -169,6 +169,19 @@ def test_tasks():
 - `app.templates("templates", reload=True)` recompiles changed templates:
   use it in development only.
 
+## Sessions, flash messages and CSRF
+
+- `sessions(app, secret_key=...)` keeps a dict per visitor in a signed
+  cookie. It is signed, not encrypted: no secrets in it, 4 KB at most.
+  Read the key from the environment, never hard-code it. A list of keys
+  rotates them.
+- `current_session()` returns that dict. Call `.clear()` at login.
+- `flash("Saved")` and `get_flashed_messages()` (also in templates) give
+  one-time messages.
+- `csrf(app)` refuses cross-site unsafe requests with a 403, with no
+  token: use it for HTML forms. `trusted_origins=` and `exempt=` make
+  exceptions.
+
 ## Testing
 
 - `TestClient(app)` in a `with` block runs startup and shutdown hooks.
