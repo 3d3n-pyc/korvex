@@ -4,6 +4,7 @@ and the `UploadedFile`s of a multipart form."""
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from email.message import Message
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union
@@ -353,6 +354,9 @@ class WebSocket(Connection):
         return f"WebSocket({self.path!r})"
 
 
+_PART_HEADER = re.compile(r"([!-9;-~]+):([^\r\n]*)")  # a name of printable ASCII, a colon, a value
+
+
 def _parse_multipart(body: bytes, boundary: str) -> FormData:
     """Splits a `multipart/form-data` body on its boundary into parts: header
     lines, a blank line, the value."""
@@ -362,12 +366,11 @@ def _parse_multipart(body: bytes, boundary: str) -> FormData:
             break
         head, _, data = part.removeprefix(b"\r\n").partition(b"\r\n\r\n")
         headers = Message()
-        try:
-            for line in head.decode("utf-8", "replace").split("\r\n"):
-                name, _, value = line.partition(":")
-                headers[name.strip()] = value.strip()
-        except ValueError:  # an empty name, or a line break inside a value
-            raise HTTPException(400, "invalid multipart part headers") from None
+        for line in head.decode("utf-8", "replace").split("\r\n"):
+            # Checked here, not left to Message: Python 3.14 refuses what 3.9-3.13 accept.
+            if (header := _PART_HEADER.fullmatch(line)) is None:
+                raise HTTPException(400, "invalid multipart part headers")
+            headers[header[1]] = header[2].strip()
         field = headers.get_param("name", header="content-disposition")
         if not isinstance(field, str):
             continue
