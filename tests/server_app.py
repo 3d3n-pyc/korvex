@@ -173,6 +173,21 @@ async def ws_firehose(ws):
         await ws.send_bytes(message)
 
 
+@app.get("/link", name="link")
+def link(request):
+    return Response.json({"url": app.url_for("link"), "root_path": request.root_path})
+
+
+@app.get("/api/status")
+def api_status():
+    return Response.text("status")
+
+
+@app.get("/admin")
+def admin():
+    return Response.text("admin")
+
+
 @app.get("/fail")
 def fail(request):
     raise RuntimeError("boom")
@@ -202,4 +217,5 @@ if __name__ == "__main__":
         forwarded_host=bool(os.environ.get("FORWARDED_HOST")),
         max_connections=int(os.environ.get("MAX_CONNECTIONS", "0")),
         max_requests=int(os.environ.get("MAX_REQUESTS", "0")),
+        **({"root_path": os.environ["ROOT_PATH"]} if "ROOT_PATH" in os.environ else {}),
     )

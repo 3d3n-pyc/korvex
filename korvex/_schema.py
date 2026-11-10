@@ -27,7 +27,7 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, NamedTuple, Union
 
-from korvex._errors import ValidationError
+from korvex._errors import RequestValidationError
 from korvex._params import REQUIRED, Dependency, Source
 from korvex._requests import Connection, MultiDict, Request, UploadedFile, WebSocket
 from korvex._response import Response
@@ -78,19 +78,21 @@ class Model:
             try:
                 return msgspec.json.decode(data, type=self.type)
             except (msgspec.ValidationError, msgspec.DecodeError) as error:
-                raise ValidationError([_msgspec_error(error)]) from None
+                raise RequestValidationError([_msgspec_error(error)]) from None
         import pydantic
 
         try:
             return self._adapter.validate_json(data)
         except pydantic.ValidationError as error:
-            raise ValidationError([_error(["body", *e["loc"]], e["msg"], e["type"]) for e in error.errors()]) from None
+            raise RequestValidationError(
+                [_error(["body", *e["loc"]], e["msg"], e["type"]) for e in error.errors()]
+            ) from None
 
     def from_form(self, form: MultiDict) -> Any:
         """The model, from a form's fields: each model field from the form
         field of the same name (its alias or rename); all values for a list,
         else the first. An empty value is missing, except for text; a
-        checkbox's `on` is true. Raises ValidationError with `["form", ...]`
+        checkbox's `on` is true. Raises RequestValidationError with `["form", ...]`
         locations."""
         data: dict[str, Any] = {}
         for key, tp in self._fields():
@@ -108,13 +110,15 @@ class Model:
             try:
                 return msgspec.convert(data, type=self.type, strict=False)  # text to numbers, dates...
             except msgspec.ValidationError as error:
-                raise ValidationError([_msgspec_error(error, "form")]) from None
+                raise RequestValidationError([_msgspec_error(error, "form")]) from None
         import pydantic
 
         try:
             return self._adapter.validate_python(data)
         except pydantic.ValidationError as error:
-            raise ValidationError([_error(["form", *e["loc"]], e["msg"], e["type"]) for e in error.errors()]) from None
+            raise RequestValidationError(
+                [_error(["form", *e["loc"]], e["msg"], e["type"]) for e in error.errors()]
+            ) from None
 
     def _fields(self) -> list[tuple[str, Any]]:
         """`(name in the request, annotation)` of each field of the model."""
@@ -346,7 +350,7 @@ class Plan:
 
     async def bind(self, request: Any, path_values: Mapping[str, Any], run: Run | None) -> dict[str, Any]:
         """The function's keyword arguments for `request`, dependencies
-        resolved through `run`. Raises ValidationError listing every problem."""
+        resolved through `run`. Raises RequestValidationError listing every problem."""
         kwargs: dict[str, Any] = {}
         errors: list[dict] = []
         # Each source is checked before looping: this runs on every request
@@ -356,7 +360,7 @@ class Plan:
             for dep in self.dependencies:
                 try:
                     value = await run.resolve(dep, request, path_values)
-                except ValidationError as error:  # its parameters didn't validate
+                except RequestValidationError as error:  # its parameters didn't validate
                     errors.extend(error.errors)
                     continue
                 if dep.name is not None:
@@ -386,7 +390,7 @@ class Plan:
                     continue
                 try:
                     kwargs[param.name] = model.from_form(form)
-                except ValidationError as error:
+                except RequestValidationError as error:
                     errors.extend(error.errors)
             for param in self.form:
                 values = form.get_all(param.key)
@@ -400,13 +404,13 @@ class Plan:
             else:
                 try:
                     kwargs[self.body.name] = self.body_model.decode(raw)
-                except ValidationError as error:
+                except RequestValidationError as error:
                     errors.extend(error.errors)
         if self.request:
             for name in self.request:
                 kwargs[name] = request
         if errors:
-            raise ValidationError(_unique(errors))
+            raise RequestValidationError(_unique(errors))
         return kwargs
 
     def respond(self, result: Any) -> Any:

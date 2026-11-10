@@ -11,7 +11,8 @@ import time
 import weakref
 from collections.abc import Awaitable, Callable, Hashable
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Protocol
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Optional, Protocol
 
 from korvex._response import Response
 
@@ -23,13 +24,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger("korvex")
 
 
-class Decision(NamedTuple):
-    """A rate limit store's answer for one request."""
+@dataclass(frozen=True)
+class Decision:
+    """A rate limit store's answer for one request.
+
+    - `allowed`: whether the request may go ahead.
+    - `remaining`: requests left before the limit.
+    - `retry_after`: seconds until the next request would be allowed (0 if allowed).
+    - `reset`: seconds until the key's whole allowance is back.
+    """
 
     allowed: bool
-    remaining: int  # requests left before the limit
-    retry_after: float  # seconds until the next request would be allowed (0 if allowed)
-    reset: float  # seconds until the key's whole allowance is back
+    remaining: int
+    retry_after: float
+    reset: float
 
 
 class RateLimitStore(Protocol):
@@ -52,7 +60,7 @@ class MemoryStore:
     Guide: https://3d3n-pyc.github.io/korvex/middleware/#where-the-counts-live
     """
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
         self._next_free: dict[Hashable, float] = {}  # key -> when its allowance is fully back
         self._calls = 0

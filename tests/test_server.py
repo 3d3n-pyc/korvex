@@ -840,3 +840,16 @@ def test_sigterm_waits_only_briefly_for_a_connection_that_sends_nothing():
         client.close()
     finally:
         process.kill()
+
+
+def test_root_path_prefixes_links_and_routes_the_received_path_as_is():
+    port = free_port()
+    process = start(port, ROOT_PATH="/api")
+    try:
+        base = f"http://127.0.0.1:{port}"
+        assert json.loads(fetch(base + "/link")[2])["url"] == "/api/link"
+        assert fetch(base + "/api/status")[2] == b"status"
+        for path in ("/api/link", "/api/admin", "/api%2Fadmin"):
+            assert fetch(base + path)[2] != b"admin"
+    finally:
+        process.kill()

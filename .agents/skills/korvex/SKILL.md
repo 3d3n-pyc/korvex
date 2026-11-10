@@ -124,7 +124,7 @@ def test_tasks():
 - **Errors are JSON** `{"detail": ...}`: `raise HTTPException(404, "...")`.
   `raise Abort(response)` sends an exact response (a redirect) from a
   handler, a dependency or a before hook. Validation errors are a 422
-  (`ValidationError`, list in `exc.errors`).
+  (`RequestValidationError`, list in `exc.errors`).
 - **`request.query` and forms are multi-dicts**: `.get(name)` gives the
   first value, `.get_all(name)` every one. `headers.get()` is
   case-insensitive.
@@ -152,12 +152,12 @@ def test_tasks():
   repeat), can `yield` for teardown, and can be replaced in tests with
   `app.dependency_overrides[f] = lambda: ...`.
 - **Templates** are not Jinja2Templates: no `TemplateResponse(request, ...)`.
-  Use `views.response("page.html", **context)`.
+  Use `views.response("page.html", {"post": post})`.
 
 ## Pages (HTML templates)
 
 - `views = app.templates("templates")` loads the `.html` files of a folder.
-  A handler returns `views.response("page.html", post=post)`.
+  A handler returns `views.response("page.html", {"post": post})`.
 - The syntax is Jinja-like, but it is Korvex's own engine: `{% extends %}`,
   `{% block %}`, `{% include %}`, `{% if %}`, `{% for %}`, filters with `|`.
   No macros.

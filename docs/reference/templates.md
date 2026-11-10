@@ -8,3 +8,7 @@ syntax and the filters; this page lists the classes.
 ::: korvex.Markup
 
 ::: korvex.TemplateError
+
+::: korvex.TemplateSyntaxError
+
+::: korvex.UndefinedError

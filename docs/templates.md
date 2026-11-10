@@ -11,7 +11,7 @@ views = app.templates("templates")  # a folder of .html files
 @app.get("/posts/{id}")
 def show(request, id: int):
     post = load_post(id)
-    return views.response("post.html", post=post)
+    return views.response("post.html", {"post": post})
 ```
 
 `templates/base.html`:
@@ -46,8 +46,8 @@ def show(request, id: int):
 {% endblock %}
 ```
 
-`views.response(name, **context)` renders the template and returns an HTML
-response. It takes `status=` and `headers=` too. Templates are compiled the
+`views.response(name, context)` renders the template with a dict of variables
+and returns an HTML response. It takes `status=` and `headers=` too. Templates are compiled the
 first time they are used, then cached.
 
 ## Syntax
@@ -161,7 +161,7 @@ its content:
 with TestClient(app) as client:
     assert "<h1>HELLO</h1>" in client.get("/posts/1").text
 
-html = views.render("post.html", post=post)  # the page as a str
+html = views.render("post.html", {"post": post})  # the page as a str
 ```
 
 ## Speed

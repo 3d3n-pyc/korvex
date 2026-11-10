@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Callable, Union
+from typing import Any, Callable, Optional, Union
 
 from korvex._response import HeaderItems, Response
 from korvex._templates.compile import compile_template
@@ -14,13 +15,22 @@ from korvex._templates.parse import Node, TemplateError, parse
 _Entry = tuple  # (render, used, {path: mtime_ns})
 
 
+def _check_context(context: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
+    """Return the context, `{}` for None; refuse anything that is not a mapping."""
+    if context is None:
+        return {}
+    if not isinstance(context, Mapping):
+        raise TypeError(f"the template context must be a dict, not {type(context).__name__}")
+    return context
+
+
 class Templates:
     """Render HTML templates from a folder.
 
     Templates are compiled the first time they are used, then cached.
 
         templates = Templates("templates")
-        html = templates.render("index.html", user="Ada")
+        html = templates.render("index.html", {"user": "Ada"})
 
     Set `reload=True` to pick up edited files. The guide:
     https://3d3n-pyc.github.io/korvex/templates/
@@ -35,20 +45,39 @@ class Templates:
         self._cache: dict[str, _Entry] = {}
         self._lock = threading.Lock()
 
-    def render(self, name: str, /, **context: Any) -> str:
-        """Render the template `name` with `context` and return the text."""
+    def render(self, name: str, context: Optional[Mapping[str, Any]] = None, /) -> str:
+        """Render a template and return the text.
+
+        `name` is the template's path in the folder.
+        `context` is a dict (or any mapping) of the template's variables.
+        """
+        context = _check_context(context)
         entry = self._cache.get(name)
         if entry is None or (self.reload and self._stale(entry)):
             entry = self._compile(name)
         return entry[0](context, self.globals)
 
-    def response(self, name: str, /, *, status: int = 200, headers: HeaderItems = (), **context: Any) -> Response:
-        """Render `name` with `context` now and return it as an HTML response.
+    def response(
+        self,
+        name: str,
+        context: Optional[Mapping[str, Any]] = None,
+        /,
+        *,
+        status: int = 200,
+        headers: HeaderItems = (),
+    ) -> Response:
+        """Render a template now and return it as an HTML response.
 
-        `status` and `headers` set the response's; a Content-Type in `headers` wins.
+        `name` is the template's path in the folder.
+        `context` is a dict (or any mapping) of the template's variables.
+        `status` is the HTTP status code.
+        `headers` are extra headers; a Content-Type in them wins.
+
+            views.response("post.html", {"post": post})
+
         Guide: https://3d3n-pyc.github.io/korvex/templates/
         """
-        response = Response(self.render(name, **context), status=status, headers=headers)
+        response = Response(self.render(name, context), status=status, headers=headers)
         if "Content-Type" not in response.headers:
             response.headers.set("Content-Type", "text/html; charset=utf-8")
         return response

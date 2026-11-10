@@ -60,6 +60,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         action="store_true",
         help="also believe the proxy's X-Forwarded-Host: only if it sets that header itself",
     )
+    run.add_argument(
+        "--root-path",
+        default="",
+        help="prefix a proxy strips before forwarding, such as /api: links get it back (default: none)",
+    )
     run.add_argument("--access-log", action="store_true", help="log each request")
     run.add_argument(
         "--ws-ping-interval", type=float, default=20.0, help="seconds between WebSocket pings; 0 for none (default: 20)"
@@ -92,6 +97,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         forwarded_host=args.forwarded_host,
         max_connections=args.max_connections,
         max_requests=args.max_requests,
+        root_path=args.root_path,
     )
 
 

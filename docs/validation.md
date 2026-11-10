@@ -83,14 +83,14 @@ Invalid input gets a 422 listing the problems:
 `loc` says where: `["query", "page"]`, `["header", "x-client"]`,
 `["form", "title"]`. pydantic lists every problem; msgspec stops at the
 first. To answer differently, handle the 422; the exception is a
-`ValidationError`, with the list in `errors`:
+`RequestValidationError`, with the list in `errors`:
 
 ```python
-from korvex import Response, ValidationError
+from korvex import Response, RequestValidationError
 
 
 @app.exception_handler(422)
-def invalid(request, exc: ValidationError):
+def invalid(request, exc: RequestValidationError):
     return Response.json({"problems": [e["loc"] for e in exc.errors]}, status=422)
 ```
 

@@ -60,15 +60,18 @@ Done: the API's open questions (0.10), ready-made middleware (0.11), more
 than one core per worker (0.12), what everyone expects from a framework
 (0.13: a test client, reverse URLs, a richer OpenAPI), a review of the
 whole public API (0.14), a documentation site (0.14.2), a more robust
-built-in server (0.15), a soak test in CI (0.15.1), and server-side
-templates with hashed static URLs (0.16), and sessions with CSRF
-protection (0.17). The public API is
-what `korvex`, `korvex.router`, `korvex.testing`, `korvex.security` and
-`korvex.middleware` export. Until
+built-in server (0.15), a soak test in CI (0.15.1), server-side
+templates with hashed static URLs (0.16), sessions with CSRF
+protection (0.17), and an ASGI `root_path` with the last breaking API
+changes (1.0.0rc1). The public API is what `korvex`, `korvex.router`,
+`korvex.testing`, `korvex.security` and `korvex.middleware` export. Until
 1.0 it can change, each change listed in the changelog with how to
-update; after, it stays. Next: 1.0.0rc1.
+update; after, it stays. Next: 1.0.0, after feedback on the rc.
 
 ## 1.0
+
+1.0.0rc1 freezes the API: from 1.0, no breaking change without a 2.0.
+1.0.0 follows feedback on the rc. It needs:
 
 - An API that stays stable, with deprecations announced in advance: a
   deprecated feature warns for at least two minor versions before it goes.
@@ -78,15 +81,15 @@ update; after, it stays. Next: 1.0.0rc1.
 ## After 1.0
 
 What other frameworks have that Korvex doesn't yet, roughly by how often
-it's needed. Each adds to the API without changing it, so it can come in
-a minor version:
+it's needed. Each adds to the API without changing it, so each comes in a
+minor version:
 
-- **Background tasks**: work that runs after the response is sent (an
+- **1.1, background tasks**: work that runs after the response is sent (an
   email, a webhook), without holding it up.
-- **Server-Sent Events**: a helper on top of `Response.stream`.
-- **Mounting another ASGI app** under a prefix (an admin, an existing
+- **1.1, Server-Sent Events**: a helper on top of `Response.stream`.
+- **1.2, mounting another ASGI app** under a prefix (an admin, an existing
   app), like Starlette's `Mount`.
-- **Conditional static files**: `ETag`, `If-Modified-Since` and `Range`,
+- **1.2, conditional static files**: `ETag`, `If-Modified-Since` and `Range`,
   for caching and resumable downloads.
-- **More kinds of models** for validation: dataclasses, `TypedDict`,
+- **Later, more kinds of models** for validation: dataclasses, `TypedDict`,
   attrs, as Litestar takes them.

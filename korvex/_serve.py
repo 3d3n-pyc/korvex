@@ -67,6 +67,7 @@ class Config(NamedTuple):
     threads: int = 1  # event loops per worker, each in its own thread
     max_connections: int = 0  # open connections per worker and thread; 0 for no limit
     max_requests: int = 0  # HTTP requests a worker serves before it restarts, give or take 10%; 0 for never
+    root_path: str = ""  # the prefix a proxy strips before forwarding; "" for none
 
 
 def run(app: App, host: str, port: int, *, workers: int, graceful_timeout: float, config: Config) -> None:
@@ -76,6 +77,8 @@ def run(app: App, host: str, port: int, *, workers: int, graceful_timeout: float
         raise ValueError("workers must be at least 1")
     if config.threads < 1:
         raise ValueError("threads must be at least 1")
+    if config.root_path and (not config.root_path.startswith("/") or config.root_path.endswith("/")):
+        raise ValueError("root_path must be empty, or start with / and not end with /")
     if config.max_connections < 0:
         raise ValueError("max_connections must be 0 (no limit) or more")
     if config.max_requests < 0:
@@ -215,7 +218,7 @@ async def serve(
         list(config.constraints),
         config.max_connections,
     )
-    handle = functools.partial(_serve_http, app)
+    handle = functools.partial(_serve_http, app, root_path=config.root_path)
     if config.access_log:
         handle = _logged(handle)
     counter = counter or _request_counter(config.max_requests, stopping.set)
@@ -249,7 +252,11 @@ async def serve(
                 path, query, headers, client, scheme, connection = event
                 queue: asyncio.Queue = asyncio.Queue()
                 websockets[connection.id] = queue
-                task = start(_serve_websocket(app, path, query, headers, client, scheme, connection, queue, writable))
+                task = start(
+                    _serve_websocket(
+                        app, path, query, headers, client, scheme, connection, queue, writable, config.root_path
+                    )
+                )
                 task.add_done_callback(lambda _, id=connection.id: websockets.pop(id, None))
             elif kind == "ws_message" and event[0] in websockets:
                 key = "text" if isinstance(event[1], str) else "bytes"
@@ -318,6 +325,7 @@ async def _serve_http(
     responder: Any,
     error: int = 0,
     writable: Callable[[int], Awaitable[None]] | None = None,
+    root_path: str = "",
 ) -> int:
     """Runs one request from the built-in server through the same dispatch
     as under ASGI, hands the response to Rust, and returns its status.
@@ -326,7 +334,7 @@ async def _serve_http(
     as if the route had raised `HTTPException`. A streamed response waits
     on `writable(responder.id)` while its client is behind."""
     decoded = unquote(path) if "%" in path else path
-    request = Request._from_server(method, decoded, query_string, headers, client, scheme, body, app)
+    request = Request._from_server(method, decoded, query_string, headers, client, scheme, body, app, root_path)
     response = await app._respond(request, error)
     head = method == "HEAD"
     raw_headers = _raw_headers(response, head)
@@ -361,6 +369,7 @@ async def _serve_websocket(
     connection: Any,
     incoming: asyncio.Queue,
     writable: Callable[[int], Awaitable[None]] | None = None,
+    root_path: str = "",
 ) -> None:
     """Runs a WebSocket from the built-in server through the same code as
     under ASGI, speaking ASGI messages over the Rust connection. A send
@@ -368,7 +377,8 @@ async def _serve_websocket(
     offered = next((v.decode("latin-1") for k, v in headers if k == b"sec-websocket-protocol"), "")
     scope = {
         "type": "websocket",
-        "path": unquote(path),
+        "path": root_path + unquote(path),  # ASGI: includes root_path; the app strips it once
+        "root_path": root_path,
         "query_string": query_string,
         "headers": headers,
         "client": client,

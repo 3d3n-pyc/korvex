@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.0.0rc1
+
+The API is frozen. From 1.0, no breaking change without a 2.0. The breaking
+changes below are the last before then; each has a migration line.
+
+- **New: ASGI `root_path`.** An app served under a prefix
+  (`uvicorn --root-path /api`) routes correctly. `request.path` stays the
+  route path, `request.root_path` holds the prefix, and `url_for` (on the
+  request, the app and in templates) and `static_url` include it. The
+  built-in server takes it too, for a proxy that strips the prefix:
+  `korvex run --root-path /api` or `app.run(root_path="/api")`. An app is
+  served under one root_path. Guide: <https://3d3n-pyc.github.io/korvex/server/>.
+- **New exports** from `korvex`: `StreamingResponse`, `MultiDict`,
+  `UndefinedError` and `TemplateSyntaxError`.
+- **Breaking: `ValidationError` is now `RequestValidationError`.** Migration:
+  rename it in imports and in `exception_handler`. The OpenAPI schema name
+  stays `ValidationError`.
+- **Breaking: template context is a dict.** `Templates.render(name, context)`
+  and `response(name, context)` take the variables as a dict, not as
+  keywords. Migration: `views.response("p.html", post=post)` becomes
+  `views.response("p.html", {"post": post})`. A variable can now be called
+  `status` or `headers`.
+- **Breaking: rate limit `Decision` is a frozen dataclass.** Migration: read
+  `d.allowed`, `d.remaining` and so on, instead of unpacking it as a tuple.
+- **Breaking: more keyword-only arguments.** `sessions(app, secret_key=...)`,
+  `MemoryStore(clock=...)`, `WebSocket.accept(subprotocol, headers=...)` and
+  `App.static_url(path, name=...)`. Migration: pass `secret_key`, `clock`,
+  `headers` and `name` by keyword.
+
 ## 0.17.0
 
 Signed cookie sessions, flash messages and CSRF protection, ready-made.

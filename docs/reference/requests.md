@@ -15,6 +15,6 @@ and what both share, `Connection`. See [Requests and responses](../requests-and-
 
 `request.query` and `await request.form()` are a `MultiDict`:
 
-::: korvex._requests.MultiDict
+::: korvex.MultiDict
     options:
       show_root_full_path: false

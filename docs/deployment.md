@@ -16,6 +16,11 @@ ASGI server, including serverless platforms. The files are in
 With your own server, put a reverse proxy in front: it handles HTTPS,
 HTTP/2 and HTTP/3, then forwards each request to Korvex in HTTP/1.1.
 
+If the proxy serves the app under a path prefix (`example.com/api/`), give
+Korvex that prefix so links come out right: `--root-path /api` for uvicorn
+or the built-in server (`app.run(root_path="/api")`). See the
+[server guide](server.md).
+
 ## 1. Built-in server behind a reverse proxy
 
 The fastest setup (see the server comparison in the README). With the

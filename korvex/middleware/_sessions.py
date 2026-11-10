@@ -112,8 +112,8 @@ _state: ContextVar[Optional[_State]] = ContextVar("korvex_session", default=None
 
 def sessions(
     app: App,
-    secret_key: Union[str, bytes, Sequence[Union[str, bytes]]],
     *,
+    secret_key: Union[str, bytes, Sequence[Union[str, bytes]]],
     max_age: int = 14 * 24 * 3600,
     cookie: str = "session",
     secure: bool = True,
