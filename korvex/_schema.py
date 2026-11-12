@@ -100,11 +100,14 @@ class Model:
             self._adapter = pydantic.TypeAdapter(tp)
         else:
             self._decoder, self._encoder = _msgspec_codecs(tp, name)
+            self._recursive = _is_recursive_model(tp)
 
     def decode(self, data: bytes) -> Any:
         if self.library == "msgspec":
             import msgspec
 
+            if self._recursive and len(data) > 64 * 1024 and _json_too_deep(data):
+                raise RequestValidationError([_too_deep("body")])
             try:
                 value = self._decoder.decode(data)
                 return _fill_defaults(value) if self.fill else value
@@ -224,6 +227,50 @@ def _fill_defaults(value: Any) -> Any:
 def _too_deep(root: str) -> dict:
     """The error for a body nested too deeply to decode."""
     return _error([root], "nested too deeply", "recursion_error")
+
+
+def _json_too_deep(data: bytes, limit: int = 1000) -> bool:
+    """Whether JSON containers exceed the nesting depth accepted by models."""
+    depth = 0
+    in_string = False
+    escaped = False
+    for byte in data:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif byte == 92:
+                escaped = True
+            elif byte == 34:
+                in_string = False
+        elif byte == 34:
+            in_string = True
+        elif byte == 123 or byte == 91:
+            depth += 1
+            if depth > limit:
+                return True
+        elif byte == 125 or byte == 93:
+            depth -= 1
+    return False
+
+
+def _is_recursive_model(tp: Any, active: set[Any] | None = None) -> bool:
+    """Whether a msgspec model contains itself through a field type."""
+    import msgspec
+
+    if active is None:
+        active = set()
+    if typing.get_origin(tp) is list:
+        args = typing.get_args(tp)
+        return bool(args) and _is_recursive_model(args[0], active)
+    if not inspect.isclass(tp) or not issubclass(tp, msgspec.Struct):
+        return False
+    if tp in active:
+        return True
+    active.add(tp)
+    try:
+        return any(_is_recursive_model(field.type, active) for field in msgspec.structs.fields(tp))
+    finally:
+        active.remove(tp)
 
 
 def _msgspec_codecs(tp: Any, name: str) -> tuple[Any, Any]:
