@@ -3,7 +3,8 @@
 A handler's annotations say where its parameters come from, read once at
 route registration:
 
-- a msgspec `Struct` or pydantic model (or a list of them): the JSON body;
+- a msgspec `Struct`, pydantic model, dataclass or TypedDict (or a list of
+  them): the JSON body;
 - the name of a path parameter: the path, converted to the annotated type;
 - `str`, `int`, `float`, `bool`, `UUID`, `date`, `datetime`, or an
   `Optional` or `list` of those: the query string (dates in ISO 8601);
@@ -12,11 +13,13 @@ route registration:
 
 A model return annotation turns the returned object into a JSON response.
 Invalid input gets a 422 listing every problem. msgspec and pydantic are
-optional: Korvex uses whichever a model comes from.
+optional: Korvex uses whichever a model comes from; a dataclass or
+TypedDict goes through msgspec if installed, else pydantic.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import inspect
 import re
@@ -48,11 +51,16 @@ def _error(loc: list, msg: str, kind: str) -> dict:
 
 
 def _library(tp: Any) -> str | None:
-    """ "msgspec" or "pydantic" if `tp` is a model (or list of models) of that library, else None."""
+    """ "msgspec" or "pydantic" if `tp` is a model (or list of models) of that
+    library, "dataclass" or "typeddict" for those, else None."""
     if typing.get_origin(tp) is list and len(typing.get_args(tp)) == 1:
         tp = typing.get_args(tp)[0]
     if not inspect.isclass(tp):
         return None
+    if dataclasses.is_dataclass(tp):
+        return "dataclass"
+    if issubclass(tp, dict) and hasattr(tp, "__total__"):
+        return "typeddict"
     for module, base in (("msgspec", "Struct"), ("pydantic", "BaseModel")):
         library = sys.modules.get(module)  # a model of it means it's imported
         if library is not None and issubclass(tp, getattr(library, base)):
@@ -60,26 +68,53 @@ def _library(tp: Any) -> str | None:
     return None
 
 
+def _backend(kind: str, tp: Any) -> str:
+    """The library that validates a dataclass or TypedDict: msgspec if
+    installed, else pydantic. Raises TypeError if neither is."""
+    for module in ("msgspec", "pydantic"):
+        try:
+            __import__(module)
+        except ImportError:
+            continue
+        return module
+    name = getattr(tp, "__qualname__", repr(tp))
+    label = "dataclass" if kind == "dataclass" else "TypedDict"
+    raise TypeError(f"validating {label} {name} needs msgspec or pydantic: pip install msgspec")
+
+
 class Model:
     """Decodes, encodes and describes a model type (or list of models)
     with its library."""
 
-    def __init__(self, tp: Any) -> None:
+    def __init__(self, tp: Any, name: str = "") -> None:
         self.type = tp
         self.library = _library(tp)
+        self.own = self.library in ("dataclass", "typeddict")  # a standard-library type
+        if self.own:
+            item = typing.get_args(tp)[0] if typing.get_origin(tp) is list else tp
+            self.library = _backend(self.library or "", item)
+        self.fill = self.library == "msgspec" and _has_dataclass(tp, set())
         if self.library == "pydantic":
             import pydantic
 
             self._adapter = pydantic.TypeAdapter(tp)
+        else:
+            self._decoder, self._encoder = _msgspec_codecs(tp, name)
+            self._recursive = _is_recursive_model(tp)
 
     def decode(self, data: bytes) -> Any:
         if self.library == "msgspec":
             import msgspec
 
+            if self._recursive and len(data) > 64 * 1024 and _json_too_deep(data):
+                raise RequestValidationError([_too_deep("body")])
             try:
-                return msgspec.json.decode(data, type=self.type)
+                value = self._decoder.decode(data)
+                return _fill_defaults(value) if self.fill else value
             except (msgspec.ValidationError, msgspec.DecodeError) as error:
                 raise RequestValidationError([_msgspec_error(error)]) from None
+            except RecursionError:
+                raise RequestValidationError([_too_deep("body")]) from None
         import pydantic
 
         try:
@@ -109,13 +144,18 @@ class Model:
             import msgspec
 
             try:
-                return msgspec.convert(data, type=self.type, strict=False)  # text to numbers, dates...
+                value = msgspec.convert(data, type=self.type, strict=False)  # text to numbers, dates...
+                return _fill_defaults(value) if self.fill else value
             except msgspec.ValidationError as error:
                 raise RequestValidationError([_msgspec_error(error, "form")]) from None
+            except RecursionError:
+                raise RequestValidationError([_too_deep("form")]) from None
         import pydantic
 
         try:
             return self._adapter.validate_python(data)
+        except RecursionError:
+            raise RequestValidationError([_too_deep("form")]) from None
         except pydantic.ValidationError as error:
             raise RequestValidationError(
                 [_error(["form", *e["loc"]], e["msg"], e["type"]) for e in error.errors()]
@@ -123,6 +163,8 @@ class Model:
 
     def _fields(self) -> list[tuple[str, Any]]:
         """`(name in the request, annotation)` of each field of the model."""
+        if self.own:
+            return list(typing.get_type_hints(self.type).items())
         if self.library == "msgspec":
             import msgspec
 
@@ -131,9 +173,7 @@ class Model:
 
     def encode(self, value: Any) -> bytes:
         if self.library == "msgspec":
-            import msgspec
-
-            return msgspec.json.encode(value)
+            return self._encoder.encode(value)
         return self._adapter.dump_json(value)
 
     def schema(self, components: dict) -> dict:
@@ -151,6 +191,102 @@ class Model:
             components[schema["title"]] = schema
             return {"$ref": f"#/components/schemas/{schema['title']}"}
         return schema
+
+
+def _has_dataclass(tp: Any, seen: set) -> bool:
+    """Whether `tp` is, or holds in its arguments, a dataclass."""
+    if tp in seen:
+        return False
+    seen.add(tp)
+    if inspect.isclass(tp) and dataclasses.is_dataclass(tp):
+        return True
+    return any(_has_dataclass(arg, seen) for arg in typing.get_args(tp))
+
+
+def _fill_defaults(value: Any) -> Any:
+    """`value` with every dataclass in it holding all its fields: msgspec
+    leaves a field it didn't decode on the class, out of the instance's
+    `__dict__`, so `vars()`, `asdict()` and the encoders would miss it."""
+    if isinstance(value, list):
+        for item in value:
+            _fill_defaults(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _fill_defaults(item)
+    elif dataclasses.is_dataclass(value) and not isinstance(value, type) and hasattr(value, "__dict__"):
+        for field in dataclasses.fields(value):
+            if field.name not in value.__dict__:
+                if field.default is not dataclasses.MISSING:
+                    value.__dict__[field.name] = field.default
+                elif field.default_factory is not dataclasses.MISSING:
+                    value.__dict__[field.name] = field.default_factory()
+            _fill_defaults(value.__dict__.get(field.name))
+    return value
+
+
+def _too_deep(root: str) -> dict:
+    """The error for a body nested too deeply to decode."""
+    return _error([root], "nested too deeply", "recursion_error")
+
+
+def _json_too_deep(data: bytes, limit: int = 1000) -> bool:
+    """Whether JSON containers exceed the nesting depth accepted by models."""
+    depth = 0
+    in_string = False
+    escaped = False
+    for byte in data:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif byte == 92:
+                escaped = True
+            elif byte == 34:
+                in_string = False
+        elif byte == 34:
+            in_string = True
+        elif byte == 123 or byte == 91:
+            depth += 1
+            if depth > limit:
+                return True
+        elif byte == 125 or byte == 93:
+            depth -= 1
+    return False
+
+
+def _is_recursive_model(tp: Any, active: set[Any] | None = None) -> bool:
+    """Whether a msgspec model contains itself through a field type."""
+    import msgspec
+
+    if active is None:
+        active = set()
+    if typing.get_origin(tp) is list:
+        args = typing.get_args(tp)
+        return bool(args) and _is_recursive_model(args[0], active)
+    if not inspect.isclass(tp) or not issubclass(tp, msgspec.Struct):
+        return False
+    if tp in active:
+        return True
+    active.add(tp)
+    try:
+        return any(_is_recursive_model(field.type, active) for field in msgspec.structs.fields(tp))
+    finally:
+        active.remove(tp)
+
+
+def _msgspec_codecs(tp: Any, name: str) -> tuple[Any, Any]:
+    """A msgspec decoder and encoder for `tp`, built once. A type msgspec
+    cannot handle raises TypeError now, naming the parameter `name`."""
+    import msgspec
+
+    try:
+        return msgspec.json.Decoder(tp), msgspec.json.Encoder()
+    except TypeError as error:
+        hint = ""
+        if sys.version_info < (3, 10) and "not supported" in str(error):
+            hint = ". On Python 3.9 write typing.List['Node'], not list['Node'], for a quoted name"
+        raise TypeError(
+            f"parameter {name or 'type'!r} has type {tp!r} that msgspec cannot handle: {error}{hint}"
+        ) from None
 
 
 def _msgspec_error(error: Exception, root: str = "body") -> dict:
@@ -304,13 +440,13 @@ class Plan:
         self.headers = [p for p in params if p.source == "header"]
         self.cookies = [p for p in params if p.source == "cookie"]
         self.form = [p for p in params if p.source == "form"]
-        self.form_models = [(p, Model(p.type)) for p in params if p.source == "form_model"]
+        self.form_models = [(p, Model(p.type, p.name)) for p in params if p.source == "form_model"]
         self.request = [p.name for p in params if p.source == "request"]
         self.tasks = [p.name for p in params if p.source == "tasks"]
         self.request_name = self.request[0] if len(self.request) == 1 else None  # the usual case
         self.binds = any(p.source != "request" for p in params)  # something to read from the request
         self.body = next((p for p in params if p.source == "body"), None)
-        self.body_model = Model(self.body.type) if self.body else None
+        self.body_model = Model(self.body.type, self.body.name) if self.body else None
         self.response = response
         self.empty = False  # annotated `-> None`: an empty response
         self.status = 200  # the route's, for a response built from the return value
@@ -706,7 +842,9 @@ def plan_for(
     if sum(p.source == "body" for p in params) > 1:
         raise TypeError(f"{where}: only one parameter can be the request body")
     returned = hints.get("return")
-    response = Model(returned) if handler and not websocket and returned is not None and _library(returned) else None
+    response = (
+        Model(returned, "return") if handler and not websocket and returned is not None and _library(returned) else None
+    )
     doc = inspect.getdoc(func) or ""
     summary, _, description = doc.partition("\n")
     plan = Plan(func, pattern, websocket, params, deps, response, summary.strip(), description.strip())

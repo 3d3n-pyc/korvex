@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.0.0rc5
+
+Dataclasses and `TypedDict` as models, and a fix for deeply nested JSON.
+
+- **New: dataclasses and `TypedDict` as models.** A `@dataclass` or a
+  `TypedDict` (or a list or `Optional` of them) works wherever a msgspec
+  `Struct` or a pydantic model did: a JSON body, a return annotation
+  (`-> Task`, `-> list[Task]`) and a `Form()` model, with the same 422
+  errors and the OpenAPI schema. Korvex validates them with msgspec if
+  installed, else pydantic; with neither, declaring the route raises a
+  `TypeError` that says to `pip install msgspec`. Fields the client left out
+  get their defaults, so the handler gets a complete object and the response
+  JSON includes them. `NamedTuple` and attrs classes are not supported.
+  Guide: <https://3d3n-pyc.github.io/korvex/validation/#dataclasses-and-typeddict>.
+- **Fixed: a deeply nested JSON body gave a 500.** A body nested thousands
+  of levels deep (20000, for example) on a msgspec model now gets a 422
+  "nested too deeply".
+
 ## 1.0.0rc4
 
 Mounting another ASGI app, and conditional static files.

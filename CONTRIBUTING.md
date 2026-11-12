@@ -45,6 +45,10 @@ korvex/       public: korvex, korvex.router, .testing, .security, .middleware
   _params.py    Header(), Cookie(), Query(), Form() and Depends()
   _schema.py    validation from a handler's annotations (msgspec or pydantic),
                 and resolving dependencies
+  _background.py background tasks: work that runs after the response is sent
+  _sse.py       Server-Sent Events: the event type, encoding, pings, parser
+  _mount.py     app.mount(): scope, receive and send of a mounted ASGI app
+  _conditional.py conditional and range requests for static files
   _openapi.py   the OpenAPI document and the Swagger UI page
   _urls.py      reverse URLs: url_for()
   _templates/   server-side templates: parse.py (the parser), compile.py

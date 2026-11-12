@@ -12,6 +12,9 @@ included. The API can change before 1.0: check the installed version
 (`korvex.__version__`) against the
 [changelog](https://github.com/3d3n-pyc/korvex/blob/main/CHANGELOG.md).
 
+Install with `pip install --pre korvex msgspec` (release candidate: plain
+`pip install korvex` gives 0.17, an older API).
+
 The full documentation, as Markdown for LLMs:
 <https://3d3n-pyc.github.io/korvex/llms-full.txt>. Read the page you need
 from <https://3d3n-pyc.github.io/korvex/llms.txt> before guessing an API.
@@ -111,8 +114,8 @@ def test_tasks():
 - **`status=` is the success status of a returned model** or `None`; a
   returned `Response` keeps its own.
 - **Where a parameter comes from** depends on its name and type: a name
-  in the path → path; a msgspec/pydantic model (or a list of them) → JSON
-  body; `str`, `int`, `float`, `bool`, `UUID`, `date`, `datetime` (or
+  in the path → path; a msgspec/pydantic model, dataclass or TypedDict (or a list of them) →
+  JSON body; `str`, `int`, `float`, `bool`, `UUID`, `date`, `datetime` (or
   `Optional`/`list` of them) → query string; `Header()`, `Cookie()`,
   `Form()`, `Query(alias=...)` → there; `Depends(func)` → what `func`
   returns. Anything else is refused when the route is declared.

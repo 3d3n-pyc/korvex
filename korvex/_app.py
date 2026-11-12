@@ -549,7 +549,7 @@ class App(_RouteDecorators):
         It gets the request (`path_params` empty) and returns a `Response` to answer, or `None`.
         For a WebSocket handshake, answering or raising `HTTPException` or `Abort` refuses it.
         Guide: https://3d3n-pyc.github.io/korvex/errors-and-hooks/#hooks-around-every-request"""
-        return _add_hook(self._before_request, func)  # type: ignore[arg-type]
+        return _add_hook(self._before_request, func)
 
     @overload
     def after_request(self, func: AfterHook) -> AfterHook: ...
@@ -560,7 +560,7 @@ class App(_RouteDecorators):
 
         It returns the response to send, or `None` to keep it.
         Guide: https://3d3n-pyc.github.io/korvex/errors-and-hooks/#hooks-around-every-request"""
-        return _add_hook(self._after_request, func)  # type: ignore[arg-type]
+        return _add_hook(self._after_request, func)
 
     def exception_handler(self, key: int | type[Exception]) -> Callable[[ExceptionHandler], ExceptionHandler]:
         """Decorator: answers errors with the function's `Response`.
@@ -586,18 +586,29 @@ class App(_RouteDecorators):
             raise NotImplementedError(f"unsupported ASGI scope type: {scope['type']!r}")
 
         request = Request(scope, receive, {}, self)
-        if request.root_path != self._root_path:
-            self._root_path = request.root_path
-        mount = None
-        response: Response = None  # type: ignore[assignment]
         try:
             response = await self._respond(request)
         except MountMatch as matched:
             mount = matched
-        if mount is not None:  # outside the except: errors of the sub-app don't show MountMatch
-            await self._call_mount(mount, request, scope, receive, send)
+        else:  # outside the except: errors of a mounted app don't show the MountMatch
+            head = scope["method"] == "HEAD"
+            if request._tasks is not None:  # rare: background tasks run once the response is out
+                await self._send_with_tasks(request, response, send, head, receive)
+            elif isinstance(response, StreamingResponse):
+                await self._send_stream(response, send, head, request.path, receive)
+            else:
+                await send(
+                    {"type": "http.response.start", "status": response.status, "headers": _raw_headers(response, head)}
+                )
+                # HEAD: GET's headers, no body.
+                await send({"type": "http.response.body", "body": b"" if head else response.body})
             return
-        head = scope["method"] == "HEAD"
+        await self._call_mount(mount, request, scope, receive, send)
+
+    async def _send_with_tasks(
+        self, request: Request, response: Response, send: Callable, head: bool, receive: Callable
+    ) -> None:
+        """Sends the response, then runs the request's background tasks, sent or not."""
         try:
             if isinstance(response, StreamingResponse):
                 await self._send_stream(response, send, head, request.path, receive)
@@ -605,11 +616,9 @@ class App(_RouteDecorators):
             await send(
                 {"type": "http.response.start", "status": response.status, "headers": _raw_headers(response, head)}
             )
-            # HEAD: GET's headers, no body.
             await send({"type": "http.response.body", "body": b"" if head else response.body})
         finally:
-            if request._tasks is not None:  # sent or not, the client never waits for them
-                await request._tasks._run()
+            await request._tasks._run()
 
     def _mount_state(self, prefix: str) -> Optional[dict]:
         """The lifespan state of the app mounted at `prefix`, in this event loop."""
@@ -747,8 +756,6 @@ class App(_RouteDecorators):
         HTTPException. Leaves nothing open."""
         found, host_params = None, None
         websocket = WebSocket(scope, receive, send, {}, self)
-        if websocket.root_path != self._root_path:
-            self._root_path = websocket.root_path
         host = self._host_for(_host_labels(Request(scope, receive, {}))) if self._hosts else None
         if host is not None:
             found = host[0].ws_router.match(websocket.path)
