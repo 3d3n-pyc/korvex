@@ -57,6 +57,11 @@ the route raises a `TypeError` telling you to `pip install msgspec`. A
 `NamedTuple` or attrs class is not supported. Before Python 3.12, pydantic wants
 `TypedDict` from `typing_extensions`.
 
+Defaults are filled in for dataclasses nested anywhere, including inside a
+`TypedDict` or a msgspec `Struct`. A field declared with `field(init=False)`
+is never taken from the client: it keeps its default (or `default_factory`)
+whatever the body sends.
+
 ```python
 from dataclasses import dataclass
 from typing import TypedDict
