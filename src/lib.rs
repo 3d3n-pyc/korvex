@@ -187,6 +187,7 @@ fn escape_html<'py>(s: &Bound<'py, pyo3::types::PyString>) -> PyResult<Bound<'py
     }
 }
 
+#[allow(clippy::used_underscore_items)] // the name Python imports: korvex._core
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Router>()?;
