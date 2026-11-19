@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **New: precompressed static files.** `app.static(..., precompressed=True)`
+  serves `app.css.zst`, `app.css.br` or `app.css.gz` when they sit next to
+  `app.css`, picked from the client's `Accept-Encoding`, with
+  `Content-Encoding`, `Vary` and the file's own `ETag`. Korvex never creates
+  them: generate them at build time. Guide:
+  <https://3d3n-pyc.github.io/korvex/routes/#precompressed-files>.
+- **Changed: compressed files are sent by their real type.** `Response.file()`
+  and `static()` send `x.tar.gz` and `app.css.gz` as `application/gzip`, `.zst`
+  as `application/zstd` and `.br` as `application/octet-stream`. Before, they
+  sent the inner type (such as `text/css`), which browsers misread. Migration:
+  pass `content_type=` to `Response.file()` to keep the old one; for
+  `static()`, serve these files with `precompressed=True` instead.
+
 ## 1.0.0rc5
 
 Dataclasses and `TypedDict` as models, and a fix for deeply nested JSON.

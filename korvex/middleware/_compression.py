@@ -6,6 +6,7 @@ import sys
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from typing import TYPE_CHECKING
 
+from korvex._precompressed import accepted as accepted_encodings
 from korvex._response import Response
 
 if TYPE_CHECKING:
@@ -86,24 +87,6 @@ def _gil_disabled() -> bool:
     return not getattr(sys, "_is_gil_enabled", lambda: True)()
 
 
-def _accepted(header: str) -> dict[str, float]:
-    """`Accept-Encoding: gzip, br;q=0.8, *;q=0` -> `{"gzip": 1.0, "br": 0.8, "*": 0.0}`."""
-    accepted: dict[str, float] = {}
-    for item in header.split(","):
-        name, _, params = item.strip().partition(";")
-        if not name:
-            continue
-        q = 1.0
-        key, _, value = params.strip().partition("=")
-        if key.strip().lower() == "q":
-            try:
-                q = float(value)
-            except ValueError:
-                q = 0.0
-        accepted[name.strip().lower()] = q
-    return accepted
-
-
 def compress(
     app: App,
     *,
@@ -139,7 +122,7 @@ def compress(
     suffixes = tuple(t for t in content_types if t.startswith("+"))
 
     def pick(request: Request) -> _Encoder | None:
-        accepted = _accepted(request.headers.get("accept-encoding") or "")
+        accepted = accepted_encodings(request.headers.get("accept-encoding") or "")
         anything = accepted.get("*", 0.0) > 0
         best, best_q = None, 0.0
         for encoder in available:  # in our order of preference, at the client's best q

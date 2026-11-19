@@ -178,6 +178,31 @@ Files are served as conditional requests:
 In your own handler, `Response.file(path, request=request)` does the same:
 see [Streams and files](requests-and-responses.md#streams-and-files).
 
+### Precompressed files
+
+`app.static("/static", "public", precompressed=True)` serves compressed copies
+made ahead of time. Korvex never creates them, so generate them with your
+build, next to the originals, in the static directory:
+
+```sh
+find static -type f \( -name '*.css' -o -name '*.js' -o -name '*.svg' -o -name '*.html' \) -exec zstd -19 -kf {} \; -exec brotli -q 11 -kf {} \; -exec gzip -9 -kf {} \;
+```
+
+- For `GET /static/app.css`, Korvex sends `app.css.zst`, `app.css.br` or
+  `app.css.gz` when one sits next to it. It picks the one the client accepts
+  from `Accept-Encoding`: the highest q-value wins, and on a tie zstd, then
+  br, then gzip.
+- The response has `Content-Encoding`, the original file's Content-Type, its
+  own `ETag` and `Vary: Accept-Encoding`. A compressed file older than the
+  original is ignored.
+- A `Range` request gets the uncompressed file. Hashed URLs from
+  `static_url()` work too.
+- Serving a `.br` file needs no `brotli` package, so this works on
+  free-threaded Python. `compress()` doesn't compress these responses again.
+
+The point is that no compression runs per request, the files use the highest
+levels, and no proxy is needed.
+
 ## Mounting another app
 
 ```python

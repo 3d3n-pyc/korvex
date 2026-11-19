@@ -7,6 +7,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping
 from http.cookies import SimpleCookie
 from typing import TYPE_CHECKING, Any, Literal, Optional, Union, cast
@@ -220,12 +221,15 @@ class Response:
         """Sends a file in chunks, type guessed from its name; `filename` makes it a download.
 
         `request`: pass it to answer conditional and range requests: 304, 206.
+        A `Content-Encoding` header serves an already-compressed file: own ETag,
+        no ranges, and the type of the uncompressed file.
         Guide: https://3d3n-pyc.github.io/korvex/routes/#static-files"""
         info = os.stat(path)  # raises FileNotFoundError now, not mid-response
         response = StreamingResponse(_read_file(path, expected=info.st_size), status=status, headers=headers)
-        guessed = content_type or mimetypes.guess_type(str(path))[0] or "application/octet-stream"
         if "Content-Type" not in response.headers:
-            response.headers.set("Content-Type", guessed)
+            if content_type is None and "Content-Encoding" in response.headers:
+                content_type = guess_media_type(_PACKED.sub("", str(path)))
+            response.headers.set("Content-Type", content_type or guess_media_type(path))
         response.headers.set("Content-Length", str(info.st_size))
         if filename is not None:
             response.headers.set("Content-Disposition", _attachment(filename))
@@ -316,21 +320,42 @@ async def _read_file(
         )
 
 
+_PACKED = re.compile(r"\.(gz|br|zst)$")
+_COMPRESSED_TYPES = {"gzip": "application/gzip", "zstd": "application/zstd"}
+
+
+def guess_media_type(path: str | os.PathLike[str]) -> str:
+    """The media type for a file name; compressed files (`.gz`, `.zst`, `.br`) get a
+    compressed type, not the type of what is inside."""
+    kind, encoding = mimetypes.guess_type(str(path))
+    if encoding is not None:
+        return _COMPRESSED_TYPES.get(encoding, "application/octet-stream")
+    if str(path).endswith(".zst"):
+        return "application/zstd"
+    return kind or "application/octet-stream"
+
+
 def _conditional_file(
     response: StreamingResponse, path: str | os.PathLike[str], request: Request, info: os.stat_result
 ) -> None:
     """Turns a file response into a 304, 206 or 416 when the request asks for it."""
     tag, modified = _conditional.etag(info.st_mtime_ns, info.st_size), _conditional.last_modified(info.st_mtime)
+    encoding = response.headers.get("Content-Encoding")
+    if encoding is not None:  # a pre-compressed variant: no ranges, own ETag
+        tag = f'{tag[:-1]}-{encoding}"'
     response.headers.set("ETag", tag)
     response.headers.set("Last-Modified", modified)
-    response.headers.set("Accept-Ranges", "bytes")
+    if encoding is None:
+        response.headers.set("Accept-Ranges", "bytes")
     if response.status != 200:
         return
     if _conditional.not_modified(request.method, request.headers, tag, info.st_mtime):
         response.status = 304
         response.chunks = ()
-        for name in ("Content-Type", "Content-Length", "Content-Disposition", "Accept-Ranges"):
+        for name in ("Content-Type", "Content-Length", "Content-Disposition", "Accept-Ranges", "Content-Encoding"):
             response.headers.remove(name)
+        return
+    if encoding is not None:
         return
     span = _conditional.byte_range(request.method, request.headers, tag, info.st_mtime, info.st_size)
     if span is None:
