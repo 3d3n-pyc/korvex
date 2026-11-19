@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
+from contextvars import ContextVar
 from email.message import Message
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union
 from urllib.parse import parse_qs, unquote
@@ -15,6 +16,9 @@ from korvex._response import HeaderItems, Headers, JSONValue, header_pairs
 
 if TYPE_CHECKING:
     from korvex._app import App
+
+
+_scope_root: ContextVar[str] = ContextVar("korvex_scope_root", default="")  # the current request's root_path
 
 
 class UploadedFile:
@@ -123,6 +127,8 @@ class Connection:
         self._tasks: Any = None  # a BackgroundTasks, created on first use
         if scope.get("root_path"):
             self._strip_root(scope["root_path"], app)
+        elif app is not None and app._saw_root_path:
+            _scope_root.set("")  # this request has none: forget the last one's
 
     @property
     def root_path(self) -> str:
@@ -138,7 +144,8 @@ class Connection:
         if root:
             self._root_path = root
             if app is not None:
-                app._root_path = root
+                app._saw_root_path = True
+                _scope_root.set(root)
             path = self.path
             if path == root or path.startswith(root + "/"):
                 self.path = path[len(root) :] or "/"  # ASGI: `path` includes `root_path`; older servers strip it

@@ -107,3 +107,9 @@ def test_request_url_for_a_mount_includes_root_path():
 
     _, _, body = get(app, "/api/link")
     assert body == b"http://example.com/api/admin/users"
+
+
+def test_url_for_follows_each_request_root_path():
+    app = make_app()
+    assert get(app, "/api/", root="/api")[2].endswith(b"|/api/items/3")
+    assert get(app, "/", root="")[2].endswith(b"|/items/3")
