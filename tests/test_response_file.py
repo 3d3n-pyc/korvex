@@ -122,3 +122,71 @@ def test_truncated_file_is_logged(tmp_path, caplog):
     with caplog.at_level("WARNING", logger="korvex"), TestClient(app) as c:
         c.get("/t")
     assert any(path.name in m and f"expected {len(DATA)}" in m and "sent 3" in m for m in caplog.messages)
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("app.css", "text/css"),
+        ("app.css.br", "application/octet-stream"),
+        ("x.tar.gz", "application/gzip"),
+        ("app.js.gz", "application/gzip"),
+        ("app.js.zst", "application/zstd"),
+        ("noext", "application/octet-stream"),
+    ],
+)
+def test_guess_media_type(name, expected):
+    from korvex._response import guess_media_type
+
+    assert guess_media_type(name) == expected
+
+
+@pytest.fixture
+def variant_client(tmp_path):
+    path = tmp_path / "app.css.br"
+    path.write_bytes(DATA)
+    app = App()
+
+    @app.get("/v")
+    def variant(request):
+        return Response.file(
+            path,
+            request=request,
+            content_type="text/css",
+            headers={"Content-Encoding": "br", "Vary": "Accept-Encoding"},
+        )
+
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def test_variant_has_suffixed_etag_and_no_ranges(variant_client):
+    response = variant_client.get("/v", headers={"Range": "bytes=0-9"})
+    assert response.status == 200
+    assert response.headers["ETag"].endswith('-br"')
+    assert "Accept-Ranges" not in response.headers
+    assert response.headers["Content-Type"] == "text/css"
+    assert response.headers["Content-Length"] == str(len(DATA))
+    assert response.body == DATA
+
+
+def test_variant_304_keeps_etag_and_vary(variant_client):
+    tag = variant_client.get("/v").headers["ETag"]
+    response = variant_client.get("/v", headers={"If-None-Match": tag})
+    assert response.status == 304
+    assert response.headers["ETag"] == tag
+    assert response.headers["Vary"] == "Accept-Encoding"
+    assert "Content-Encoding" not in response.headers
+    assert "Content-Length" not in response.headers
+
+
+def test_file_with_content_encoding_keeps_inner_type(tmp_path) -> None:
+    packed = tmp_path / "app.js.gz"
+    packed.write_bytes(b"x")
+    response = Response.file(packed, headers={"Content-Encoding": "gzip"})
+    assert response.headers["Content-Type"].startswith(("text/javascript", "application/javascript"))
+    bare = tmp_path / "blob.zst"
+    bare.write_bytes(b"x")
+    assert (
+        Response.file(bare, headers={"Content-Encoding": "zstd"}).headers["Content-Type"] == "application/octet-stream"
+    )

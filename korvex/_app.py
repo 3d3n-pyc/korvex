@@ -22,8 +22,9 @@ from urllib.parse import quote
 from korvex._core import MethodNotAllowed
 from korvex._errors import Abort, HTTPException, RequestValidationError
 from korvex._mount import Lifespan, child_scope, child_ws_scope
+from korvex._precompressed import variant
 from korvex._requests import Connection, Request, WebSocket, WebSocketDisconnect
-from korvex._response import EventStream, Response, StreamingResponse
+from korvex._response import EventStream, Response, StreamingResponse, guess_media_type
 from korvex._routing import (
     Group,
     Handler,
@@ -378,10 +379,14 @@ class App(_RouteDecorators):
             host.router.constraint(name, pattern)
             host.ws_router.constraint(name, pattern)
 
-    def static(self, prefix: str, directory: str | os.PathLike[str], *, name: str | None = None) -> None:
+    def static(
+        self, prefix: str, directory: str | os.PathLike[str], *, name: str | None = None, precompressed: bool = False
+    ) -> None:
         """Serves the files in `directory` under `prefix`; paths leaving it get a 404.
 
         `name` (`"static"` by default) is what `url_for()` knows it by.
+        `precompressed=True` serves a `.br`, `.zst` or `.gz` file stored next to a file
+        when the client accepts that encoding (every response then has `Vary: Accept-Encoding`).
         Guide: https://3d3n-pyc.github.io/korvex/routes/#static-files"""
         root = Path(directory).resolve()
         if not root.is_dir():
@@ -394,15 +399,32 @@ class App(_RouteDecorators):
                 return None
             return target if target.is_relative_to(root) and target.is_file() else None
 
-        def serve(request: Request, path: str) -> Response:
+        def locate(path: str) -> tuple[Path, str]:
+            """The file for `path` and its Cache-Control; 404 when there is none."""
             target, digest = find(path), None
             if target is None and (hashed := _HASHED.match(path)):
                 target, digest = find(hashed[1] + (hashed[3] or "")), hashed[2]
             if target is None:
                 raise HTTPException(404)
             immutable = digest is not None and digest == self._digest(target)
-            cache = "public, max-age=31536000, immutable" if immutable else "no-cache"
+            return target, "public, max-age=31536000, immutable" if immutable else "no-cache"
+
+        def serve(request: Request, path: str) -> Response:
+            target, cache = locate(path)
             return Response.file(target, headers={"Cache-Control": cache}, request=request)
+
+        def serve_precompressed(request: Request, path: str) -> Response:
+            target, cache = locate(path)
+            headers = {"Cache-Control": cache, "Vary": "Accept-Encoding"}
+            accept = request.headers.get("accept-encoding")
+            found = variant(target, root, accept) if accept and "range" not in request.headers else None
+            if found is None:
+                return Response.file(target, headers=headers, request=request)
+            headers["Content-Encoding"] = found[1]
+            return Response.file(found[0], request=request, content_type=guess_media_type(target), headers=headers)
+
+        if precompressed:
+            serve = serve_precompressed
 
         key = f"korvex.static:{prefix}"  # all serve() share a qualname
         pattern = f"{prefix.rstrip('/')}/*path"
