@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 1.0.0rc5
+
+Dataclasses and `TypedDict` as models, precompressed static files, and a fix
+for deeply nested JSON.
 
 - **New: precompressed static files.** `app.static(..., precompressed=True)`
   serves `app.css.zst`, `app.css.br` or `app.css.gz` when they sit next to
@@ -14,10 +17,6 @@
   sent the inner type (such as `text/css`), which browsers misread. Migration:
   pass `content_type=` to `Response.file()` to keep the old one; for
   `static()`, serve these files with `precompressed=True` instead.
-
-## 1.0.0rc5
-
-Dataclasses and `TypedDict` as models, and a fix for deeply nested JSON.
 
 - **New: dataclasses and `TypedDict` as models.** A `@dataclass` or a
   `TypedDict` (or a list or `Optional` of them) works wherever a msgspec

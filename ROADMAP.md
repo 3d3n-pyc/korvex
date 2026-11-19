@@ -89,6 +89,8 @@ froze doesn't break; a feature added in an rc can still change until 1.0.0.
   `Range`, for caching and resumable downloads. Done.
 - **1.0.0rc5, more kinds of models** for validation: dataclasses and
   `TypedDict`, as Litestar takes them. Done.
+- **1.0.0rc5, precompressed static files**: `.zst`, `.br` and `.gz` files
+  made at build time, served by `Accept-Encoding`. Done.
 
 1.0.0 comes when all of these hold:
 
