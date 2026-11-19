@@ -236,3 +236,79 @@ def test_moderate_nesting_fills_defaults(tree_app):
     r = request(tree_app, "POST", "/tree", body=_nested(50), headers={"content-type": "application/json"})
     assert r.status == 200
     assert r.json() == {"tags": ["x"]}
+
+
+@dataclasses.dataclass
+class Inner:
+    a: int = 1
+
+
+@dataclasses.dataclass
+class Fixed:
+    name: str
+    role: str = dataclasses.field(default="user", init=False)
+    tags: list = dataclasses.field(default_factory=lambda: ["t"], init=False)
+
+
+class Holder(TypedDict):
+    inner: Inner
+
+
+class StructHolder(msgspec.Struct):
+    inner: Inner
+
+
+@dataclasses.dataclass
+class FixedOuter:
+    fixed: Fixed
+
+
+@pytest.fixture
+def holder_app():
+    app = App()
+
+    @app.post("/td")
+    def td(x: Holder) -> Holder:
+        assert dataclasses.asdict(x["inner"]) == {"a": 1}
+        return x
+
+    @app.post("/struct")
+    def struct(x: StructHolder) -> StructHolder:
+        assert dataclasses.asdict(x.inner) == {"a": 1}
+        return x
+
+    @app.post("/fixed")
+    def fixed(x: Fixed) -> Fixed:
+        return x
+
+    @app.post("/fixed-outer")
+    def fixed_outer(x: FixedOuter) -> FixedOuter:
+        return x
+
+    return app
+
+
+@pytest.mark.parametrize("path", ["/td", "/struct"])
+def test_dataclass_in_typeddict_or_struct_gets_defaults(holder_app, path):
+    r = request(holder_app, "POST", path, json={"inner": {}})
+    assert r.json() == {"inner": {"a": 1}}
+
+
+def test_init_false_field_ignores_client(holder_app):
+    r = request(holder_app, "POST", "/fixed", json={"name": "x", "role": "admin", "tags": ["evil"]})
+    assert r.json() == {"name": "x", "role": "user", "tags": ["t"]}
+
+
+def test_init_false_field_nested(holder_app):
+    r = request(holder_app, "POST", "/fixed-outer", json={"fixed": {"name": "x", "role": "admin"}})
+    assert r.json() == {"fixed": {"name": "x", "role": "user", "tags": ["t"]}}
+
+
+def test_brackets_in_strings_do_not_count_as_depth():
+    from korvex._schema import _json_too_deep
+
+    assert not _json_too_deep(b'["' + b"[{" * 2000 + b'"]', 10)
+    assert not _json_too_deep(b'["a\\"' + b"[" * 50 + b'", "\\\\", 1]', 10)
+    assert _json_too_deep(b'["\\\\"' + b"[" * 50 + b"]" * 50 + b"]", 10)
+    assert _json_too_deep(b"[" * 11 + b"]" * 11, 10)
+    assert not _json_too_deep(b"[[]]" * 100, 2)

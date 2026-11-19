@@ -23,7 +23,7 @@ from korvex._core import MethodNotAllowed
 from korvex._errors import Abort, HTTPException, RequestValidationError
 from korvex._mount import Lifespan, child_scope, child_ws_scope
 from korvex._precompressed import variant
-from korvex._requests import Connection, Request, WebSocket, WebSocketDisconnect
+from korvex._requests import Connection, Request, WebSocket, WebSocketDisconnect, _scope_root
 from korvex._response import EventStream, Response, StreamingResponse, guess_media_type
 from korvex._routing import (
     Group,
@@ -148,7 +148,8 @@ class App(_RouteDecorators):
         self._after_request: list[AfterHook] = []
         # Where each name given with name= points: (websocket, host, path).
         self._explicit_names: dict[str, tuple[bool, str | None, str]] = {}
-        self._root_path = ""  # the root_path last seen in a request (an app is served under one)
+        self._root_path = ""  # from serve(root_path=...), for links made outside a request
+        self._saw_root_path = False  # a request with a root_path came in: later ones reset it
         self._url_cache: tuple[tuple, Any] | None = None
         self._mounts: dict[str, str | None] = {}  # app.mount() prefix -> its name
         self._mount_names: dict[str, str] = {}  # name -> prefix
@@ -246,6 +247,10 @@ class App(_RouteDecorators):
         Guide: https://3d3n-pyc.github.io/korvex/websockets/"""
         return self._root.websocket(path, name=name, dependencies=dependencies)
 
+    def _links_root(self) -> str:
+        """The `root_path` for a link: the current request's, else the one given to `run()`."""
+        return _scope_root.get() or self._root_path
+
     def url_for(self, name: str, /, **params: Any) -> str:
         """The path of the route named `name`, with `params` for its path parameters.
 
@@ -258,10 +263,10 @@ class App(_RouteDecorators):
         path only. An app is served under one `root_path`: it prefixes the path.
         Guide: https://3d3n-pyc.github.io/korvex/routes/#links-to-a-route"""
         if name in self._mount_names:
-            return self._root_path + _mount_url(name, self._mount_names[name], params)
+            return self._links_root() + _mount_url(name, self._mount_names[name], params)
         from korvex import _urls as urls
 
-        return self._root_path + urls.path_for(self, urls.lookup(self._url_index(), name), params)
+        return self._links_root() + urls.path_for(self, urls.lookup(self._url_index(), name), params)
 
     def _url_index(self) -> Any:
         """The route names, rebuilt when routes change."""
@@ -516,7 +521,7 @@ class App(_RouteDecorators):
         head, slash, base = path.rpartition("/")
         digest, dot = self._digest(target), base.rfind(".")
         hashed = f"{head}{slash}{base[:dot]}.{digest}{base[dot:]}" if dot > 0 else f"{path}.{digest}"
-        return f"{self._root_path}{prefix}/{quote(hashed)}"
+        return f"{self._links_root()}{prefix}/{quote(hashed)}"
 
     def _digest(self, target: Path) -> str:
         """The first 8 hex digits of the SHA-256 of a file, cached until its mtime or size changes."""

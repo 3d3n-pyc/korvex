@@ -21,7 +21,7 @@ def variant_bytes(encoding: str) -> bytes:
 
 @pytest.fixture
 def root(tmp_path):
-    (tmp_path / "app.css").write_text(BODY, encoding="utf-8")
+    (tmp_path / "app.css").write_bytes(BODY.encode())
     for encoding, suffix in VARIANTS.items():
         (tmp_path / f"app.css{suffix}").write_bytes(variant_bytes(encoding))
     return tmp_path
@@ -214,7 +214,7 @@ def test_symlink_variant_outside_root_is_ignored(tmp_path):
     secret.write_bytes(b"secret")
     root = tmp_path / "root"
     root.mkdir()
-    (root / "app.css").write_text(BODY, encoding="utf-8")
+    (root / "app.css").write_bytes(BODY.encode())
     try:
         (root / "app.css.br").symlink_to(secret)
     except OSError:
@@ -247,7 +247,7 @@ def test_compress_middleware_does_not_double_compress(app):
 
 
 def test_compress_middleware_still_compresses_without_variant(root):
-    (root / "plain.css").write_text(BODY, encoding="utf-8")
+    (root / "plain.css").write_bytes(BODY.encode())
     application = App()
     application.static("/static", root, precompressed=True)
     compress(application)

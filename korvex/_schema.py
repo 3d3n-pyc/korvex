@@ -22,6 +22,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import inspect
+import itertools
 import re
 import sys
 import types
@@ -194,28 +195,45 @@ class Model:
 
 
 def _has_dataclass(tp: Any, seen: set) -> bool:
-    """Whether `tp` is, or holds in its arguments, a dataclass."""
+    """Whether `tp` is, or holds in its arguments or fields (of a TypedDict
+    or msgspec Struct), a dataclass."""
     if tp in seen:
         return False
     seen.add(tp)
     if inspect.isclass(tp) and dataclasses.is_dataclass(tp):
         return True
-    return any(_has_dataclass(arg, seen) for arg in typing.get_args(tp))
+    return any(_has_dataclass(arg, seen) for arg in (*typing.get_args(tp), *_field_types(tp)))
+
+
+def _field_types(tp: Any) -> list[Any]:
+    """The field types of a TypedDict or msgspec Struct, else none."""
+    if not inspect.isclass(tp):
+        return []
+    if issubclass(tp, dict) and hasattr(tp, "__total__"):
+        return list(typing.get_type_hints(tp).values())
+    msgspec = sys.modules.get("msgspec")
+    if msgspec is not None and issubclass(tp, msgspec.Struct):
+        return [field.type for field in msgspec.structs.fields(tp)]
+    return []
 
 
 def _fill_defaults(value: Any) -> Any:
     """`value` with every dataclass in it holding all its fields: msgspec
     leaves a field it didn't decode on the class, out of the instance's
-    `__dict__`, so `vars()`, `asdict()` and the encoders would miss it."""
+    `__dict__`, so `vars()`, `asdict()` and the encoders would miss it. A
+    field with `init=False` gets its default back, whatever the client sent."""
     if isinstance(value, list):
         for item in value:
             _fill_defaults(item)
     elif isinstance(value, dict):
         for item in value.values():
             _fill_defaults(item)
+    elif hasattr(value, "__struct_fields__"):  # a msgspec Struct
+        for name in value.__struct_fields__:
+            _fill_defaults(getattr(value, name, None))
     elif dataclasses.is_dataclass(value) and not isinstance(value, type) and hasattr(value, "__dict__"):
         for field in dataclasses.fields(value):
-            if field.name not in value.__dict__:
+            if field.name not in value.__dict__ or not field.init:  # init=False: never from the client
                 if field.default is not dataclasses.MISSING:
                     value.__dict__[field.name] = field.default
                 elif field.default_factory is not dataclasses.MISSING:
@@ -229,28 +247,18 @@ def _too_deep(root: str) -> dict:
     return _error([root], "nested too deeply", "recursion_error")
 
 
+_NOT_BRACKET = bytes(set(range(256)) - set(b"[]{}"))
+_BRACKET_STEP = {91: 1, 123: 1, 93: -1, 125: -1}
+
+
 def _json_too_deep(data: bytes, limit: int = 1000) -> bool:
     """Whether JSON containers exceed the nesting depth accepted by models."""
-    depth = 0
-    in_string = False
-    escaped = False
-    for byte in data:
-        if in_string:
-            if escaped:
-                escaped = False
-            elif byte == 92:
-                escaped = True
-            elif byte == 34:
-                in_string = False
-        elif byte == 34:
-            in_string = True
-        elif byte == 123 or byte == 91:
-            depth += 1
-            if depth > limit:
-                return True
-        elif byte == 125 or byte == 93:
-            depth -= 1
-    return False
+    if data.count(b"[") + data.count(b"{") <= limit:
+        return False  # too few containers to nest that deep
+    unescaped = data.replace(b"\\\\", b"").replace(b'\\"', b"")  # an escape never opens or closes a string
+    outside = b"".join(unescaped.split(b'"')[::2])  # every other piece lies outside the strings
+    brackets = outside.translate(None, _NOT_BRACKET)
+    return max(itertools.accumulate(map(_BRACKET_STEP.__getitem__, brackets), initial=0)) > limit
 
 
 def _is_recursive_model(tp: Any, active: set[Any] | None = None) -> bool:
