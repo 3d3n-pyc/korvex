@@ -166,7 +166,9 @@ def test_tasks():
   after hooks and exception handlers don't (`cors`, `security_headers`,
   `compress`): configure those in the mounted app.
 - **Conditional files**: `Response.file(path, request=request)` answers 304
-  and `Range` (206); `app.static()` does it already.
+  and `Range` (206); `app.static()` does it already. With
+  `app.static(prefix, dir, precompressed=True)` it also serves `app.css.zst`,
+  `.br` or `.gz` files made at build time, picked from `Accept-Encoding`.
 - **Templates** are not Jinja2Templates: no `TemplateResponse(request, ...)`.
   Use `views.response("page.html", {"post": post})`.
 
