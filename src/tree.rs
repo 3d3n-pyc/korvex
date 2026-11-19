@@ -366,8 +366,8 @@ fn constraint_name(segment: &str) -> String {
         .trim_start_matches('{')
         .trim_end_matches('}')
         .split_once(':')
-        .map(|(_, c)| c.to_string())
-        .unwrap_or_default()
+        .map_or("", |(_, c)| c)
+        .to_string()
 }
 
 fn conflict(existing: &str, new: &str) -> PatternError {

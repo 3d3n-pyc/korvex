@@ -228,8 +228,7 @@ pub async fn handshake(
     let accept_key = request
         .headers()
         .get(SEC_WEBSOCKET_KEY)
-        .map(|key| derive_accept_key(key.as_bytes()))
-        .unwrap_or_default();
+        .map_or_else(String::new, |key| derive_accept_key(key.as_bytes()));
     let on_upgrade = hyper::upgrade::on(&mut request);
     let (parts, _) = request.into_parts();
     let resolved = resolve(peer, &parts.headers, &shared.trusted);
