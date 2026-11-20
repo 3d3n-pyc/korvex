@@ -7,7 +7,7 @@ name = "korvex"
 dynamic = ["version"]
 description = "A fast Python web framework with a Rust router and HTTP server: ASGI, validation, dependencies, OpenAPI"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Maxime Lefevre" }]
 keywords = ["web", "framework", "asgi", "http", "server", "router", "rust", "openapi", "websocket", "free-threading"]
@@ -22,7 +22,6 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -133,7 +132,7 @@ known-first-party = ["korvex", "taskboard"]
 
 [tool.pyright]
 include = ["korvex"]
-pythonVersion = "3.9"
+pythonVersion = "3.10"
 typeCheckingMode = "standard"
 
 [tool.coverage.run]

@@ -289,12 +289,7 @@ def _msgspec_codecs(tp: Any, name: str) -> tuple[Any, Any]:
     try:
         return msgspec.json.Decoder(tp), msgspec.json.Encoder()
     except TypeError as error:
-        hint = ""
-        if sys.version_info < (3, 10) and "not supported" in str(error):
-            hint = ". On Python 3.9 write typing.List['Node'], not list['Node'], for a quoted name"
-        raise TypeError(
-            f"parameter {name or 'type'!r} has type {tp!r} that msgspec cannot handle: {error}{hint}"
-        ) from None
+        raise TypeError(f"parameter {name or 'type'!r} has type {tp!r} that msgspec cannot handle: {error}") from None
 
 
 def _msgspec_error(error: Exception, root: str = "body") -> dict:

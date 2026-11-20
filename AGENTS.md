@@ -26,10 +26,9 @@ uv run --group docs mkdocs build --strict -d target/site   # if docs or docstrin
 
 ## Rules
 
-- **Python 3.9 to 3.14, and free-threaded 3.14t.** Write `X | Y` only in
-  annotations, with `from __future__ import annotations` at the top of
-  the module; `Union[X, Y]` and `Optional[X]` elsewhere. CI also runs
-  the tests on 3.14t with `-W error::RuntimeWarning`.
+- **Python 3.10 to 3.14, and free-threaded 3.14t.** `X | Y` works
+  everywhere at runtime on 3.10, so use it in annotations and elsewhere
+  alike. CI also runs the tests on 3.14t with `-W error::RuntimeWarning`.
 - **msgspec and pydantic are optional.** Import them only where one of
   their models is being used, never at the top of a module.
 - **The public API** is what `korvex`, `korvex.router`, `korvex.testing`,

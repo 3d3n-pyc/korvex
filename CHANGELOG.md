@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Changed: Python 3.10 or later.** Python 3.9 reached its end of life in
+  October 2025. Migration: upgrade to Python 3.10+; nothing else changes.
+
 ## 1.0.0rc5
 
 Dataclasses and `TypedDict` as models, precompressed static files, and a fix

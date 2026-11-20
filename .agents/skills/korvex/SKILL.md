@@ -7,7 +7,7 @@ description: Write web apps and APIs with Korvex, the Python web framework with 
 
 Korvex is an ASGI web framework: handlers are plain functions, sync or
 async, whose parameters say what they read. Validation uses msgspec or
-pydantic (both optional). Python 3.9 to 3.14, free-threaded 3.14t
+pydantic (both optional). Python 3.10 to 3.14, free-threaded 3.14t
 included. The API can change before 1.0: check the installed version
 (`korvex.__version__`) against the
 [changelog](https://github.com/3d3n-pyc/korvex/blob/main/CHANGELOG.md).
