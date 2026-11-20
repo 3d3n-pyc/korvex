@@ -178,6 +178,10 @@ Files are served as conditional requests:
 In your own handler, `Response.file(path, request=request)` does the same:
 see [Streams and files](requests-and-responses.md#streams-and-files).
 
+A `.gz`, `.zst` or `.br` file is sent with its real type (`application/gzip`,
+`application/zstd`, `application/octet-stream`), not the type of what is
+inside. To serve `app.css.gz` as CSS, use `precompressed=True` below.
+
 ### Precompressed files
 
 `app.static("/static", "public", precompressed=True)` serves compressed copies

@@ -111,8 +111,8 @@ exclude = ["*.md"]  # code in the docs keeps its aligned comments
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "TID251"]
 ignore = [
     "E501",   # the formatter wraps code; a long string or comment can stay
-    "UP007",  # X | Y: Korvex reads handlers' annotations at runtime, and on
-    "UP045",  # Python 3.9 they must be Optional[X] / Union[X, Y]
+    "UP007",  # Union[X, Y] and Optional[X] are kept as written; `X | Y` also works
+    "UP045",  # on 3.10+, so these two could be dropped and the code rewritten
 ]
 
 [tool.ruff.lint.flake8-bugbear]
