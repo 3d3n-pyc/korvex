@@ -60,6 +60,7 @@ dev = [
     "brotli>=1.2.1",
     "coverage>=7.10",
     "hypothesis>=6.140",
+    "korbase>=0.1.0a2",  # the taskboard example's tests run in CI
     "maturin>=1.14,<2.0",
     "msgspec>=0.20.0",
     "openapi-spec-validator>=0.7.2",

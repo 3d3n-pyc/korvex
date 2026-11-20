@@ -1748,6 +1748,15 @@ wheels = [
 ]
 
 [[package]]
+name = "korbase"
+version = "0.1.0a2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5a/9a/6f72a895977dfa5e5cef57387d7127438bf4955d7a2affdbd88c8a682080/korbase-0.1.0a2.tar.gz", hash = "sha256:c23e5af51bb1685e90aac7d6ca09f126bd4fbe797d1ee1eb8b3b3129309f6a78", size = 207046, upload-time = "2026-11-20T14:44:14.536Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8a/4b/83910f0d67929a8cd78177fa9cf3ead5896de16eaf695813f040275f8425/korbase-0.1.0a2-py3-none-any.whl", hash = "sha256:986764044385a769cd41dc395c7ee9017e002ac45b3efeb172a50751fd725136", size = 58703, upload-time = "2026-11-20T14:44:13.42Z" },
+]
+
+[[package]]
 name = "korvex"
 source = { editable = "." }
 
@@ -1789,6 +1798,7 @@ dev = [
     { name = "coverage", version = "7.17.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "hypothesis", version = "6.168.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "hypothesis", version = "6.170.15", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "korbase" },
     { name = "maturin" },
     { name = "msgspec" },
     { name = "openapi-spec-validator" },
@@ -1840,6 +1850,7 @@ dev = [
     { name = "brotli", specifier = ">=1.2.1" },
     { name = "coverage", specifier = ">=7.10" },
     { name = "hypothesis", specifier = ">=6.140" },
+    { name = "korbase", specifier = ">=0.1.0a2" },
     { name = "maturin", specifier = ">=1.14,<2.0" },
     { name = "msgspec", specifier = ">=0.20.0" },
     { name = "openapi-spec-validator", specifier = ">=0.7.2" },
