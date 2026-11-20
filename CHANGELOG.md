@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 1.0.0rc7
+
+The taskboard example on korbase, and the docs brought up to date. Korvex's
+code is the same as in rc6.
 
 - **Changed: the taskboard example uses korbase.** Its database layer is now
   korbase (models, typed queries, reviewed migrations), still on SQLite;
