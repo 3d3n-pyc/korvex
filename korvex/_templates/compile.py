@@ -16,9 +16,9 @@ from __future__ import annotations
 import ast
 import copy
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from typing import Any, Callable, NamedTuple, NoReturn, Optional, cast
+from typing import Any, NamedTuple, NoReturn, Optional, cast
 
 from korvex._core import escape_html
 from korvex._templates.filters import UNDEFINED, default, escape, safe
@@ -279,7 +279,7 @@ class _Expr(ast.NodeTransformer):
         """Tell whether the node is `loop` while inside a `for` body."""
         return _is_loop(node) and bool(self.gen.loops)
 
-    def visit_Name(self, node: ast.Name) -> ast.expr:  # noqa: N802
+    def visit_Name(self, node: ast.Name) -> ast.expr:
         """A name read from the context, checked for being defined."""
         if self.in_loop(node):
             self.fail("use loop.index, loop.index0, loop.first, loop.last or loop.length")
@@ -292,7 +292,7 @@ class _Expr(ast.NodeTransformer):
             self.fail(f"loop has no attribute {node.attr!r}")
         return _expr(template.format(k=self.gen.loops[-1]))
 
-    def visit_Attribute(self, node: ast.Attribute) -> ast.expr:  # noqa: N802
+    def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
         """`a.b`: an item if `a` is a dict, else an attribute."""
         if self.in_loop(node.value):
             return self.loop_attr(node)
@@ -303,7 +303,7 @@ class _Expr(ast.NodeTransformer):
         value = ast.unparse(self.visit(base))
         return _expr(f"(_b[{a}] if (_b := {value}).__class__ is _dict else _attr(_b, {a}))")
 
-    def visit_Call(self, node: ast.Call) -> ast.expr:  # noqa: N802
+    def visit_Call(self, node: ast.Call) -> ast.expr:
         """A call; `a.b(...)` reads the method as an attribute, even on a dict."""
         func = node.func
         if not isinstance(func, ast.Attribute):
@@ -350,7 +350,7 @@ class _Expr(ast.NodeTransformer):
             return self.leaf(node)
         return node
 
-    def visit_BinOp(self, node: ast.BinOp) -> ast.expr:  # noqa: N802
+    def visit_BinOp(self, node: ast.BinOp) -> ast.expr:
         """`|` is the filter pipe; any other operator is left alone."""
         if not isinstance(node.op, ast.BitOr):
             return cast(ast.expr, self.generic_visit(node))

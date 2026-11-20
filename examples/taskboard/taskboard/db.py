@@ -8,10 +8,10 @@ while one writes.
 
 import asyncio
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, Optional, TypeVar
 
 T = TypeVar("T")
 

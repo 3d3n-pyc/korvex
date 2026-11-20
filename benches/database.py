@@ -26,7 +26,7 @@ from pathlib import Path
 import asyncpg
 
 sys.path.insert(0, str(Path(__file__).parent))
-import servers  # noqa: E402  (same cores and load, another app)
+import servers
 
 RESULTS = Path("benches/database_results.json")
 CONTAINER = "korvex-bench-postgres"

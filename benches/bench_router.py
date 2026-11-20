@@ -30,17 +30,17 @@ if not django_settings.configured:
     django_settings.configure(DEBUG=False, ALLOWED_HOSTS=["*"])
     django.setup()
 
-from django.urls import path as django_path  # noqa: E402
-from django.urls.resolvers import RegexPattern, URLResolver  # noqa: E402
-from flask import Flask  # noqa: E402
-from litestar import Litestar  # noqa: E402
-from litestar import get as litestar_get  # noqa: E402
-from sanic import Sanic  # noqa: E402
-from starlette.routing import Match  # noqa: E402
-from starlette.routing import Route as StarletteRoute  # noqa: E402
+from django.urls import path as django_path
+from django.urls.resolvers import RegexPattern, URLResolver
+from flask import Flask
+from litestar import Litestar
+from litestar import get as litestar_get
+from sanic import Sanic
+from starlette.routing import Match
+from starlette.routing import Route as StarletteRoute
 
-from korvex._core import Router as UncachedRouter  # noqa: E402
-from korvex.router import Router  # noqa: E402
+from korvex._core import Router as UncachedRouter
+from korvex.router import Router
 
 ROUTE_COUNTS = [100, 1_000, 10_000]
 LOOKUPS = 200

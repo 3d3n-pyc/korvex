@@ -89,7 +89,7 @@ uv run pyright
 uv run pytest
 ```
 
-CI runs the same checks, the tests on Python 3.9 to 3.14 and on
+CI runs the same checks, the tests on Python 3.10 to 3.14 and on
 free-threaded 3.14t, and two performance checks against the base branch,
 the App in-process and the built-in server under load (more than 10%
 slower fails). New behavior needs a test: `korvex.testing.TestClient`
@@ -114,8 +114,8 @@ CI builds them with `--strict`: a broken link fails the PR.
 msgspec and pydantic stay optional: import them only where a model of
 theirs is being used, never at the top of a module.
 
-Python code must run on 3.9: write `X | Y` only in annotations (with
-`from __future__ import annotations`), and `Union[X, Y]` elsewhere.
+Python code must run on 3.10. `X | Y` works everywhere at runtime, so use
+it in annotations and elsewhere alike.
 
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/)
 (`feat:`, `fix:`, `docs:`, ...).

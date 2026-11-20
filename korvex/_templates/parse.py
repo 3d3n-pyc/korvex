@@ -188,7 +188,7 @@ class _Checker:
 
     def _rule_Compare(self, node: ast.Compare) -> None:
         """Allow comparisons; `is` only against None."""
-        for op, other in zip(node.ops, node.comparators):
+        for op, other in zip(node.ops, node.comparators, strict=False):
             if not isinstance(op, _COMPARE):
                 self.fail(f"operator {type(op).__name__} is not allowed")
             if isinstance(op, (ast.Is, ast.IsNot)) and not _is_none(other):
