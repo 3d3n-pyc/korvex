@@ -37,9 +37,7 @@ class ListService:
         return found
 
     async def create(self, name: str, *, color: Optional[Color] = None) -> TaskList:
-        position = await self.lists.next_position()
-        new = TaskList(uuid.uuid4(), _name(name), color or COLORS[position % len(COLORS)], position)
-        await self.lists.save(new)
+        new = await self.lists.insert_last(_name(name), lambda position: color or COLORS[position % len(COLORS)])
         log.info("list %s created: %s", new.id, new.name)
         self.events.publish(ListCreated(new))
         return new

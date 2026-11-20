@@ -200,3 +200,27 @@ def test_the_data_and_sessions_survive_a_restart(with_services):
 
     with_services(first)
     with_services(second)  # a new connection: migrations already done, data still there
+
+
+def test_workers_creating_together_get_distinct_positions(settings):
+    from taskboard.app import build_services
+
+    async def main() -> None:
+        workers = [build_services(settings) for _ in range(2)]
+        for worker in workers:
+            await worker.db.connect()
+        try:
+            first = await workers[0].lists.create("Work")
+            lists = await asyncio.gather(*(workers[i % 2].lists.create(f"L{i}") for i in range(20)))
+            assert len({each.position for each in lists}) == 20
+            tasks = await asyncio.gather(*(workers[i % 2].tasks.create(first.id, f"T{i}") for i in range(20)))
+            assert len({each.position for each in tasks}) == 20
+            moved = await asyncio.gather(
+                *(workers[i % 2].tasks.update(t.id, list_id=lists[0].id) for i, t in enumerate(tasks))
+            )
+            assert len({each.position for each in moved}) == 20
+        finally:
+            for worker in workers:
+                await worker.db.close()
+
+    asyncio.run(main())

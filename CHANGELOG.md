@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Changed: the taskboard example uses korbase.** Its database layer is now
+  korbase (models, typed queries, reviewed migrations), still on SQLite;
+  existing `data/taskboard.db` files keep working. The example needs
+  Python 3.10+. Korvex itself is unchanged.
+
 ## 1.0.0rc6
 
 Python 3.10 or later.
