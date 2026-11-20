@@ -6,8 +6,9 @@ changes that appear live in every open window. Light and dark, works on
 a phone.
 
 It's also laid out like a real project, to show how a Korvex app is put
-together once it outgrows one file: layers, a database with migrations,
-settings, and its own tests.
+together once it outgrows one file: layers, a database on
+[korbase](https://3d3n-pyc.github.io/korbase/) with reviewed migrations,
+settings, and its own tests. It needs Python 3.10 or later.
 
 ## Run it
 
@@ -39,8 +40,11 @@ The data goes in `data/` (delete it to start over).
 ```
 taskboard/
   domain.py          lists, tasks, events and errors. No HTTP, no SQL.
-  db.py              the SQLite connection, run off the event loop; migrations
-  repositories.py    every SQL query
+  models.py          the tables, as korbase models
+  db.py              the korbase connection; applies the migrations at startup
+  repositories.py    every query: korbase queries, and a little raw SQL
+  columns.py         typed columns for the queries, generated from models.py
+  migrations/        the schema as reviewed SQL files (0001_initial.sql...)
   services/
     lists.py         the rules for lists (the last one stays...)
     tasks.py         the rules for tasks: tidying, ordering, moving, announcing
@@ -72,6 +76,7 @@ tests/
   test_api.py        the API through the whole app
   test_auth.py       signing in, and what it guards
   test_live.py       live updates
+  test_schema.py     models, columns.py and migrations agree; old databases open
 ```
 
 ## How it fits together
@@ -87,13 +92,15 @@ web  ->  services  ->  repositories  ->  db
   and domain objects, and raise domain errors (`NotFound`,
   `InvalidInput`); `web/errors.py` turns those into 404s and 422s. The
   same services could serve a CLI or a job queue.
-- **The SQL stays in `repositories.py`.** Moving to Postgres means
-  rewriting it and `db.py`; the services don't change.
+- **The queries stay in `repositories.py`.** The services never see the
+  tables or the database library; changing either means changing that
+  file and `db.py`, not the services.
 - **No globals.** `create_app(settings)` builds everything and hands each
   route module the services it needs. Every test gets its own app, with
   its own database in a temporary folder.
-- **Nothing opens at import.** The database connects in a startup hook,
-  so each worker process opens its own connection after the fork.
+- **Nothing opens at import.** The database connects, and the migrations
+  run, in a startup hook, so each worker process opens its own connection
+  after the fork.
 
 The page follows the same idea on a smaller scale: `api.js` talks to the
 server, `store.js` holds the state and the actions, and the `ui/` modules
@@ -125,10 +132,22 @@ Both answer with the same 422 format, so the page shows both alike.
 - **Changes show at once.** The page updates before the server answers,
   and puts things back if it refuses. A delete waits five seconds, so it
   can be undone.
-- **SQLite, without blocking the loop.** Queries run in one thread per
-  worker, which also serializes them; WAL mode lets workers read while
-  one writes. Migrations are versioned with `PRAGMA user_version` and
-  applied under a lock, so workers starting together don't collide.
+- **korbase, on SQLite.** `models.py` declares the tables as msgspec
+  structs, and `repositories.py` builds typed queries from them
+  (`select(Task).where(...)`, `upsert`, `delete`), so rows come back as
+  `Task` objects. Each worker holds one connection, which serializes its
+  queries; WAL mode lets workers read while one writes.
+- **Some SQL stays raw, on purpose.** The open-task counts, the search,
+  and the position bookkeeping (`json_each` to renumber a list in one
+  statement, `min(position)`) are plain aggregates or SQLite-specific
+  statements that read better as SQL than as a query builder.
+- **Migrations are reviewed SQL files.** `taskboard/migrations/` holds
+  them, one per change, committed with the code. Every worker applies
+  them at startup; korbase records each one in `korbase_migrations`, so
+  a migration is applied once even when workers start together
+  (`test_concurrent_applies_record_once`). A database made before korbase (versioned with
+  `PRAGMA user_version`) is adopted as it is: your existing
+  `data/taskboard.db` keeps its rows and needs no manual step.
 - **Sessions in the database**, so they survive restarts and every worker
   sees them. Only a SHA-256 of each token is stored. Signing out ends the
   session on the server, not just in the browser. The cookie is HttpOnly
@@ -142,6 +161,42 @@ Both answer with the same 422 format, so the page shows both alike.
 - **Errors under `/api` are JSON with the request ID**, the same ID that's
   in `X-Request-ID` and in the log lines: from a bug report to its logs in
   one search.
+
+## Changing the schema
+
+The models are the source; the migration is generated from them, then
+you read it before it ships.
+
+```sh
+# 1. edit taskboard/models.py (add a column, a table, an index)
+# 2. write the migration, against the database as it is now
+KORBASE_DSN=sqlite:///data/taskboard.db \
+  python -m korbase.migrate make --models taskboard.models \
+  --dir taskboard/migrations -m "add task priority"
+# 3. open the new file in taskboard/migrations and check the SQL
+# 4. regenerate the typed columns
+python -m korbase.stubs taskboard.models -o taskboard/columns.py
+# 5. commit models.py, the migration and columns.py together
+```
+
+`columns.py` gives the queries typed columns (`_T.position.asc()`) and is
+generated: don't edit it. `tests/test_schema.py` fails if it is out of
+date, if the migrations don't build exactly the schema of the models, or
+if a database from before korbase stops opening.
+
+## Moving to Postgres
+
+Change the DSN to `postgresql://...` and install the driver with
+`pip install "korbase[asyncpg]"`. The DSN is built in `db.py`
+(`sqlite:///{path}` today). Then check:
+
+- the raw SQL in `repositories.py`: it uses SQLite features such as
+  `json_each` and `UPDATE ... FROM`, which Postgres spells differently;
+- the existing migration, written for SQLite: regenerate or review it for
+  Postgres types;
+- `TASKBOARD_DATA_DIR`, which only makes sense for a SQLite file.
+
+The services and the web layer don't change. The tests run on SQLite.
 
 ## Settings
 
