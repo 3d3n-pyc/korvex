@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 from urllib.parse import quote
 from urllib.parse import urlencode as _urlencode
 

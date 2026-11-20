@@ -15,11 +15,11 @@ import re
 import threading
 import uuid
 import weakref
-from collections.abc import AsyncIterator, Awaitable, Iterable, Iterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping
 from email.utils import parsedate_to_datetime
 from http.cookies import CookieError, SimpleCookie
 from types import TracebackType
-from typing import Any, Callable, TypeVar, Union
+from typing import Any, TypeVar, Union
 from urllib.parse import quote, unquote, urlencode, urljoin, urlsplit
 
 from korvex._requests import WebSocketDisconnect

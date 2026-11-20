@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from servers import PORT, load, start, stop  # noqa: E402  (same app, cores and load)
+from servers import PORT, load, start, stop
 
 RESULTS = Path("benches/threads_results.json")
 CONNECTIONS = 200

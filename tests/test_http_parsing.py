@@ -29,7 +29,7 @@ def read_all(sock, wait=2.0):
     try:
         while chunk := sock.recv(65536):
             data += chunk
-    except (socket.timeout, ConnectionResetError):
+    except (TimeoutError, ConnectionResetError):
         pass
     return data
 

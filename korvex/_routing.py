@@ -457,7 +457,7 @@ class _Host:
         if len(labels) != len(self._labels):
             return None
         params = {}
-        for (is_param, expected), label in zip(self._labels, labels):
+        for (is_param, expected), label in zip(self._labels, labels, strict=False):
             if is_param:
                 if not label:  # `.example.com`: no tenant at all, not an empty one
                     return None

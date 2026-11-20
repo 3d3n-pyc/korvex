@@ -16,9 +16,9 @@ import jinja2
 import markupsafe
 import minijinja
 
-from korvex._templates.compile import compile_template  # noqa: E402
-from korvex._templates.filters import FILTERS  # noqa: E402
-from korvex._templates.parse import parse  # noqa: E402
+from korvex._templates.compile import compile_template
+from korvex._templates.filters import FILTERS
+from korvex._templates.parse import parse
 
 TEMPLATES = {
     "table.html": (

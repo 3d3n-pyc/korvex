@@ -45,7 +45,7 @@ class ServerSentEvent:
         data: Any = None,
         *,
         event: Optional[str] = None,
-        id: Optional[str] = None,  # noqa: A002
+        id: Optional[str] = None,
         retry: Optional[int] = None,
     ) -> None:
         """Validate the fields, then build the wire bytes once so errors surface here."""

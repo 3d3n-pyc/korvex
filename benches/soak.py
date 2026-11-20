@@ -167,7 +167,7 @@ async def drive(port: int, duration: int, server_pid: int, problems: list[str]):
     sampler = asyncio.ensure_future(sample(server_pid, duration, problems))
     clients = asyncio.ensure_future(soak_clients.run(HOST, port, duration))
     counts = await asyncio.gather(*(run_oha(name, port, duration, problems) for name in RUNS))
-    return await sampler, await clients, dict(zip(RUNS, counts))
+    return await sampler, await clients, dict(zip(RUNS, counts, strict=False))
 
 
 def main() -> None:

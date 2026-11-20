@@ -101,7 +101,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.format]
 exclude = ["*.md"]  # code in the docs keeps its aligned comments

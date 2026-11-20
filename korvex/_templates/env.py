@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import Any, Optional, Union
 
 from korvex._response import HeaderItems, Response
 from korvex._templates.compile import compile_template

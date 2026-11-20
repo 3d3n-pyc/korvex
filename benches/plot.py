@@ -109,7 +109,7 @@ def draw(timings, machine, theme):
         "Median time per lookup. Every lookup is checked to find the right route.</text>"
     )
     legend_x = 20
-    for color, count in zip(t["dots"], ROUTE_COUNTS):
+    for color, count in zip(t["dots"], ROUTE_COUNTS, strict=False):
         out.append(f'<circle cx="{legend_x + 5}" cy="78" r="5" fill="{color}"/>')
         text = f"{count:,} routes"
         out.append(f'<text x="{legend_x + 15}" y="82" font-size="12" fill="{t["secondary"]}">{text}</text>')
@@ -143,7 +143,7 @@ def draw(timings, machine, theme):
         out.append(
             f'<line x1="{min(xs):.1f}" y1="{row_y}" x2="{max(xs):.1f}" y2="{row_y}" stroke="{t["axis"]}" stroke-width="2" stroke-linecap="round"/>'
         )
-        for x, color in zip(xs, t["dots"]):
+        for x, color in zip(xs, t["dots"], strict=False):
             out.append(
                 f'<circle cx="{x:.1f}" cy="{row_y}" r="5" fill="{color}" stroke="{t["surface"]}" stroke-width="2"/>'
             )
@@ -342,7 +342,7 @@ def draw_servers(results, machine, theme):
         out.append(
             f'<line x1="{min(xs):.1f}" y1="{y}" x2="{max(xs):.1f}" y2="{y}" stroke="{t["axis"]}" stroke-width="2" stroke-linecap="round"/>'
         )
-        for x, color in zip(xs, [light, dark]):
+        for x, color in zip(xs, [light, dark], strict=False):
             out.append(f'<circle cx="{x:.1f}" cy="{y}" r="5" fill="{color}" stroke="{t["surface"]}" stroke-width="2"/>')
         value_label = " / ".join(thousands(run["requests_per_second"]) for run in runs)
         out.append(f'<text x="{PLOT_RIGHT + 16}" y="{y + 4}" font-size="12"{weight} fill="{ink}">{value_label}</text>')
