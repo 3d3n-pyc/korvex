@@ -2,7 +2,7 @@
 
 Where Korvex is going. Versions are a rough order, not promises.
 
-## Where it stands (1.0.0rc6)
+## Where it stands (1.0.0rc7)
 
 - **Fast.** On one CPU core, Korvex serves the most requests of the
   frameworks tested (34.4k requests/s, Falcon 30.5k, Starlette's best
@@ -27,7 +27,8 @@ Where Korvex is going. Versions are a rough order, not promises.
 - **Added since rc1.** Background tasks and Server-Sent Events (rc3);
   mounting another ASGI app, and conditional static files with `ETag` and
   `Range` (rc4); dataclasses and `TypedDict` as models, and precompressed
-  static files (rc5); Python 3.10 or later (rc6).
+  static files (rc5); Python 3.10 or later (rc6); the taskboard example on
+  korbase (rc7).
 - **A built-in server.** Workers, threads (in parallel on free-threaded
   Python), a supervisor, graceful shutdown, size limits, timeouts,
   `max-connections`, `max-requests`, backpressure on requests and on
@@ -72,7 +73,7 @@ whole public API (0.14), a documentation site (0.14.2), a more robust
 built-in server (0.15), a soak test in CI (0.15.1), server-side
 templates with hashed static URLs (0.16), sessions with CSRF
 protection (0.17), and an ASGI `root_path` with the last breaking API
-changes (1.0.0rc1), then the release candidates below, up to rc6 (which
+changes (1.0.0rc1), then the release candidates below, up to rc7 (rc6
 also dropped Python 3.9). The public API is what `korvex`, `korvex.router`,
 `korvex.testing`, `korvex.security` and `korvex.middleware` export. Until
 1.0 it can change, each change listed in the changelog with how to
@@ -100,7 +101,7 @@ froze doesn't break; a feature added in an rc can still change until 1.0.0.
 
 1.0.0 comes when all of these hold:
 
-- The features above have shipped. They have, as of rc6.
+- The features above have shipped. They have, as of rc7.
 - A week of nightly fuzzing and soak runs has passed without a failure.
 - Korvex runs a real app that we deploy and keep running ourselves, for
   example the taskboard example behind nginx or Caddy. This replaces "a few
