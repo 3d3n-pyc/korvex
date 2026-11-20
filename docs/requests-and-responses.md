@@ -143,6 +143,14 @@ sent. A `compress()` [hook](glossary.md#hook) leaves 206 and 304 alone and makes
 weak when it compresses a file. [`app.static()`](routes.md#static-files)
 works this way.
 
+A `.gz`, `.zst` or `.br` file is sent with its real type (`application/gzip`,
+`application/zstd`, `application/octet-stream`), not the type of what is
+inside. If you set a `Content-Encoding` header, the type of the name without
+the suffix is used instead (`app.css.gz` is `text/css`). `content_type=`
+overrides both. `static(..., precompressed=True)` serves its variants with the
+original's type: see [Precompressed files](routes.md#precompressed-files).
+
+
 ### Server-Sent Events
 
 [Server-Sent Events](glossary.md#server-sent-events) push a stream of events to a browser.
