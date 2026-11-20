@@ -3,7 +3,7 @@ module knows the tables. Moving to Postgres means rewriting this file and
 db.py, nothing else."""
 
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from datetime import date, datetime
 from typing import Optional
 
@@ -71,9 +71,16 @@ class ListRepository:
         row = await self.db.get().fetchrow("SELECT count(*) FROM lists")
         return row[0] if row else 0
 
-    async def next_position(self) -> int:
-        row = await self.db.get().fetchrow("SELECT coalesce(max(position), -1) + 1 FROM lists")
-        return row[0] if row else 0
+    async def insert_last(self, name: str, color_at: Callable[[int], str]) -> TaskList:
+        """Adds a list after the others and returns it. Its color comes from
+        `color_at(position)`. Position and insert are one transaction, so
+        workers creating together never share a position."""
+        async with self.db.get().transaction() as tx:
+            row = await tx.fetchrow("SELECT coalesce(max(position), -1) + 1 FROM lists")
+            position = row[0] if row else 0
+            new = TaskList(uuid.uuid4(), name, color_at(position), position)  # type: ignore[arg-type]
+            await tx.run(_SAVE_LIST, id=new.id, name=new.name, color=new.color, position=new.position)
+            return new
 
     async def create_first(self, first: TaskList, tasks: Sequence[Task]) -> bool:
         """Saves `first` and `tasks` if there's no list yet, all at once:
@@ -154,12 +161,22 @@ class TaskRepository:
         """Deletes the list's finished tasks; returns their IDs."""
         return [task.id for task in await self.db.get().run(_DELETE_DONE, list_id=list_id)]
 
-    async def first_position(self, list_id: uuid.UUID) -> int:
-        """A position before every task of the list (new tasks go on top)."""
-        row = await self.db.get().fetchrow(
-            "SELECT coalesce(min(position), 1) - 1 FROM tasks WHERE list_id = ?", list_id
-        )
-        return row[0] if row else 0
+    async def insert_first(self, task: Task) -> Task:
+        """Saves `task` at the top of its list and returns it with that
+        position, chosen and written in one transaction."""
+        return await self._put_first(task)
+
+    async def move_first(self, task: Task, list_id: uuid.UUID) -> Task:
+        """Moves `task` to the top of another list; returns it as moved."""
+        return await self._put_first(msgspec.structs.replace(task, list_id=list_id))
+
+    async def _put_first(self, task: Task) -> Task:
+        """Gives `task` a position before every task of its list, and saves it."""
+        async with self.db.get().transaction() as tx:
+            row = await tx.fetchrow("SELECT coalesce(min(position), 1) - 1 FROM tasks WHERE list_id = ?", task.list_id)
+            task = msgspec.structs.replace(task, position=row[0] if row else 0)
+            await tx.run(_SAVE_TASK, **msgspec.structs.asdict(task))
+            return task
 
     async def reorder(self, list_id: uuid.UUID, ids: Sequence[uuid.UUID]) -> None:
         """Puts the list's tasks in the order of `ids`. Tasks of the list not

@@ -70,10 +70,10 @@ class TaskService:
             notes=notes.strip(),
             done=False,
             due=due,
-            position=await self.tasks.first_position(list_id),
+            position=0,
             created_at=_now(),
         )
-        await self.tasks.save(task)
+        task = await self.tasks.insert_first(task)
         log.info("task %s created: %s", task.id, task.title)
         self.events.publish(TaskCreated(task))
         return task
@@ -92,6 +92,7 @@ class TaskService:
         a task to another list puts it at the top of that list."""
         task = await self.get(id)
         changes: dict[str, object] = {}
+        moved_to: Optional[uuid.UUID] = None
         if not isinstance(title, UnsetType):
             changes["title"] = _title(title)
         if not isinstance(notes, UnsetType):
@@ -103,11 +104,13 @@ class TaskService:
             changes["completed_at"] = _now() if done else None
         if not isinstance(list_id, UnsetType) and list_id != task.list_id:
             await self._list(list_id)
-            changes["list_id"] = list_id
-            changes["position"] = await self.tasks.first_position(list_id)
-        if changes:
+            moved_to = list_id
+        if changes or moved_to is not None:
             task = msgspec.structs.replace(task, **changes)
-            await self.tasks.save(task)
+            if moved_to is None:
+                await self.tasks.save(task)
+            else:
+                task = await self.tasks.move_first(task, moved_to)
             self.events.publish(TaskUpdated(task))
         return task
 
