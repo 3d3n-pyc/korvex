@@ -8,7 +8,7 @@ from datetime import date, datetime
 from typing import Optional
 
 import msgspec
-from korbase import delete, insert, param, select, upsert
+from korbase import count, delete, insert, param, select, upsert
 
 from taskboard.columns import cols
 from taskboard.db import Database
@@ -23,14 +23,20 @@ _SAVE_LIST = (
     upsert(ListRow).values(id=param("id"), name=param("name"), color=param("color"), position=param("position"))
 ).on_conflict("id")
 _DELETE_LIST = delete(ListRow).where(id=param("id"))
-_OPEN_COUNTS = "SELECT list_id, count(*) FROM tasks WHERE NOT done GROUP BY list_id"
-_OPEN_COUNT = "SELECT count(*) FROM tasks WHERE list_id = ? AND NOT done"
+_OPEN_COUNTS = select(Task).columns(_T.list_id, count()).where(done=False).group_by(_T.list_id)
+_OPEN_COUNT = select(Task).columns(count()).where(list_id=param("list_id"), done=False)
+_LIST_COUNT = select(ListRow).columns(count())
+_MAX_LIST_POSITION = select(ListRow).columns(_L.position.max())
+_ANY_LIST = select(ListRow).columns(_L.id).limit(1)
 
 _PAGE = select(Task).order_by(_T.list_id.asc(), _T.position.asc()).limit(param("limit")).offset(param("offset"))
 _TASK = select(Task).where(id=param("id"))
 _SAVE_TASK = upsert(Task).values(**{name: param(name) for name in Task.__struct_fields__}).on_conflict("id")
 _DELETE_TASK = delete(Task).where(id=param("id"))
 _DELETE_DONE = delete(Task).where(list_id=param("list_id"), done=True).returning()
+_MIN_POSITION = select(Task).columns(_T.position.min()).where(list_id=param("list_id"))
+_LIST_TASK_IDS = select(Task).columns(_T.id).where(list_id=param("list_id")).order_by(_T.position.asc())
+# Raw: the builder cannot join a json_each(...) table in an UPDATE.
 _REORDER = "UPDATE tasks SET position = j.key FROM json_each(?1) j WHERE tasks.id = j.value AND tasks.list_id = ?2"
 
 _ADD_SESSION = insert(SessionRow).values(token_hash=param("token_hash"), user=param("user"), expires_at=param("at"))
@@ -47,7 +53,7 @@ class ListRepository:
         """Every list, in order, with how many open tasks each has."""
         db = self.db.get()
         rows = await db.run(_LISTS)
-        counts = {uuid.UUID(list_id): n for list_id, n in await db.fetch(_OPEN_COUNTS)}
+        counts = dict(await db.run(_OPEN_COUNTS))
         return [_list(row, counts.get(row.id, 0)) for row in rows]
 
     async def get(self, id: uuid.UUID) -> Optional[TaskList]:
@@ -55,8 +61,7 @@ class ListRepository:
         row = await db.first(_LIST, id=id)
         if row is None:
             return None
-        count = await db.fetchrow(_OPEN_COUNT, id)
-        return _list(row, count[0] if count else 0)
+        return _list(row, await db.value(_OPEN_COUNT, list_id=id) or 0)
 
     async def save(self, task_list: TaskList) -> None:
         await self.db.get().run(
@@ -68,16 +73,15 @@ class ListRepository:
         return await self.db.get().run(_DELETE_LIST, id=id) > 0
 
     async def count(self) -> int:
-        row = await self.db.get().fetchrow("SELECT count(*) FROM lists")
-        return row[0] if row else 0
+        return await self.db.get().value(_LIST_COUNT) or 0
 
     async def insert_last(self, name: str, color_at: Callable[[int], str]) -> TaskList:
         """Adds a list after the others and returns it. Its color comes from
         `color_at(position)`. Position and insert are one transaction, so
         workers creating together never share a position."""
         async with self.db.get().transaction() as tx:
-            row = await tx.fetchrow("SELECT coalesce(max(position), -1) + 1 FROM lists")
-            position = row[0] if row else 0
+            last = await tx.value(_MAX_LIST_POSITION)
+            position = 0 if last is None else last + 1
             new = TaskList(uuid.uuid4(), name, color_at(position), position)  # type: ignore[arg-type]
             await tx.run(_SAVE_LIST, id=new.id, name=new.name, color=new.color, position=new.position)
             return new
@@ -86,7 +90,7 @@ class ListRepository:
         """Saves `first` and `tasks` if there's no list yet, all at once:
         workers starting together create them only once."""
         async with self.db.get().transaction() as tx:
-            if await tx.fetchrow("SELECT 1 FROM lists LIMIT 1"):
+            if await tx.first(_ANY_LIST) is not None:
                 return False
             await tx.run(_SAVE_LIST, id=first.id, name=first.name, color=first.color, position=first.position)
             for task in tasks:
@@ -110,6 +114,7 @@ class TaskRepository:
     ) -> list[Task]:
         """Tasks matching every filter given. Within a list: open ones in
         their order, then done ones, latest first. Across lists: by due date."""
+        # Raw SQL: the filters and the CASE ordering are built dynamically.
         where: list[str] = []
         params: list = []
         if list_id is not None:
@@ -173,8 +178,8 @@ class TaskRepository:
     async def _put_first(self, task: Task) -> Task:
         """Gives `task` a position before every task of its list, and saves it."""
         async with self.db.get().transaction() as tx:
-            row = await tx.fetchrow("SELECT coalesce(min(position), 1) - 1 FROM tasks WHERE list_id = ?", task.list_id)
-            task = msgspec.structs.replace(task, position=row[0] if row else 0)
+            first = await tx.value(_MIN_POSITION, list_id=task.list_id)
+            task = msgspec.structs.replace(task, position=(1 if first is None else first) - 1)
             await tx.run(_SAVE_TASK, **msgspec.structs.asdict(task))
             return task
 
@@ -182,8 +187,8 @@ class TaskRepository:
         """Puts the list's tasks in the order of `ids`. Tasks of the list not
         in `ids` keep their order, after them; IDs from elsewhere are ignored."""
         async with self.db.get().transaction() as tx:
-            rows = await tx.fetch("SELECT id FROM tasks WHERE list_id = ? ORDER BY position", list_id)
-            current = [row[0] for row in rows]
+            rows = await tx.run(_LIST_TASK_IDS, list_id=list_id)
+            current = [str(row[0]) for row in rows]
             known = set(current)
             wanted = [str(id) for id in ids if str(id) in known]
             await tx.execute(_REORDER, list(dict.fromkeys(wanted + current)), str(list_id))
