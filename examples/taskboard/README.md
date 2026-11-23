@@ -137,10 +137,10 @@ Both answer with the same 422 format, so the page shows both alike.
   (`select(Task).where(...)`, `upsert`, `delete`), so rows come back as
   `Task` objects. Each worker holds one connection, which serializes its
   queries; WAL mode lets workers read while one writes.
-- **Some SQL stays raw, on purpose.** The open-task counts, the search,
-  and the position bookkeeping (`json_each` to renumber a list in one
-  statement, `min(position)`) are plain aggregates or SQLite-specific
-  statements that read better as SQL than as a query builder.
+- **Two statements stay raw, on purpose.** The search (dynamic filters
+  and a `CASE` ordering) and the reorder (`json_each` to renumber a list
+  in one statement) are SQLite-specific or too dynamic for the builder.
+  Counts, min/max positions and existence checks use the builder.
 - **Migrations are reviewed SQL files.** `taskboard/migrations/` holds
   them, one per change, committed with the code. Every worker applies
   them at startup; korbase records each one in `korbase_migrations`, so

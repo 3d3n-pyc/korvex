@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Changed: the taskboard example uses korbase 0.1.0a4.** Its counts,
+  min/max positions and existence checks go through the query builder
+  (aggregates and `db.value`); only the search and the reorder stay raw SQL.
+  Korvex itself is unchanged.
+
 ## 1.0.0rc7
 
 The taskboard example on korbase, and the docs brought up to date. Korvex's

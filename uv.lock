@@ -1749,11 +1749,11 @@ wheels = [
 
 [[package]]
 name = "korbase"
-version = "0.1.0a2"
+version = "0.1.0a4"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5a/9a/6f72a895977dfa5e5cef57387d7127438bf4955d7a2affdbd88c8a682080/korbase-0.1.0a2.tar.gz", hash = "sha256:c23e5af51bb1685e90aac7d6ca09f126bd4fbe797d1ee1eb8b3b3129309f6a78", size = 207046, upload-time = "2026-11-20T14:44:14.536Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8b/9e/5d4e1e5bbe9adb5747932ad70837c5280a892dc69f48cdcdf5fa31a410e8/korbase-0.1.0a4.tar.gz", hash = "sha256:342f32e9921a13f15b139f567129c124e4a1dc7a27d03567b396f925e2d275d2", size = 237826, upload-time = "2026-11-23T11:12:02.521Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8a/4b/83910f0d67929a8cd78177fa9cf3ead5896de16eaf695813f040275f8425/korbase-0.1.0a2-py3-none-any.whl", hash = "sha256:986764044385a769cd41dc395c7ee9017e002ac45b3efeb172a50751fd725136", size = 58703, upload-time = "2026-11-20T14:44:13.42Z" },
+    { url = "https://files.pythonhosted.org/packages/1c/58/8e3dc63decf39936d4a5f5a3994ebff319e95c26b50736c3925bb340b73b/korbase-0.1.0a4-py3-none-any.whl", hash = "sha256:e3b94dc641953cb7fd1220b4a7ee9300836616a97bc4da9a5b965ad132022f72", size = 69781, upload-time = "2026-11-23T11:12:01.113Z" },
 ]
 
 [[package]]
@@ -1850,7 +1850,7 @@ dev = [
     { name = "brotli", specifier = ">=1.2.1" },
     { name = "coverage", specifier = ">=7.10" },
     { name = "hypothesis", specifier = ">=6.140" },
-    { name = "korbase", specifier = ">=0.1.0a2" },
+    { name = "korbase", specifier = ">=0.1.0a4" },
     { name = "maturin", specifier = ">=1.14,<2.0" },
     { name = "msgspec", specifier = ">=0.20.0" },
     { name = "openapi-spec-validator", specifier = ">=0.7.2" },
