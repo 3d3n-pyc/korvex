@@ -15,7 +15,7 @@ bytes = "1.12.1"
 futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
 http-body-util = "0.1.5"
 hyper = { version = "1.12.0", features = ["server", "http1"] }
-hyper-util = { version = "0.1.21", features = ["http1", "server", "server-graceful", "tokio"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
 regex = "1"
 rustc-hash = "2.1"
 tokio = { version = "1.54.1", features = ["rt", "net", "macros", "sync", "time"] }
@@ -23,7 +23,7 @@ tokio-tungstenite = { version = "0.30.0", default-features = false, features = [
 
 [dependencies.pyo3]
 version = "0.30.1"
-features = ["extension-module", "abi3-py310"]
+features = ["abi3-py310"]
 
 [lints.clippy]
 all = "warn"
