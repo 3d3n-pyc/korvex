@@ -12,6 +12,9 @@
   uses, and the package declares its license as the SPDX expression `MIT`
   (PEP 639) instead of a table and a classifier. No change to the code or
   its behavior. To update: nothing.
+- **Changed: shorter lock scopes in the Rust server.** Sending a response
+  and deciding a WebSocket handshake now release their lock before the send,
+  so another thread (free-threaded 3.14t) never waits on it. No API change.
 
 ## 1.0.0rc7
 

@@ -437,12 +437,13 @@ pub struct Responder {
 
 impl Responder {
     fn send(&self, status: u16, headers: Headers, body: ResponseBody) {
-        if let Some(reply) = self
+        // The lock is released at the end of this statement, before sending.
+        let reply = self
             .reply
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .take()
-        {
+            .take();
+        if let Some(reply) = reply {
             // An error means the client is gone: there's no one left to answer.
             let _ = reply.send(Reply {
                 status,
