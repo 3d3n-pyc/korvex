@@ -25,6 +25,8 @@ jobs:
       MINUTES: ${{ inputs.minutes || 5 }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Check the budget
         run: |
@@ -86,6 +88,8 @@ jobs:
       SEED: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -130,6 +134,8 @@ jobs:
       HYPOTHESIS_PROFILE: fuzz
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

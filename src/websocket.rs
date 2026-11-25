@@ -119,15 +119,13 @@ pub struct WsConnection {
 
 impl WsConnection {
     fn decide(&self, decision: Decision) -> bool {
-        match self
+        // The lock is released at the end of this statement, before sending.
+        let sender = self
             .decision
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .take()
-        {
-            Some(sender) => sender.send(decision).is_ok(),
-            None => false,
-        }
+            .take();
+        sender.is_some_and(|sender| sender.send(decision).is_ok())
     }
 
     fn send(&self, message: Outgoing) -> bool {

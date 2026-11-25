@@ -6,6 +6,15 @@
   min/max positions and existence checks go through the query builder
   (aggregates and `db.value`); only the search and the reorder stay raw SQL.
   Korvex itself is unchanged.
+- **Changed: build metadata brought in line with current PyO3 and maturin
+  docs.** The deprecated PyO3 `extension-module` feature is gone (maturin
+  1.9.4+ sets it up itself), hyper-util only enables the `tokio` feature it
+  uses, and the package declares its license as the SPDX expression `MIT`
+  (PEP 639) instead of a table and a classifier. No change to the code or
+  its behavior. To update: nothing.
+- **Changed: shorter lock scopes in the Rust server.** Sending a response
+  and deciding a WebSocket handshake now release their lock before the send,
+  so another thread (free-threaded 3.14t) never waits on it. No API change.
 
 ## 1.0.0rc7
 
